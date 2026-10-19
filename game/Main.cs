@@ -1,28 +1,42 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+using Battler.Net;
 using Battler.Sim;
 using Godot;
 
 namespace Battler.Game;
 
 /// <summary>
-/// Runs a match against the AI: steps the simulation at a fixed rate, draws it (interpolating
-/// between ticks), and turns the player's clicks and keys into commands.
+/// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
+/// ticks), and turns the player's clicks and keys into commands.
 ///
 /// Controls: left click places a factory near your HQ, WASD/arrows pan, wheel zooms,
-/// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won.
+/// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
+///
+/// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
+/// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
+/// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit.
 /// </summary>
 public partial class Main : Node3D
 {
-    const int Me = 0, Ai = 1;
     const double TickLength = 1.0 / World.TicksPerSecond;
 
     static readonly Color[] TeamColor = { new(0.25f, 0.55f, 1f), new(1f, 0.42f, 0.18f) };
 
-    World _world;
-    SimpleAi _ai;
-    readonly List<Command> _myCommands = new();
+    ISession _session;
+    World W => _session.World;
+    int _me;
     double _acc;
+    bool _waiting;   // the last step was held up by the network
+
+    // LAN setup, until the session exists.
+    TcpListener _listener;
+    Task<TcpTransport> _connecting;
+    TcpTransport _net;
+    string _joinAddress;
+    string _connectStatus;
 
     readonly Dictionary<int, MeshInstance3D> _views = new();
     readonly Dictionary<int, Vector3> _prevPos = new();
@@ -42,17 +56,40 @@ public partial class Main : Node3D
     Label _banner;
     Vector3? _mouseGround;
 
-    // Debug: "-- --shot" plays both sides by AI for 60 s of game time, saves screenshots/shot.png and quits.
+    bool _auto;                // --auto: an AI issues my commands
     SimpleAi _autoMe;
+    int _autoThoughtAt = -1;
     int _shotFrames = -1;
+    int _checkTick = -1;       // --check N: at tick N print the checksum, save a screenshot, quit
+    string _shotName = "shot";
+    bool _frozen;
+    MeshInstance3D _ring;
 
     public override void _Ready()
     {
         BuildScene();
-        NewMatch();
-        if (OS.GetCmdlineUserArgs().Contains("--shot"))
+        var args = OS.GetCmdlineUserArgs().ToList();
+        _auto = args.Contains("--auto") || args.Contains("--shot");
+        int check = args.IndexOf("--check");
+        if (check >= 0 && check + 1 < args.Count) _checkTick = int.Parse(args[check + 1]);
+        int join = args.IndexOf("--join");
+        if (args.Contains("--host"))
         {
-            _autoMe = new SimpleAi(Me, 7);
+            _listener = TcpTransport.Listen();
+            _connectStatus = $"Hosting on port {TcpTransport.DefaultPort}, waiting for an opponent...";
+            DisplayServer.WindowSetTitle("Battler - host");
+        }
+        else if (join >= 0)
+        {
+            _joinAddress = join + 1 < args.Count && !args[join + 1].StartsWith("--") ? args[join + 1] : "127.0.0.1";
+            _connecting = TcpTransport.ConnectAsync(_joinAddress);
+            _connectStatus = $"Connecting to {_joinAddress}...";
+            DisplayServer.WindowSetTitle("Battler - client");
+        }
+        else StartMatch(new LocalSession((ulong)GD.Randi()));
+
+        if (args.Contains("--shot"))
+        {
             for (int i = 0; i < 60 * World.TicksPerSecond; i++) StepWorld();
             _focus = Vector3.Zero;
             _distance = 110;
@@ -60,24 +97,87 @@ public partial class Main : Node3D
         }
     }
 
+    public override void _ExitTree()
+    {
+        _listener?.Stop();
+        _net?.Dispose();
+    }
+
+    /// <summary>Until the session exists: accept or finish the LAN connection, then start.</summary>
+    void PollConnection()
+    {
+        if (_listener != null)
+        {
+            _net = TcpTransport.TryAccept(_listener);
+            if (_net == null) return;
+            _listener.Stop();
+            _listener = null;
+            var seed = (ulong)GD.Randi();
+            _net.Send(Wire.Start(seed));
+            StartMatch(new LockstepSession(_net, seed, 0));
+        }
+        else if (_connecting != null)
+        {
+            if (!_connecting.IsCompleted) return;
+            if (_connecting.IsFaulted)
+            {
+                _connectStatus = $"Couldn't reach {_joinAddress}, retrying...";
+                _connecting = TcpTransport.ConnectAsync(_joinAddress);
+                return;
+            }
+            _net = _connecting.Result;
+            _connecting = null;
+        }
+        else if (_net != null && _net.TryReceive(out var msg) && Wire.Type(msg) == Wire.MsgStart)
+        {
+            StartMatch(new LockstepSession(_net, Wire.ReadStart(msg), 1));
+        }
+    }
+
     void TakeShotWhenReady()
     {
+        if (_checkTick > 0 && W.Tick >= _checkTick && _shotFrames < 0)
+        {
+            var problem = _session.Problem ?? "none";
+            var verified = _session is LockstepSession ls ? ls.VerifiedTicks : 0;
+            GD.Print($"CHECK player={_me} tick={W.Tick} sum={W.Checksum():X16} verified={verified} problem={problem}");
+            _shotName = $"shot_p{_me}";
+            _checkTick = -1;
+            _shotFrames = 3;
+            _frozen = true;   // hold this tick for the screenshot
+        }
         if (_shotFrames < 0 || --_shotFrames > 0) return;
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
-        GetViewport().GetTexture().GetImage().SavePng("res://screenshots/shot.png");
+        GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{_shotName}.png");
         GetTree().Quit();
     }
 
-    void NewMatch()
+    void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear();
-        var seed = (ulong)GD.Randi();
-        _world = new World(seed);
-        _ai = new SimpleAi(Ai, seed ^ 0xA1);
-        _myCommands.Clear();
+        _session = session;
+        _me = session.LocalPlayer;
         _acc = 0;
-        _focus = ToV3(_world.Players[Me].HqPos) + new Vector3(20, 0, 0);
+        _autoThoughtAt = -1;
+        _focus = ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 20 : -20, 0, 0);
+        if (_auto) _autoMe = new SimpleAi(_me, (ulong)GD.Randi());
+        BuildRing();
+    }
+
+    /// <summary>The build-range ring around my HQ.</summary>
+    void BuildRing()
+    {
+        var ring = new ImmediateMesh();
+        ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, Unshaded(new Color(TeamColor[_me], 0.5f)));
+        var c = ToV3(World.HqStart(_me));
+        for (int i = 0; i <= 64; i++)
+        {
+            var a = Mathf.Tau * i / 64;
+            ring.SurfaceAddVertex(c + new Vector3(Mathf.Cos(a), 0.05f, Mathf.Sin(a)) * World.BuildRadius.ToFloat());
+        }
+        ring.SurfaceEnd();
+        _ring.Mesh = ring;
     }
 
     // ---- scene -------------------------------------------------------------------------------
@@ -118,17 +218,8 @@ public partial class Main : Node3D
         };
         AddChild(ground);
 
-        // Build-range ring around my HQ.
-        var ring = new ImmediateMesh();
-        ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, Unshaded(new Color(TeamColor[Me], 0.5f)));
-        var c = World.HqStart(Me);
-        for (int i = 0; i <= 64; i++)
-        {
-            var a = Mathf.Tau * i / 64;
-            ring.SurfaceAddVertex(ToV3(c) + new Vector3(Mathf.Cos(a), 0.05f, Mathf.Sin(a)) * World.BuildRadius.ToFloat());
-        }
-        ring.SurfaceEnd();
-        AddChild(new MeshInstance3D { Mesh = ring });
+        _ring = new MeshInstance3D();
+        AddChild(_ring);
 
         _tracers = new ImmediateMesh();
         _tracerMat = Unshaded(Colors.White);
@@ -197,12 +288,20 @@ public partial class Main : Node3D
     {
         MoveCamera((float)delta);
 
+        if (_session == null)
+        {
+            PollConnection();
+            _banner.Text = _connectStatus;
+            if (_session == null) return;
+        }
+
         _acc += delta;
         int steps = 0;
+        _waiting = false;
         while (_acc >= TickLength && steps++ < 5)
         {
+            if (!StepWorld()) { _waiting = true; _acc = TickLength; break; }   // try again next frame
             _acc -= TickLength;
-            StepWorld();
         }
         if (_acc > TickLength) _acc = 0;   // fell far behind; don't spiral
 
@@ -210,22 +309,25 @@ public partial class Main : Node3D
         TakeShotWhenReady();
     }
 
-    void StepWorld()
+    /// <summary>One tick, if the session allows it (a network match may be waiting on the other player).</summary>
+    bool StepWorld()
     {
-        foreach (var e in _world.Entities) _prevPos[e.Id] = ToV3(e.Pos);
+        if (_frozen) return false;
+        if (_autoMe != null && _autoThoughtAt != W.Tick)   // once per tick, even while waiting
+        {
+            _autoThoughtAt = W.Tick;
+            _autoMe.Think(W, _session.Issue);
+        }
 
-        var cmds = new List<Command>(_myCommands);
-        _myCommands.Clear();
-        _ai.Think(_world, cmds.Add);
-        _autoMe?.Think(_world, cmds.Add);
-        // Stable order by player: every machine in a match must apply commands identically.
-        _world.Step(cmds.OrderBy(c => c.Player).ToList());
+        var prev = W.Entities.ToDictionary(e => e.Id, e => ToV3(e.Pos));
+        if (!_session.TryStep()) return false;
+        foreach (var (id, p) in prev) _prevPos[id] = p;
 
         _tracers.ClearSurfaces();
-        if (_world.Shots.Count > 0)
+        if (W.Shots.Count > 0)
         {
             _tracers.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
-            foreach (var s in _world.Shots)
+            foreach (var s in W.Shots)
             {
                 var col = TeamColor[s.Owner].Lightened(0.5f);
                 _tracers.SurfaceSetColor(col);
@@ -235,13 +337,14 @@ public partial class Main : Node3D
             }
             _tracers.SurfaceEnd();
         }
+        return true;
     }
 
     void Draw(float alpha)
     {
-        if (_world.Paused) alpha = 1;
+        if (W.Paused) alpha = 1;
         var alive = new HashSet<int>();
-        foreach (var e in _world.Entities)
+        foreach (var e in W.Entities)
         {
             alive.Add(e.Id);
             if (!_views.TryGetValue(e.Id, out var view))
@@ -277,20 +380,20 @@ public partial class Main : Node3D
     void DrawPlacement()
     {
         _mouseGround = GroundUnderMouse();
-        var canPlay = _world.Winner < 0;
+        var canPlay = W.Winner < 0;
         _ghost.Visible = canPlay && _mouseGround.HasValue;
         if (_ghost.Visible)
         {
-            var ok = _world.CanPlaceFactory(Me, ToFix(_mouseGround.Value), out _);
+            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), out _);
             _ghostMat.AlbedoColor = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.4f);
             _ghost.Position = _mouseGround.Value + Vector3.Up * HeightOf(Kind.Factory);
         }
 
         // Factories ordered during a pause, waiting for it to end.
-        var held = _world.HeldDuringPause.OfType<PlaceFactory>().Where(c => c.Player == Me).ToList();
+        var held = W.HeldDuringPause.OfType<PlaceFactory>().Where(c => c.Player == _me).ToList();
         while (_heldGhosts.Count < held.Count)
         {
-            var g = new MeshInstance3D { Mesh = MeshFor(Kind.Factory), MaterialOverride = Unshaded(new Color(TeamColor[Me], 0.35f)) };
+            var g = new MeshInstance3D { Mesh = MeshFor(Kind.Factory), MaterialOverride = Unshaded(new Color(TeamColor[_me], 0.35f)) };
             AddChild(g);
             _heldGhosts.Add(g);
         }
@@ -303,28 +406,32 @@ public partial class Main : Node3D
 
     void DrawHud()
     {
-        var me = _world.Players[Me];
+        var me = W.Players[_me];
         int myMechs = 0, theirMechs = 0;
         int myHq = 0, theirHq = 0;
-        foreach (var e in _world.Entities)
+        foreach (var e in W.Entities)
         {
-            if (e.Kind == Kind.Mech) { if (e.Owner == Me) myMechs++; else theirMechs++; }
-            if (e.Kind == Kind.Hq) { if (e.Owner == Me) myHq = e.Hp; else theirHq = e.Hp; }
+            if (e.Kind == Kind.Mech) { if (e.Owner == _me) myMechs++; else theirMechs++; }
+            if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         _hud.Text =
             $"Metal {me.Metal}   (factory {World.StatsFor[(int)Kind.Factory].Cost})\n" +
             $"Mechs {myMechs} vs {theirMechs}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
-            $"t {_world.Tick / World.TicksPerSecond}s   sum {_world.Checksum() & 0xFFFF:X4}";
+            $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
+        if (_session is LockstepSession ls)
+            _hud.Text += $"\nLAN {(_me == 0 ? "host" : "client")}   checks passed {ls.VerifiedTicks}" + (_waiting ? "   waiting..." : "");
 
-        if (_world.Winner >= 0)
-            _banner.Text = (_world.Winner == Me ? "Victory" : "Defeat") + "  -  R to play again";
-        else if (_world.Paused)
+        if (_session.Problem != null)
+            _banner.Text = _session.Problem;
+        else if (W.Winner >= 0)
+            _banner.Text = (W.Winner == _me ? "Victory" : "Defeat") + (_session is LocalSession ? "  -  R to play again" : "");
+        else if (W.Paused)
         {
-            var secs = Mathf.CeilToInt(_world.PauseTicksLeft / (float)World.TicksPerSecond);
-            var who = _world.PausedBy == Me ? "You" : "Enemy";
-            _banner.Text = $"PAUSED by {who}  {secs}s\nOrders apply when play resumes" + (_world.PausedBy == Me ? "  -  Enter to resume" : "");
+            var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
+            var who = W.PausedBy == _me ? "You" : "Enemy";
+            _banner.Text = $"PAUSED by {who}  {secs}s\nOrders apply when play resumes" + (W.PausedBy == _me ? "  -  Enter to resume" : "");
         }
         else _banner.Text = "";
     }
@@ -333,18 +440,19 @@ public partial class Main : Node3D
 
     public override void _UnhandledInput(InputEvent ev)
     {
+        if (_session == null) return;
         if (ev is InputEventMouseButton mb && mb.Pressed)
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
             else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(160, _distance * 1.1f);
-            else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue && _world.Winner < 0)
-                _myCommands.Add(new PlaceFactory(Me, ToFix(_mouseGround.Value)));
+            else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue && W.Winner < 0)
+                _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value)));
         }
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode == Key.P) _myCommands.Add(new Pause(Me));
-            else if (k.Keycode == Key.Enter) _myCommands.Add(new Resume(Me));
-            else if (k.Keycode == Key.R && _world.Winner >= 0) NewMatch();
+            if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
+            else if (k.Keycode == Key.Enter) _session.Issue(new Resume(_me));
+            else if (k.Keycode == Key.R && W.Winner >= 0 && _session is LocalSession) StartMatch(new LocalSession((ulong)GD.Randi()));
         }
     }
 
