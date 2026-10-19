@@ -14,7 +14,8 @@ public sealed class Stats
     public Fix Speed;      // ground units per tick; zero for buildings
     public Fix Range;      // weapon reach, measured edge to edge
     public Fix MinRange;   // can't fire at anything nearer than this (artillery)
-    public Fix Aggro;      // how far it looks for targets
+    public Fix Aggro;      // how far it looks for targets (it can only target what its side sees)
+    public Fix Vision;     // how far it sees, edge to edge; its whole side shares what it sees
     public Fix Splash;     // shots also hit enemies this close to the target
     public int Damage;
     public int Reload;     // ticks between shots; zero = unarmed
@@ -35,6 +36,7 @@ public sealed class Entity
     public int Timer;      // factory: ticks until the next unit
     public Kind Makes;     // factory: the unit it makes
     public bool Dead;
+    public int SeenBy;     // a bit per player whose side can see it (World.UpdateVision)
     // A factory's upgrade levels by Upgrade; a unit carries its factory's at the time it was made.
     public readonly int[] Levels = new int[3];
     public int MaxHp;      // with armour upgrades
@@ -87,17 +89,17 @@ public sealed class World
     public static readonly Stats[] StatsFor =
     {
         // Hq
-        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Damage = 15, Reload = 10 },
+        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 15, Reload = 10 },
         // Factory
-        new() { MaxHp = 800, Radius = 2 },
+        new() { MaxHp = 800, Radius = 2, Vision = 8 },
         // Scout
-        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Range = 6, Aggro = 18,
+        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Range = 6, Aggro = 18, Vision = 24,
                 Damage = 5, Reload = 5, BuildTicks = 6 * TicksPerSecond },
         // Tank
-        new() { MaxHp = 240, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14,
+        new() { MaxHp = 240, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
                 Damage = 24, Reload = 15, BuildTicks = 12 * TicksPerSecond },
         // Artillery
-        new() { MaxHp = 90, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22,
+        new() { MaxHp = 90, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
                 Splash = Fix.Ratio(25, 10), Damage = 40, Reload = 40, BuildTicks = 16 * TicksPerSecond },
     };
 
@@ -107,6 +109,8 @@ public sealed class World
     public readonly List<Shot> Shots = new();         // this tick only
     public readonly Rng Rng;
     public int Winner = -1;
+    /// <summary>False during setup, until both sides have placed their first factory.</summary>
+    public bool Started;
 
     public int PausedBy = -1;
     public int PauseTicksLeft;
@@ -185,11 +189,23 @@ public sealed class World
         Shots.Clear();
         if (Winner >= 0) return;
 
+        if (!Started)
+        {
+            // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
+            // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
+            foreach (var c in commands)
+                if (c is PlaceFactory or UpgradeFactory) Apply(c);
+            Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
+            UpdateVision();
+            return;
+        }
+
         foreach (var c in commands) Apply(c);
 
         if (Paused)
         {
             if (--PauseTicksLeft <= 0) EndPause();
+            UpdateVision();
             return;
         }
 
@@ -198,7 +214,30 @@ public sealed class World
         Fight();
         Separate();
         Reap();
+        UpdateVision();
     }
+
+    /// <summary>
+    /// Fog of war: which side sees what. Something is seen by its own side, and by the other side if anything of
+    /// theirs is within its vision of it (edge to edge, so a tank sees exactly as far as it shoots). Units can only
+    /// target what their side sees: artillery outranges its own sight and needs others to spot for it.
+    /// </summary>
+    void UpdateVision()
+    {
+        foreach (var e in Entities) e.SeenBy = 1 << e.Owner;
+        foreach (var a in Entities)
+        {
+            if (a.Dead) continue;
+            foreach (var b in Entities)
+            {
+                if (b.Dead || b.Owner == a.Owner || (a.SeenBy & (1 << b.Owner)) != 0) continue;
+                var reach = b.Stats.Vision + b.Stats.Radius + a.Stats.Radius;
+                if ((a.Pos - b.Pos).LengthSq <= reach * reach) a.SeenBy |= 1 << b.Owner;
+            }
+        }
+    }
+
+    public static bool CanSee(int player, Entity e) => (e.SeenBy & (1 << player)) != 0;
 
     void Apply(Command c)
     {
@@ -312,7 +351,7 @@ public sealed class World
         var bestD = Fix.Zero;
         foreach (var e in Entities)
         {
-            if (e.Dead || e.Owner == from.Owner || e.Hp <= 0) continue;
+            if (e.Dead || e.Owner == from.Owner || e.Hp <= 0 || !CanSee(from.Owner, e)) continue;
             var reach = within + e.Stats.Radius;
             var d = (e.Pos - from.Pos).LengthSq;
             if (d > reach * reach) continue;
@@ -367,12 +406,12 @@ public sealed class World
     {
         ulong h = 14695981039346656037UL;
         void Mix(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (i * 8)); h *= 1099511628211UL; } }
-        Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State);
+        Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State); Mix(Started ? 1 : 0);
         foreach (var p in Players) { Mix(p.Metal); Mix(p.PausesLeft); }
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy);
             foreach (var l in e.Levels) Mix(l);
         }
         return h;

@@ -199,10 +199,73 @@ public partial class Main : Node3D
         GetTree().Quit();
     }
 
+    // ---- fog of war (the sim decides what each side sees: Entity.SeenBy; this draws it) -------------------------
+
+    const int FogRes = 2;   // fog cells per world unit
+    static readonly int FogW = World.MapHalfX.ToInt() * 2 * FogRes, FogH = World.MapHalfZ.ToInt() * 2 * FogRes;
+    byte[] _fogData;        // what's seen, hard edged: for SeenAt
+    byte[] _fogSoft;        // the same blurred a little: what the ground shows
+    Image _fogImage;
+    ImageTexture _fogTexture;
+    readonly HashSet<int> _seenBuildings = new();   // enemy buildings stay on the map once spotted
+
+    /// <summary>Repaints the fog texture from my side's vision circles.</summary>
+    void UpdateFog()
+    {
+        System.Array.Clear(_fogData);
+        foreach (var e in W.Entities)
+        {
+            if (e.Owner != _me) continue;
+            float r = (e.Stats.Vision.ToFloat() + e.Stats.Radius.ToFloat() + 0.5f) * FogRes;
+            var c = ToV3(e.Pos) * FogRes;
+            int x0 = Mathf.Max(0, (int)(c.X - r + FogW / 2)), x1 = Mathf.Min(FogW - 1, (int)(c.X + r + FogW / 2));
+            int z0 = Mathf.Max(0, (int)(c.Z - r + FogH / 2)), z1 = Mathf.Min(FogH - 1, (int)(c.Z + r + FogH / 2));
+            for (int z = z0; z <= z1; z++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    float dx = x + 0.5f - FogW / 2 - c.X, dz = z + 0.5f - FogH / 2 - c.Z;
+                    if (dx * dx + dz * dz <= r * r) _fogData[z * FogW + x] = 255;
+                }
+        }
+        // A 5x5 box blur softens the stair-stepped edge of the cells into a short fade.
+        for (int z = 0; z < FogH; z++)
+            for (int x = 0; x < FogW; x++)
+            {
+                int sum = 0, n = 0;
+                for (int dz = -2; dz <= 2; dz++)
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int xx = x + dx, zz = z + dz;
+                        if (xx < 0 || zz < 0 || xx >= FogW || zz >= FogH) continue;
+                        sum += _fogData[zz * FogW + xx];
+                        n++;
+                    }
+                _fogSoft[z * FogW + x] = (byte)(sum / n);
+            }
+        _fogImage.SetData(FogW, FogH, false, Image.Format.L8, _fogSoft);
+        _fogTexture.Update(_fogImage);
+    }
+
+    /// <summary>Whether my side sees a place on the ground (for tracers and blasts).</summary>
+    bool SeenAt(Vector3 p)
+    {
+        int x = (int)(p.X * FogRes + FogW / 2), z = (int)(p.Z * FogRes + FogH / 2);
+        return x >= 0 && z >= 0 && x < FogW && z < FogH && _fogData[z * FogW + x] > 0;
+    }
+
+    /// <summary>Whether to draw something: mine; anything my side sees now; enemy buildings once spotted; and
+    /// the enemy HQ, whose place everyone knows.</summary>
+    bool Shown(Entity e)
+    {
+        if (e.Owner == _me || e.Kind == Kind.Hq) return true;
+        if (World.CanSee(_me, e)) { if (e.Stats.IsBuilding) _seenBuildings.Add(e.Id); return true; }
+        return _seenBuildings.Contains(e.Id);
+    }
+
     void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
-        _views.Clear(); _prevPos.Clear(); _facing.Clear();
+        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _seenBuildings.Clear();
         _session = session;
         _me = session.LocalPlayer;
         _acc = 0;
@@ -210,6 +273,7 @@ public partial class Main : Node3D
         _focus = ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 20 : -20, 0, 0);
         if (_auto) _autoMe = new SimpleAi(_me, (ulong)GD.Randi());
         BuildRing();
+        UpdateFog();
     }
 
     /// <summary>The build-range ring around my HQ.</summary>
@@ -261,8 +325,18 @@ public partial class Main : Node3D
         var ground = new MeshInstance3D
         {
             Mesh = new PlaneMesh { Size = new Vector2(World.MapHalfX.ToFloat() * 2, World.MapHalfZ.ToFloat() * 2) },
-            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.46f, 0.41f, 0.33f) },   // dusty wasteland: olive machines stand out on it
         };
+        // Dusty wasteland (olive machines stand out on it), darkened where we can't see.
+        _fogData = new byte[FogW * FogH];
+        _fogSoft = new byte[FogW * FogH];
+        System.Array.Fill(_fogData, (byte)255);
+        System.Array.Fill(_fogSoft, (byte)255);
+        _fogImage = Image.CreateFromData(FogW, FogH, false, Image.Format.L8, _fogData);
+        _fogTexture = ImageTexture.CreateFromImage(_fogImage);
+        var groundMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/ground_fog.gdshader") };
+        groundMat.SetShaderParameter("fog", _fogTexture);
+        groundMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
+        ground.MaterialOverride = groundMat;
         AddChild(ground);
 
         _ring = new MeshInstance3D();
@@ -424,12 +498,14 @@ public partial class Main : Node3D
         var prev = W.Entities.ToDictionary(e => e.Id, e => ToV3(e.Pos));
         if (!_session.TryStep()) return false;
         foreach (var (id, p) in prev) _prevPos[id] = p;
+        UpdateFog();
 
         _tracers.ClearSurfaces();
-        if (W.Shots.Count > 0)
+        var shots = W.Shots.Where(s => SeenAt(ToV3(s.From)) || SeenAt(ToV3(s.To))).ToList();   // not from fog to fog
+        if (shots.Count > 0)
         {
             _tracers.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
-            foreach (var s in W.Shots)
+            foreach (var s in shots)
             {
                 var col = TeamColor[s.Owner].Lightened(0.5f);
                 var from = ToV3(s.From) + Vector3.Up * MuzzleOf(s.By);
@@ -445,7 +521,7 @@ public partial class Main : Node3D
                     _tracers.SurfaceSetColor(col);
                     _tracers.SurfaceAddVertex(from.Lerp(to, t1) + Vector3.Up * peak * 4 * t1 * (1 - t1));
                 }
-                if (s.By == Kind.Artillery) Blast(to, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat());
+                if (s.By == Kind.Artillery && SeenAt(to)) Blast(to, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat());
             }
             _tracers.SurfaceEnd();
         }
@@ -502,6 +578,7 @@ public partial class Main : Node3D
                 view.Basis = Basis.LookingAt(face, Vector3.Up);
             }
             view.Position = pos + Vector3.Up * HeightOf(e.Kind);
+            view.Visible = Shown(e);
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
@@ -532,6 +609,7 @@ public partial class Main : Node3D
             var cur = ToV3(e.Pos);
             var pos = _prevPos.TryGetValue(e.Id, out var p) && !W.Paused ? p.Lerp(cur, alpha) : cur;
             var top = pos + Vector3.Up * TopOf(e.Kind);
+            if (!Shown(e)) continue;
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
             // A bar only once it's been hurt (or while it's selected).
             if (e.Hp >= e.MaxHp && e.Id != _selected) continue;
@@ -613,7 +691,7 @@ public partial class Main : Node3D
         foreach (var e in W.Entities)
         {
             var d = ToV3(e.Pos).DistanceTo(ground);
-            if (d <= e.Stats.Radius.ToFloat() + 0.6f && d < bestD) { best = e; bestD = d; }
+            if (d <= e.Stats.Radius.ToFloat() + 0.6f && d < bestD && Shown(e)) { best = e; bestD = d; }
         }
         return best;
     }
@@ -653,7 +731,7 @@ public partial class Main : Node3D
         int myHq = 0, theirHq = 0;
         foreach (var e in W.Entities)
         {
-            if (e.Stats.IsUnit) { if (e.Owner == _me) myUnits++; else theirUnits++; }
+            if (e.Stats.IsUnit && Shown(e)) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
@@ -664,7 +742,7 @@ public partial class Main : Node3D
         _hud.Text =
             $"Metal {me.Metal}\n" +
             building + "\n" +
-            $"Units {myUnits} vs {theirUnits}\n" +
+            $"Units {myUnits} vs {theirUnits} seen\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
@@ -675,6 +753,10 @@ public partial class Main : Node3D
             _banner.Text = _session.Problem;
         else if (W.Winner >= 0)
             _banner.Text = (W.Winner == _me ? "Victory" : "Defeat") + (_session is LocalSession ? "  -  R to play again" : "");
+        else if (!W.Started)
+            _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
+                ? "Waiting for the enemy to place their first factory..."
+                : "Place your first factory: press 1, 2 or 3, then click near your HQ\nThe battle starts once both sides have one";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
