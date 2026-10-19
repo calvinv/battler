@@ -145,6 +145,7 @@ public partial class Main : Node3D
     public override void _ExitTree()
     {
         _listener?.Stop();
+        UnitArt.Release();
         _net?.Dispose();
     }
 
@@ -518,12 +519,14 @@ public partial class Main : Node3D
             var cur = ToV3(e.Pos);
             var pos = _prevPos.TryGetValue(e.Id, out var p) && !W.Paused ? p.Lerp(cur, alpha) : cur;
             var top = pos + Vector3.Up * TopOf(e.Kind);
+            if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
+            // A bar only once it's been hurt (or while it's selected).
+            if (e.Hp >= e.Stats.MaxHp && e.Id != _selected) continue;
             if (_camera.IsPositionBehind(top)) continue;
             var r = e.Stats.Radius.ToFloat();
             var width = _camera.UnprojectPosition(top + right * r).X - _camera.UnprojectPosition(top - right * r).X;
             _overlay.Bars.Add((_camera.UnprojectPosition(top), width, Mathf.Clamp(e.Hp / (float)e.Stats.MaxHp, 0, 1),
                                TeamColor[e.Owner], e.Id == _selected));
-            if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
         }
         _overlay.QueueRedraw();
 
