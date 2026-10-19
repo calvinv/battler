@@ -37,6 +37,7 @@ public sealed class Entity
     public Kind Makes;     // factory: the unit it makes
     public bool Dead;
     public int SeenBy;     // a bit per player whose side can see it (World.UpdateVision)
+    public Fix Height;     // of the ground under it (World.Settle)
     // A factory's upgrade levels by Upgrade; a unit carries its factory's at the time it was made.
     public readonly int[] Levels = new int[3];
     public int MaxHp;      // with armour upgrades
@@ -93,7 +94,10 @@ public sealed class World
     public static int WithArmour(int baseHp, int level) => baseHp * (100 + 25 * level) / 100;
     public static int WithProduction(int baseTicks, int level) => baseTicks * (100 - 15 * level) / 100;
     public static readonly Fix BuildRadius = 25;
-    public static readonly Fix MapHalfX = 60, MapHalfZ = 40;
+    // (The user, 2026-10-19: "the maps should also be further apart": the HQs 144 apart, was 90.)
+    public static readonly Fix MapHalfX = 90, MapHalfZ = 50;
+    public static readonly Ground Ground = new(90, 50, new[] { HqStart(0), HqStart(1) });
+    static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
     public static readonly Kind[] UnitKinds = { Kind.Scout, Kind.Tank, Kind.Artillery };
 
@@ -152,9 +156,9 @@ public sealed class World
 
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
 
-    public static FixVec2 HqStart(int player) => new(player == 0 ? -45 : 45, 0);
+    public static FixVec2 HqStart(int player) => new(player == 0 ? -72 : 72, 0);
     /// <summary>Where a starting watch tower stands: 12 toward the enemy from the HQ, `side` across.</summary>
-    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -33 : 33, side);
+    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -60 : 60, side);
 
     /// <param name="from">a unit's factory: the unit takes its upgrade levels</param>
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
@@ -170,6 +174,7 @@ public sealed class World
         SetStats(e);
         e.Hp = e.MaxHp;
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
+        e.Height = Ground.HeightAt(pos);
         Entities.Add(e);
         return e;
     }
@@ -257,6 +262,7 @@ public sealed class World
         Produce();
         Fight();
         Separate();
+        Settle();
         Reap();
         UpdateVision();
     }
@@ -275,7 +281,7 @@ public sealed class World
             foreach (var b in Entities)
             {
                 if (b.Dead || b.Owner == a.Owner || (a.SeenBy & (1 << b.Owner)) != 0) continue;
-                var reach = b.Stats.Vision + b.Stats.Radius + a.Stats.Radius;
+                var reach = b.Stats.Vision + HighGround(b) + b.Stats.Radius + a.Stats.Radius;   // a hill lets it see further
                 if ((a.Pos - b.Pos).LengthSq <= reach * reach) a.SeenBy |= 1 << b.Owner;
             }
         }
@@ -303,7 +309,7 @@ public sealed class World
                 foreach (var mine in Entities)
                 {
                     if (mine.Owner != p.Id || mine.Dead) continue;
-                    var reach = mine.Stats.Vision + mine.Stats.Radius;
+                    var reach = mine.Stats.Vision + HighGround(mine) + mine.Stats.Radius;
                     if ((at - mine.Pos).LengthSq <= reach * reach) { _forget.Add(id); break; }
                 }
             }
@@ -312,6 +318,31 @@ public sealed class World
     }
 
     readonly List<int> _forget = new();
+
+    // ---- high ground (the user, 2026-10-19: "hills should matter") ---------------------------------------------
+
+    /// <summary>Extra sight from standing high: a unit of vision per unit of height, up to MaxHighGround.</summary>
+    static Fix HighGround(Entity e) => Fix.Max(Fix.Zero, Fix.Min(MaxHighGround, e.Height));
+
+    /// <summary>Extra reach firing down at something lower: the drop, up to MaxDownhillRange.</summary>
+    static Fix DownhillRange(Entity from, Entity at) => Fix.Max(Fix.Zero, Fix.Min(MaxDownhillRange, from.Height - at.Height));
+
+    /// <summary>A step over the ground: half as fast again climbing a 1-in-1 slope (at worst half speed), a little
+    /// quicker going down (at most a quarter).</summary>
+    static FixVec2 OverGround(Entity e, FixVec2 step)
+    {
+        var len = step.Length;
+        if (len.Raw == 0) return step;
+        var rise = (Ground.HeightAt(e.Pos + step) - e.Height) / len;
+        var factor = Fix.Max(Fix.Ratio(1, 2), Fix.Min(Fix.Ratio(5, 4), Fix.One - rise / 2));
+        return step * factor;
+    }
+
+    /// <summary>Everyone's height, after they've moved.</summary>
+    void Settle()
+    {
+        foreach (var e in Entities) e.Height = Ground.HeightAt(e.Pos);
+    }
 
     /// <summary>Where the nearest enemy this side knows of is (or was last seen).</summary>
     FixVec2 NearestKnown(int player, FixVec2 from)
@@ -402,18 +433,19 @@ public sealed class World
             if (e.Cooldown > 0) e.Cooldown--;
             if (s.Reload == 0) continue;
 
-            var target = NearestEnemy(e, s.Aggro, s.MinRange);
+            var target = NearestEnemy(e, s.Aggro + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
-            if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, s.Aggro, Fix.Zero) != null) continue;
+            if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, s.Aggro + MaxDownhillRange, Fix.Zero) != null) continue;
             if (target != null)
             {
                 var gap = (target.Pos - e.Pos).Length - s.Radius - target.Stats.Radius;
-                if (gap <= s.Range)
+                var reach = s.Range + DownhillRange(e, target);   // firing down from a hill reaches further
+                if (gap <= reach)
                 {
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (s.IsUnit) _moves.Add((e, (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - s.Range))));
+                if (s.IsUnit) _moves.Add((e, OverGround(e, (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - reach)))));
             }
             else if (s.IsUnit)
             {
@@ -424,7 +456,7 @@ public sealed class World
                 if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
                 var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos);
                 var away = goal - e.Pos;
-                _moves.Add((e, away.WithLength(Fix.Min(s.Speed, away.Length))));
+                _moves.Add((e, OverGround(e, away.WithLength(Fix.Min(s.Speed, away.Length)))));
             }
         }
         foreach (var (e, step) in _moves) e.Pos += step;

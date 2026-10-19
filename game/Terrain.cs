@@ -1,19 +1,21 @@
 using System.Collections.Generic;
+using Battler.Sim;
 using Godot;
 
 namespace Battler.Game;
 
 /// <summary>
-/// The landscape, for looks only (the sim's battlefield is flat; nothing here changes the fight): rolling ground
+/// The landscape as drawn: the sim's ground (heights that matter in the fight: sim/Ground.cs), coloured, rolling ground
 /// that's flat round the bases and gentle down the middle lane, ponds, dead trees and scrub pines, rocks. All of it
 /// fixed, the same every match. Things are stood on it with <see cref="HeightAt"/>.
 /// (The user, 2026-10-19: "work on landscape art and trees and ponds and rocks, some elevation would be good".)
 /// </summary>
 public sealed class Terrain : System.IDisposable
 {
-    const float Margin = 20;   // ground past the map's edge, so the view doesn't end in a cliff of nothing
-    static readonly Vector2[] Bases = { new(-45, 0), new(45, 0) };
-    static readonly (Vector2 At, float R)[] Ponds = { (new(-8, 27), 5f), (new(12, -26), 6f), (new(-22, -30), 4f), (new(25, 30), 4.5f) };
+    const float Margin = Ground.Margin;   // ground past the map's edge, so the view doesn't end in a cliff of nothing
+    static readonly Vector2[] Bases = { V(World.HqStart(0)), V(World.HqStart(1)) };
+    static Vector2 V(FixVec2 p) => new(p.X.ToFloat(), p.Z.ToFloat());
+    static readonly (Vector2 At, float R)[] Ponds = System.Array.ConvertAll(Ground.Ponds, p => (V(p.At), p.R.ToFloat()));
     public const float WaterLevel = -0.75f;
 
     readonly FastNoiseLite _noise = new()
@@ -27,19 +29,8 @@ public sealed class Terrain : System.IDisposable
 
     public void Dispose() => _noise.Dispose();
 
-    public float HeightAt(float x, float z)
-    {
-        float h = _noise.GetNoise2D(x, z) * 9f;
-        foreach (var b in Bases)   // flat where bases build (their ring is 25 across)
-            h *= Mathf.SmoothStep(27f, 38f, new Vector2(x, z).DistanceTo(b));
-        h *= Mathf.Lerp(0.3f, 1f, Mathf.SmoothStep(6f, 20f, Mathf.Abs(z)));   // gentle where the armies meet
-        foreach (var (at, r) in Ponds)
-        {
-            float d = new Vector2(x, z).DistanceTo(at);
-            if (d < r + 5) h = Mathf.Lerp(-1.7f, h, Mathf.SmoothStep(r - 1.5f, r + 5f, d));
-        }
-        return h;
-    }
+    /// <summary>The sim's ground (Battler.Sim.Ground): what's drawn is what the fight uses.</summary>
+    public float HeightAt(float x, float z) => World.Ground.HeightAtF(x, z);
 
     /// <summary>The ground mesh, coloured by height and slope (vertex colours: the fog shader multiplies them).</summary>
     public MeshInstance3D BuildGround(Material material)
@@ -99,7 +90,7 @@ public sealed class Terrain : System.IDisposable
             return new Transform3D(basis.Scaled(Vector3.One * scale), new Vector3(p.X, HeightAt(p.X, p.Y) - 0.1f, p.Y));
         }
         // Copses: a few pines or dead trees each, in clumps.
-        for (int c = 0; c < 48; c++)
+        for (int c = 0; c < 80; c++)
         {
             var centre = new Vector2(rng.RandfRange(-_halfX - 6, _halfX + 6), rng.RandfRange(-_halfZ - 6, _halfZ + 6));   // mostly on the map
             bool living = rng.Randf() < 0.45f;
@@ -113,7 +104,7 @@ public sealed class Terrain : System.IDisposable
             }
         }
         // Rocks: scattered, and a ring of boulders round each pond.
-        for (int i = 0; i < 90; i++)
+        for (int i = 0; i < 150; i++)
         {
             var p = new Vector2(rng.RandfRange(-_halfX - Margin, _halfX + Margin), rng.RandfRange(-_halfZ - Margin, _halfZ + Margin));
             if (Clear(p, 0.8f)) rocks.Add(Stand(p, rng.RandfRange(0.4f, 1.4f)));

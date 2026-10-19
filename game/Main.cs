@@ -615,7 +615,7 @@ public partial class Main : Node3D
         _rallyLine.SurfaceEnd();
     }
 
-    /// <summary>A place in the sim, stood on the landscape (the sim is flat; the hills are only for looks).</summary>
+    /// <summary>A place in the sim, stood on its ground.</summary>
     Vector3 ToV3(FixVec2 p) { float x = p.X.ToFloat(), z = p.Z.ToFloat(); return new(x, _terrain.HeightAt(x, z), z); }
 
     Terrain _terrain;
@@ -864,6 +864,8 @@ public partial class Main : Node3D
             if (s.Splash.Raw > 0) lines.Add($"Splash  {s.Splash} wide");
         }
         if (s.IsUnit) lines.Add($"Speed  {s.Speed.ToFloat() * World.TicksPerSecond:0.#} per s");
+        if (e.Height.ToFloat() > 0.5f)
+            lines.Add($"High ground  +{Mathf.Min(e.Height.ToFloat(), 5f):0.#} sight, more range firing down");
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
