@@ -66,7 +66,7 @@ public sealed class Player
 }
 
 /// <summary>A shot fired this tick, kept for drawing tracers.</summary>
-public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner, Kind By);
+public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner, Kind By, int ShooterId, int TargetId);
 
 /// <summary>
 /// The whole battle. Deterministic: given the same seed and the same commands on the same ticks,
@@ -216,6 +216,29 @@ public sealed class World
         if (f == null || f.Kind is not (Kind.Factory or Kind.Outpost) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
         if (f.Level(which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
         if (Players[player].Metal < UpgradeCost(f.Level(which) + 1)) { why = "Not enough metal"; return false; }
+        return true;
+    }
+
+    // ---- selling (the user, 2026-10-19: "sell for 75% of purchase cost incl upgrades") -------------------------
+
+    public const int SellBackPercent = 75;
+
+    /// <summary>Everything paid for a factory or outpost: the building and every upgrade level bought.</summary>
+    public static int SpentOn(Entity b)
+    {
+        int spent = b.Kind == Kind.Outpost ? OutpostCost : FactoryCost;
+        foreach (var level in b.Levels)
+            for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
+        return spent;
+    }
+
+    public static int SellValue(Entity b) => SpentOn(b) * SellBackPercent / 100;
+
+    public bool CanSell(int player, int id, out string why)
+    {
+        var b = Find(id);
+        why = null;
+        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -450,6 +473,11 @@ public sealed class World
                 p.Metal -= OutpostCost;
                 Spawn(Kind.Outpost, po.Player, po.Pos);
                 break;
+            case Sell se when CanSell(se.Player, se.BuildingId, out _):
+                var sold = Find(se.BuildingId);
+                p.Metal += SellValue(sold);
+                sold.Dead = true;   // gone at the end of this tick (Reap)
+                break;
             case SetRally sr:
                 var rallying = Find(sr.FactoryId);
                 if (rallying == null || rallying.Kind != Kind.Factory || rallying.Owner != sr.Player) break;
@@ -544,7 +572,7 @@ public sealed class World
     {
         var s = e.Stats;
         e.Cooldown = s.Reload;
-        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind));
+        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id));
         if (s.Splash.Raw == 0) { _hits.Add((target, e.Damage, e)); return; }
         foreach (var o in Entities)
         {

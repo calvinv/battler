@@ -32,6 +32,12 @@ int ReplayTest()
         var first0 = world.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
         if (script && first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
         if (script && first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
+        // ...and later sells its newest factory or outpost.
+        if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 0) is { } sold)
+        {
+            Console.WriteLine($"  t={world.Tick}: player 0 sells {sold.Kind} {sold.Id} for {World.SellValue(sold)} (metal {world.Players[0].Metal})");
+            cmds.Add(new Sell(0, sold.Id));
+        }
         var ordered = cmds.OrderBy(c => c.Player).ToArray();   // the agreed order
         log.Add(ordered);
         world.Step(ordered);
@@ -94,6 +100,7 @@ int LanTest()
                 var first1 = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 1);
                 if (i == 1 && first1 != null && w.Tick == 300) ss.Issue(new SetRally(1, first1.Id, false, new FixVec2(30, -5)));
                 if (i == 1 && first1 != null && w.Tick == 1500) ss.Issue(new SetRally(1, first1.Id, true, FixVec2.Zero));
+                if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
             }
             if (ss.TryStep()) { any = true; if (w.Paused) pausedTicks[i]++; if (i == 0 && w.Tick % 1200 == 0) Report(w); }
             else stalls++;

@@ -63,6 +63,7 @@ public static class Wire
             case UpgradeFactory uf: w.Write((byte)4); w.Write((byte)uf.Player); w.Write(uf.FactoryId); w.Write((byte)uf.Which); break;
             case SetRally sr: w.Write((byte)5); w.Write((byte)sr.Player); w.Write(sr.FactoryId); w.Write(sr.Clear); w.Write(sr.Pos.X.Raw); w.Write(sr.Pos.Z.Raw); break;
             case PlaceOutpost po: w.Write((byte)6); w.Write((byte)po.Player); w.Write(po.Pos.X.Raw); w.Write(po.Pos.Z.Raw); break;
+            case Sell se: w.Write((byte)7); w.Write((byte)se.Player); w.Write(se.BuildingId); break;
             default: throw new InvalidDataException($"no wire format for {c.GetType().Name}");
         }
     }
@@ -79,6 +80,7 @@ public static class Wire
             4 => new UpgradeFactory(player, r.ReadInt32(), (Upgrade)r.ReadByte()),
             5 => new SetRally(player, r.ReadInt32(), r.ReadBoolean(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
             6 => new PlaceOutpost(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
+            7 => new Sell(player, r.ReadInt32()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
     }

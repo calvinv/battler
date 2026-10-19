@@ -23,3 +23,6 @@ public sealed record SetRally(int Player, int FactoryId, bool Clear, FixVec2 Pos
 
 /// <summary>Deploys an outpost (a sub-base: factories can be built near it) somewhere this side can see.</summary>
 public sealed record PlaceOutpost(int Player, FixVec2 Pos) : Command(Player);
+
+/// <summary>Sells one of the player's factories or outposts for World.SellBackPercent of all it cost, upgrades included.</summary>
+public sealed record Sell(int Player, int BuildingId) : Command(Player);
