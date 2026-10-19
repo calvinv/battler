@@ -652,7 +652,8 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 3.4f, Kind.Factory => 4.0f, Kind.Tower => 5.0f,   // (a factory's bar clears its cogs) Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
+        Kind.Hq => 3.4f, Kind.Factory => 4.0f, Kind.Tower => 5.0f,   // (a factory's bar clears its cogs)
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
     };
 
     void DrawBarsAndSelection(float alpha)
