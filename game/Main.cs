@@ -114,7 +114,7 @@ public partial class Main : Node3D
             _distance = 60;
             _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.HasRally).ThenByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the rallying one, else the most upgraded
             var picked = W.Find(_selected);
-            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(14, 0, 4); _distance = 52; }   // on it and its base
+            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 3); _distance = 26; }   // close on it and its door
             if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 125; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
             _shotFrames = 10;
         }
@@ -139,6 +139,15 @@ public partial class Main : Node3D
                 // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
                 unit.Basis = Basis.LookingAt(new Vector3(team == 0 ? 1 : -1, 0, 0.35f).Normalized(), Vector3.Up);
             }
+        // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
+        for (int i = 0; i < 3; i++)
+        {
+            var ghost = UnitArt.MakeBuilding("tank", TeamColor[0]);
+            AddChild(ghost);
+            ghost.Position = new Vector3((i - 1) * 7, 0, 10);
+            ghost.Basis = Basis.LookingAt(new Vector3(1, 0, 0.35f).Normalized(), Vector3.Up);
+            UnitArt.SetBuilt(ghost, new[] { 0.2f, 0.5f, 0.8f }[i]);
+        }
         _banner.Text = "";
         _focus = Vector3.Zero;
         _distance = 90;   // the game's starting zoom
@@ -153,7 +162,7 @@ public partial class Main : Node3D
         if (name == null) return;
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
         GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{name}.png");
-        if (_lineupFrame == 10) _distance = 28;
+        if (_lineupFrame == 10) { _distance = 34; _focus = new Vector3(0, 0, 3); }
         else GetTree().Quit();
     }
 
@@ -526,6 +535,27 @@ public partial class Main : Node3D
 
     // ---- rally flags: where my factories' units gather -----------------------------------------------------------
 
+    // ---- the unit each factory is building, digitising up at its door ------------------------------------------
+
+    readonly Dictionary<int, Node3D> _ghosts = new();
+
+    void UpdateBuildGhost(Entity f)
+    {
+        if (!_ghosts.TryGetValue(f.Id, out var ghost))
+        {
+            ghost = UnitArt.MakeBuilding(ModelOf(f.Makes), TeamColor[f.Owner]);
+            AddChild(ghost);
+            _ghosts[f.Id] = ghost;
+            // Where the sim rolls the unit out (World.Produce), without its little sideways spread, facing the enemy.
+            var toward = (W.Players[1 - f.Owner].HqPos - f.Pos).WithLength(f.Stats.Radius + World.StatsFor[(int)f.Makes].Radius + 1);
+            var at = ToV3(f.Pos + toward);
+            ghost.Position = at;
+            ghost.Basis = Basis.LookingAt(new Vector3(toward.X.ToFloat(), 0, toward.Z.ToFloat()).Normalized(), Vector3.Up);
+        }
+        ghost.Visible = Shown(f) && W.Started && W.Winner < 0;
+        UnitArt.SetBuilt(ghost, 1f - f.Timer / (float)World.BuildTicksOf(f));
+    }
+
     readonly Dictionary<int, Node3D> _flags = new();
     ImmediateMesh _rallyLine;
 
@@ -723,6 +753,7 @@ public partial class Main : Node3D
             view.Visible = Shown(e);
             if (e.Kind == Kind.Factory) UpdateCogs(e, view, _frameDt);
             if (e.Kind == Kind.Factory) UpdateRallyFlag(e);
+            if (e.Kind == Kind.Factory) UpdateBuildGhost(e);
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
@@ -732,6 +763,7 @@ public partial class Main : Node3D
             _facing.Remove(id);
             _cogs.Remove(id);
             if (_flags.Remove(id, out var gone)) gone.QueueFree();
+            if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
         }
 
         DrawPlacement();

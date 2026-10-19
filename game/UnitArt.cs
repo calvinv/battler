@@ -33,6 +33,40 @@ public static class UnitArt
         return root;
     }
 
+    // ---- a unit being built: the same model under the "digitising" shader (build_holo.gdshader) -----------------
+
+    static Shader _holoShader;
+    static readonly Dictionary<(string, Color), ShaderMaterial> HoloMaterials = new();
+
+    /// <summary>A ghost of the unit `name` for a factory's door; set its build progress with <see cref="SetBuilt"/>.</summary>
+    public static Node3D MakeBuilding(string name, Color team)
+    {
+        var model = GD.Load<PackedScene>($"res://art/units/{name}.glb").Instantiate<Node3D>();
+        model.Scale = Vector3.One * Scale;
+        if (!HoloMaterials.TryGetValue((name, team), out var mat))
+        {
+            _holoShader ??= GD.Load<Shader>("res://game/build_holo.gdshader");
+            mat = new ShaderMaterial { Shader = _holoShader };
+            mat.SetShaderParameter("skin", GD.Load<Texture2D>($"res://art/units/{name}.png"));
+            mat.SetShaderParameter("team", team);
+            float top = 1f;
+            foreach (var mesh in Meshes(model)) top = Mathf.Max(top, mesh.Mesh.GetAabb().End.Y);
+            mat.SetShaderParameter("height", top);
+            HoloMaterials[(name, team)] = mat;
+        }
+        foreach (var mesh in Meshes(model)) mesh.MaterialOverride = mat;
+        var root = new Node3D();
+        model.RotationDegrees = new Vector3(0, 180, 0);
+        root.AddChild(model);
+        return root;
+    }
+
+    /// <summary>How far built a ghost from <see cref="MakeBuilding"/> is, 0 to 1.</summary>
+    public static void SetBuilt(Node3D ghost, float progress)
+    {
+        foreach (var mesh in Meshes(ghost)) mesh.SetInstanceShaderParameter("progress", progress);
+    }
+
     // ---- upgrade emblems painted on the unit: a sword (damage) and a shield (armour) ---------------------------
 
     // Where the emblems lie on each model, in its root's space (forward is -Z): a clear patch of deck, its height.
@@ -131,6 +165,10 @@ public static class UnitArt
         _swordTex?.Dispose();
         _shieldTex?.Dispose();
         _swordTex = _shieldTex = null;
+        foreach (var m in HoloMaterials.Values) m.Dispose();
+        HoloMaterials.Clear();
+        _holoShader?.Dispose();
+        _holoShader = null;
     }
 
     static IEnumerable<MeshInstance3D> Meshes(Node n)
