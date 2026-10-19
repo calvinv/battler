@@ -86,6 +86,7 @@ public partial class Main : Node3D
             _connectStatus = $"Connecting to {_joinAddress}...";
             DisplayServer.WindowSetTitle("Battler - client");
         }
+        else if (args.Contains("--lineup")) { BuildLineup(); return; }
         else StartMatch(new LocalSession((ulong)GD.Randi()));
 
         if (args.Contains("--shot"))
@@ -95,6 +96,40 @@ public partial class Main : Node3D
             _distance = 110;
             _shotFrames = 10;
         }
+    }
+
+    // ---- --lineup: the unit models side by side in both teams' colours, to judge their outlines at game distance ----
+
+    static readonly string[] LineupUnits = { "scout", "tank", "artillery" };
+    int _lineupFrame = -1;
+
+    void BuildLineup()
+    {
+        for (int team = 0; team < 2; team++)
+            for (int i = 0; i < LineupUnits.Length; i++)
+            {
+                var unit = UnitArt.Make(LineupUnits[i], TeamColor[team]);
+                AddChild(unit);
+                unit.Position = new Vector3((i - 1) * 7, 0, team == 0 ? -3.5f : 3.5f);
+                // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
+                unit.Basis = Basis.LookingAt(new Vector3(team == 0 ? 1 : -1, 0, 0.35f).Normalized(), Vector3.Up);
+            }
+        _banner.Text = "";
+        _focus = Vector3.Zero;
+        _distance = 90;   // the game's starting zoom
+        _lineupFrame = 0;
+    }
+
+    void StepLineup()
+    {
+        MoveCamera(0);
+        _lineupFrame++;
+        string name = _lineupFrame == 10 ? "lineup_far" : _lineupFrame == 20 ? "lineup_near" : null;
+        if (name == null) return;
+        DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
+        GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{name}.png");
+        if (_lineupFrame == 10) _distance = 28;
+        else GetTree().Quit();
     }
 
     public override void _ExitTree()
@@ -214,7 +249,7 @@ public partial class Main : Node3D
         var ground = new MeshInstance3D
         {
             Mesh = new PlaneMesh { Size = new Vector2(World.MapHalfX.ToFloat() * 2, World.MapHalfZ.ToFloat() * 2) },
-            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.24f, 0.2f) },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.46f, 0.41f, 0.33f) },   // dusty wasteland: olive machines stand out on it
         };
         AddChild(ground);
 
@@ -288,6 +323,7 @@ public partial class Main : Node3D
     {
         MoveCamera((float)delta);
 
+        if (_lineupFrame >= 0) { StepLineup(); return; }
         if (_session == null)
         {
             PollConnection();
