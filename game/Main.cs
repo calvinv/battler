@@ -122,6 +122,9 @@ public partial class Main : Node3D
             for (int i = 0; i < LineupUnits.Length; i++)
             {
                 var unit = UnitArt.Make(LineupUnits[i], TeamColor[team]);
+                // Emblems at a spread of levels: scout bronze sword, tank silver sword + gold shield, artillery both gold.
+                int[][] levels = { new[] { 1, 0 }, new[] { 2, 3 }, new[] { 3, 3 } };
+                UnitArt.AddEmblems(unit, LineupUnits[i], levels[i][0], levels[i][1]);
                 AddChild(unit);
                 unit.Position = new Vector3((i - 1) * 7, 0, team == 0 ? -3.5f : 3.5f);
                 // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
@@ -438,7 +441,13 @@ public partial class Main : Node3D
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
     Node3D MakeView(Entity e)
     {
-        if (e.Stats.IsUnit) return UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
+        if (e.Stats.IsUnit)
+        {
+            // A unit wears its upgrades as emblems on its deck (its levels are fixed when it's made).
+            var unit = UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
+            UnitArt.AddEmblems(unit, ModelOf(e.Kind), e.Level(Upgrade.Damage), e.Level(Upgrade.Armour));
+            return unit;
+        }
         var box = new MeshInstance3D { Mesh = MeshFor(e.Kind), MaterialOverride = MaterialFor(e.Kind, e.Owner) };
         if (e.Kind == Kind.Factory)
         {
@@ -669,7 +678,8 @@ public partial class Main : Node3D
             var top = pos + Vector3.Up * TopOf(e.Kind);
             if (!Shown(e)) continue;
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
-            int sword = e.Level(Upgrade.Damage), shield = e.Level(Upgrade.Armour);
+            // Factories float a sword and shield; units wear theirs on the deck (UnitArt.AddEmblems), so only rank floats.
+            int sword = e.Stats.IsUnit ? 0 : e.Level(Upgrade.Damage), shield = e.Stats.IsUnit ? 0 : e.Level(Upgrade.Armour);
             if ((sword > 0 || shield > 0 || e.Rank > 0) && !_camera.IsPositionBehind(top))
                 _overlay.Badges.Add((_camera.UnprojectPosition(top) - new Vector2(0, 14), sword, shield, e.Rank));
             // A bar only once it's been hurt (or while it's selected).

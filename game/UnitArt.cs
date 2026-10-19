@@ -33,6 +33,90 @@ public static class UnitArt
         return root;
     }
 
+    // ---- upgrade emblems painted on the unit: a sword (damage) and a shield (armour) ---------------------------
+
+    // Where the emblems lie on each model, in its root's space (forward is -Z): a clear patch of deck, its height.
+    static readonly Dictionary<string, (float Z, float Y)> Deck = new()
+    {
+        ["tank"] = (0.85f, 1.15f),       // the engine deck at the back
+        ["artillery"] = (-0.85f, 0.76f), // the front deck, under the barrel
+        ["scout"] = (0.2f, 0.76f),       // the roof, ahead of the mast
+    };
+    static readonly Color[] Metal = { new(0.8f, 0.5f, 0.25f), new(0.85f, 0.87f, 0.92f), new(1f, 0.82f, 0.25f) };   // bronze, silver, gold
+    static ImageTexture _swordTex, _shieldTex;
+    const int EmblemPx = 64;
+
+    /// <summary>A sword and/or a shield laid on the unit's deck, their metal by level (bronze, silver, gold).</summary>
+    public static void AddEmblems(Node3D unit, string name, int sword, int shield)
+    {
+        if ((sword == 0 && shield == 0) || !Deck.TryGetValue(name, out var deck)) return;
+        _swordTex ??= ImageTexture.CreateFromImage(Emblem(sword: true));
+        _shieldTex ??= ImageTexture.CreateFromImage(Emblem(sword: false));
+        bool both = sword > 0 && shield > 0;
+        if (sword > 0) unit.AddChild(Plate(_swordTex, Metal[sword - 1], new Vector3(both ? -0.36f : 0, deck.Y, deck.Z)));
+        if (shield > 0) unit.AddChild(Plate(_shieldTex, Metal[shield - 1], new Vector3(both ? 0.36f : 0, deck.Y, deck.Z)));
+    }
+
+    static Sprite3D Plate(Texture2D tex, Color metal, Vector3 at) => new()
+    {
+        Texture = tex,
+        PixelSize = 0.62f / EmblemPx,
+        Modulate = metal,
+        Shaded = false,
+        AlphaCut = SpriteBase3D.AlphaCutMode.Discard,
+        RotationDegrees = new Vector3(-90, 0, 0),   // lying flat, facing up at the camera
+        Position = at + Vector3.Up * 0.03f,
+    };
+
+    /// <summary>Draws a sword or a shield, white with a dark outline (the sprite tints the white to its metal).</summary>
+    static Image Emblem(bool sword)
+    {
+        var img = Image.CreateEmpty(EmblemPx, EmblemPx, false, Image.Format.Rgba8);
+        img.Fill(new Color(0, 0, 0, 0));
+        var ink = new Color(0.08f, 0.07f, 0.06f);
+        if (sword)
+        {
+            // Point up: blade, crossguard, grip, pommel; the outline is the same shapes drawn fatter first.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                var c = pass == 0 ? ink : Colors.White;
+                int g = pass == 0 ? 3 : 0;
+                FillRect(img, 28 - g, 6 - g, 36 + g, 42 + g, c);        // blade
+                FillPoly(img, new[] { new Vector2(28 - g, 8), new Vector2(32, 1 - g), new Vector2(36 + g, 8) }, c);   // point
+                FillRect(img, 16 - g, 41 - g, 48 + g, 47 + g, c);       // crossguard
+                FillRect(img, 29 - g, 47, 35 + g, 57 + g, c);           // grip
+                FillRect(img, 27 - g, 56 - g, 37 + g, 62, c);           // pommel
+            }
+            FillRect(img, 31, 9, 33, 40, new Color(0.7f, 0.7f, 0.7f));  // fuller down the blade
+        }
+        else
+        {
+            Vector2[] Heater(float grow) => new[]
+            {
+                new Vector2(10 - grow, 8 - grow), new Vector2(54 + grow, 8 - grow), new Vector2(54 + grow, 30),
+                new Vector2(32, 58 + grow), new Vector2(10 - grow, 30),
+            };
+            FillPoly(img, Heater(3.5f), ink);
+            FillPoly(img, Heater(0), Colors.White);
+            FillRect(img, 30, 12, 34, 50, new Color(0.6f, 0.6f, 0.6f)); // a band down the middle
+            FillRect(img, 14, 22, 50, 26, new Color(0.6f, 0.6f, 0.6f)); // and across
+        }
+        return img;
+    }
+
+    static void FillRect(Image img, int x0, int y0, int x1, int y1, Color c)
+    {
+        for (int y = Mathf.Max(0, y0); y < Mathf.Min(EmblemPx, y1); y++)
+            for (int x = Mathf.Max(0, x0); x < Mathf.Min(EmblemPx, x1); x++) img.SetPixel(x, y, c);
+    }
+
+    static void FillPoly(Image img, Vector2[] poly, Color c)
+    {
+        for (int y = 0; y < EmblemPx; y++)
+            for (int x = 0; x < EmblemPx; x++)
+                if (Geometry2D.IsPointInPolygon(new Vector2(x + 0.5f, y + 0.5f), poly)) img.SetPixel(x, y, c);
+    }
+
     /// <summary>
     /// Lets go of the cached shader and materials. Call when the game closes: Godot objects held in C# statics
     /// outlive the engine's shutdown, which then complains about render resources it can't free
@@ -44,6 +128,9 @@ public static class UnitArt
         Materials.Clear();
         _teamShader?.Dispose();
         _teamShader = null;
+        _swordTex?.Dispose();
+        _shieldTex?.Dispose();
+        _swordTex = _shieldTex = null;
     }
 
     static IEnumerable<MeshInstance3D> Meshes(Node n)
