@@ -12,7 +12,8 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: 1-3 choose a factory (scout, tank, artillery), left click places it near your HQ, WASD/arrows pan, wheel zooms,
+/// Controls: 1-3 pick a factory (scout, tank, artillery) and a click places it near your HQ (Esc or right click cancels);
+/// otherwise a click selects a unit or building to see its stats (Esc clears). WASD/arrows pan, wheel zooms,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
@@ -39,7 +40,12 @@ public partial class Main : Node3D
     string _connectStatus;
 
     readonly Dictionary<int, Node3D> _views = new();
-    Kind _buildKind = Kind.Tank;   // the factory a click places (keys 1-3)
+    Kind? _placing;                // build mode: the factory a click places (keys 1-3; Esc or a placement ends it)
+    int _selected = -1;            // the entity whose stats are shown (click it; Esc clears)
+    Overlay _overlay;
+    PanelContainer _statsPanel;
+    Label _stats;
+    MeshInstance3D _selRing;
     string _placeProblem;          // why the factory can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
@@ -97,6 +103,7 @@ public partial class Main : Node3D
             for (int i = 0; i < 75 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
             _focus = Vector3.Zero;
             _distance = 60;
+            _selected = W.Entities.FirstOrDefault(e => e.Owner == _me && e.Kind == Kind.Tank)?.Id ?? -1;   // show the stats panel
             _shotFrames = 10;
         }
     }
@@ -271,8 +278,29 @@ public partial class Main : Node3D
         _camera = new Camera3D { Fov = 40, Far = 500 };
         AddChild(_camera);
 
+        _selRing = new MeshInstance3D
+        {
+            Mesh = new TorusMesh { InnerRadius = 0.9f, OuterRadius = 1f, Rings = 32, RingSegments = 4 },
+            MaterialOverride = Unshaded(new Color(1f, 1f, 1f, 0.85f)),
+            Visible = false,
+        };
+        AddChild(_selRing);
+
         var ui = new CanvasLayer();
         AddChild(ui);
+        _overlay = new Overlay { AnchorRight = 1, AnchorBottom = 1 };
+        ui.AddChild(_overlay);
+        _statsPanel = new PanelContainer { AnchorTop = 1, AnchorBottom = 1, OffsetLeft = 16, OffsetTop = -230, Visible = false };
+        _statsPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.08f, 0.08f, 0.07f, 0.85f), BorderColor = new Color(0.5f, 0.45f, 0.35f),
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            ContentMarginLeft = 12, ContentMarginRight = 12, ContentMarginTop = 8, ContentMarginBottom = 8,
+        });
+        _stats = new Label();
+        _stats.AddThemeFontSizeOverride("font_size", 18);
+        _statsPanel.AddChild(_stats);
+        ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
         _hud.AddThemeFontSizeOverride("font_size", 20);
         ui.AddChild(_hud);
@@ -470,17 +498,95 @@ public partial class Main : Node3D
         }
 
         DrawPlacement();
+        DrawBarsAndSelection(alpha);
         DrawHud();
+    }
+
+    /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
+    static float TopOf(Kind k) => k switch
+    {
+        Kind.Hq => 3.4f, Kind.Factory => 3.0f, Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
+    };
+
+    void DrawBarsAndSelection(float alpha)
+    {
+        _overlay.Bars.Clear();
+        var right = _camera.GlobalBasis.X;
+        Entity selected = null;
+        foreach (var e in W.Entities)
+        {
+            var cur = ToV3(e.Pos);
+            var pos = _prevPos.TryGetValue(e.Id, out var p) && !W.Paused ? p.Lerp(cur, alpha) : cur;
+            var top = pos + Vector3.Up * TopOf(e.Kind);
+            if (_camera.IsPositionBehind(top)) continue;
+            var r = e.Stats.Radius.ToFloat();
+            var width = _camera.UnprojectPosition(top + right * r).X - _camera.UnprojectPosition(top - right * r).X;
+            _overlay.Bars.Add((_camera.UnprojectPosition(top), width, Mathf.Clamp(e.Hp / (float)e.Stats.MaxHp, 0, 1),
+                               TeamColor[e.Owner], e.Id == _selected));
+            if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
+        }
+        _overlay.QueueRedraw();
+
+        if (selected == null) _selected = -1;   // (it died)
+        _selRing.Visible = selected != null;
+        _statsPanel.Visible = selected != null;
+        if (selected == null) return;
+        var ring = selected.Stats.Radius.ToFloat() * (selected.Stats.IsUnit ? 1.25f : 1.15f);
+        _selRing.Scale = new Vector3(ring, 1, ring);
+        _stats.Text = Describe(selected);
+        _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
+    }
+
+    string Describe(Entity e)
+    {
+        var s = e.Stats;
+        var lines = new List<string>
+        {
+            $"{e.Kind}  ({(e.Owner == _me ? "yours" : "enemy")})",
+            e.Kind switch
+            {
+                Kind.Scout => "Fast and fragile: first to the fight.",
+                Kind.Tank => "Tough all-rounder.",
+                Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
+                Kind.Hq => "Lose it and you lose the match.",
+                _ => $"Makes a {e.Makes} every {World.StatsFor[(int)e.Makes].BuildTicks / World.TicksPerSecond} s",
+            },
+            $"Health  {Mathf.Max(e.Hp, 0)} / {s.MaxHp}",
+        };
+        if (s.Reload > 0)
+        {
+            float every = s.Reload / (float)World.TicksPerSecond;
+            lines.Add($"Damage  {s.Damage} every {every:0.#} s  ({s.Damage / every:0.#} per s)");
+            lines.Add($"Range  {s.Range}" + (s.MinRange.Raw > 0 ? $"   (none within {s.MinRange})" : ""));
+            if (s.Splash.Raw > 0) lines.Add($"Splash  {s.Splash} wide");
+        }
+        if (s.IsUnit) lines.Add($"Speed  {s.Speed.ToFloat() * World.TicksPerSecond:0.#} per s");
+        if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        return string.Join("\n", lines);
+    }
+
+    /// <summary>The entity under a point on the ground, if any (the nearest whose footprint holds it).</summary>
+    Entity EntityAt(Vector3 ground)
+    {
+        Entity best = null;
+        float bestD = float.MaxValue;
+        foreach (var e in W.Entities)
+        {
+            var d = ToV3(e.Pos).DistanceTo(ground);
+            if (d <= e.Stats.Radius.ToFloat() + 0.6f && d < bestD) { best = e; bestD = d; }
+        }
+        return best;
     }
 
     void DrawPlacement()
     {
         _mouseGround = GroundUnderMouse();
-        var canPlay = W.Winner < 0;
-        _ghost.Visible = canPlay && _mouseGround.HasValue;
+        if (W.Winner >= 0) _placing = null;
+        _ghost.Visible = _placing != null && _mouseGround.HasValue;
+        _placeProblem = null;
         if (_ghost.Visible)
         {
-            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _buildKind, out _placeProblem);
+            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value, out _placeProblem);
             _ghostMat.AlbedoColor = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.4f);
             _ghost.Position = _mouseGround.Value + Vector3.Up * HeightOf(Kind.Factory);
         }
@@ -511,10 +617,13 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
-            $"{(k == _buildKind ? ">" : " ")}{i + 1} {k} {World.StatsFor[(int)k].FactoryCost}"));
+            $"[{i + 1}] {k} {World.StatsFor[(int)k].FactoryCost}"));
+        var building = _placing == null
+            ? $"Build: {menu}"
+            : $"Placing {_placing} factory: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
             $"Metal {me.Metal}\n" +
-            $"Factory: {menu}" + (_ghost.Visible && _placeProblem != null ? $"   ({_placeProblem})" : "") + "\n" +
+            building + "\n" +
             $"Units {myUnits} vs {theirUnits}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
@@ -544,13 +653,26 @@ public partial class Main : Node3D
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
             else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(160, _distance * 1.1f);
-            else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue && W.Winner < 0)
-                _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value), _buildKind));
+            else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue)
+            {
+                if (_placing != null)
+                {
+                    // One factory per build: placing it ends build mode. A bad spot keeps it, to try again.
+                    if (_placeProblem == null) { _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value)); _placing = null; }
+                }
+                else _selected = EntityAt(_mouseGround.Value)?.Id ?? -1;
+            }
+            else if (mb.ButtonIndex == MouseButton.Right) { _placing = null; }
         }
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.UnitKinds.Length)
-                _buildKind = World.UnitKinds[k.Keycode - Key.Key1];
+            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.UnitKinds.Length && W.Winner < 0)
+                _placing = World.UnitKinds[k.Keycode - Key.Key1];
+            else if (k.Keycode == Key.Escape)
+            {
+                if (_placing != null) _placing = null;
+                else _selected = -1;
+            }
             else if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
             else if (k.Keycode == Key.Enter) _session.Issue(new Resume(_me));
             else if (k.Keycode == Key.R && W.Winner >= 0 && _session is LocalSession) StartMatch(new LocalSession((ulong)GD.Randi()));
