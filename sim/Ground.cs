@@ -13,8 +13,9 @@ public sealed class Ground
     public const int Margin = 20;
     public static readonly (FixVec2 At, Fix R)[] Ponds =
     {
-        (new FixVec2(-30, 33), 5), (new FixVec2(-5, -35), 6), (new FixVec2(20, 36), 5), (new FixVec2(38, -30), Fix.Ratio(9, 2)),
-        (new FixVec2(55, 34), 4), (new FixVec2(-52, -36), Fix.Ratio(9, 2)),
+        // Mirrored left to right like the rest of the ground, so neither side has the better map.
+        (new FixVec2(30, 33), 5), (new FixVec2(-30, 33), 5), (new FixVec2(38, -30), Fix.Ratio(9, 2)), (new FixVec2(-38, -30), Fix.Ratio(9, 2)),
+        (new FixVec2(55, 34), 4), (new FixVec2(-55, 34), 4), (new FixVec2(9, -36), 5), (new FixVec2(-9, -36), 5),
     };
 
     readonly int _x0, _z0, _w, _h;   // the grid: one height per world unit, from (_x0, _z0)
@@ -35,7 +36,9 @@ public sealed class Ground
     static Fix Shape(int x, int z, FixVec2[] bases)
     {
         // Three octaves of value noise, about +-5 high.
-        var n = Value(x, z, 24, 0) + Value(x, z, 12, 1) * Fix.Ratio(1, 2) + Value(x, z, 6, 2) * Fix.Ratio(1, 4);
+        // Mirrored about the middle (x = 0): each side's half of the map is the other's reflection, for fairness.
+        int mx = Math.Abs(x);
+        var n = Value(mx, z, 24, 0) + Value(mx, z, 12, 1) * Fix.Ratio(1, 2) + Value(mx, z, 6, 2) * Fix.Ratio(1, 4);
         var h = n * Fix.Ratio(20, 7);
         var p = new FixVec2(x, z);
         foreach (var b in bases) h *= SmoothStep(27, 38, (p - b).Length);                  // flat where bases build
