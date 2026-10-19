@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery }
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -40,7 +40,9 @@ public sealed class Entity
     // A factory's upgrade levels by Upgrade; a unit carries its factory's at the time it was made.
     public readonly int[] Levels = new int[3];
     public int MaxHp;      // with armour upgrades
-    public int Damage;     // with damage upgrades
+    public int Damage;     // with damage upgrades and veterancy
+    public int Kills;      // what it has finished off
+    public int Rank;       // veterancy, 0 to World.MaxRank: every World.KillsPerRank kills
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -73,6 +75,9 @@ public sealed class World
     public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
 
     public const int MaxUpgradeLevel = 3;
+    // Veterancy (the user, 2026-10-19: "they get 10% stat boosts after x kills"): a rank every 3 kills, up to 3;
+    // each rank +10% damage and health.
+    public const int KillsPerRank = 3, MaxRank = 3;
     static readonly int[] UpgradeCosts = { 200, 400, 700 };   // for levels 1, 2, 3
     public static int UpgradeCost(int toLevel) => UpgradeCosts[toLevel - 1];
     // Per level: production 15% quicker, damage +25%, armour (health) +25%.
@@ -101,6 +106,9 @@ public sealed class World
         // Artillery
         new() { MaxHp = 90, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
                 Splash = Fix.Ratio(25, 10), Damage = 40, Reload = 40, BuildTicks = 16 * TicksPerSecond },
+        // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
+        // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
+        new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 20, Reload = 10 },
     };
 
     public int Tick;
@@ -130,22 +138,42 @@ public sealed class World
             var hq = HqStart(i);
             Players[i] = new Player { Id = i, Metal = StartMetal, PausesLeft = PausesPerPlayer, HqPos = hq };
             Spawn(Kind.Hq, i, hq);
+            foreach (var side in new[] { -10, 10 }) Spawn(Kind.Tower, i, TowerStart(i, side));
         }
     }
 
     public static FixVec2 HqStart(int player) => new(player == 0 ? -45 : 45, 0);
+    /// <summary>Where a starting watch tower stands: 12 toward the enemy from the HQ, `side` across.</summary>
+    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -33 : 33, side);
 
     /// <param name="from">a unit's factory: the unit takes its upgrade levels</param>
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
     {
         var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos, Makes = makes };
         if (from != null) from.Levels.CopyTo(e.Levels, 0);
-        e.MaxHp = WithArmour(e.Stats.MaxHp, e.Level(Upgrade.Armour));
-        e.Damage = WithDamage(e.Stats.Damage, e.Level(Upgrade.Damage));
+        SetStats(e);
         e.Hp = e.MaxHp;
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
         Entities.Add(e);
         return e;
+    }
+
+    /// <summary>Health and damage from the base stats, the upgrades it was made with, and its veterancy.</summary>
+    static void SetStats(Entity e)
+    {
+        e.MaxHp = WithArmour(e.Stats.MaxHp, e.Level(Upgrade.Armour)) * (100 + 10 * e.Rank) / 100;
+        e.Damage = WithDamage(e.Stats.Damage, e.Level(Upgrade.Damage)) * (100 + 10 * e.Rank) / 100;
+    }
+
+    /// <summary>A kill for `by`; every KillsPerRank of them it ranks up, and heals by the health it gains.</summary>
+    static void Credit(Entity by)
+    {
+        by.Kills++;
+        if (!by.Stats.IsUnit || by.Rank >= MaxRank || by.Kills < (by.Rank + 1) * KillsPerRank) return;
+        int before = by.MaxHp;
+        by.Rank++;
+        SetStats(by);
+        if (by.Hp > 0) by.Hp += by.MaxHp - before;
     }
 
     /// <summary>How often a factory makes a unit, with its production upgrades.</summary>
@@ -292,8 +320,14 @@ public sealed class World
         }
     }
 
+    /// <summary>
+    /// Everyone decides from where everyone stood at the start of the tick, then all moves and all damage land
+    /// together. Moving one by one let whoever came first in the list (player 0's things are made first) act on
+    /// positions the others hadn't had a turn to change: player 0 won 37 of 60 AI matches even with the AIs swapped.
+    /// </summary>
     void Fight()
     {
+        _moves.Clear();
         foreach (var e in Entities)
         {
             if (e.Dead || e.Hp <= 0) continue;
@@ -312,14 +346,20 @@ public sealed class World
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (s.IsUnit) e.Pos += (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - s.Range));
+                if (s.IsUnit) _moves.Add((e, (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - s.Range))));
             }
             else if (s.IsUnit)
             {
-                e.Pos += (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed);
+                _moves.Add((e, (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed)));
             }
         }
-        foreach (var (target, damage) in _hits) target.Hp -= damage;
+        foreach (var (e, step) in _moves) e.Pos += step;
+        foreach (var (target, damage, by) in _hits)
+        {
+            bool alive = target.Hp > 0;
+            target.Hp -= damage;
+            if (alive && target.Hp <= 0) Credit(by);   // the shot that finished it
+        }
         _hits.Clear();
     }
 
@@ -333,16 +373,17 @@ public sealed class World
         var s = e.Stats;
         e.Cooldown = s.Reload;
         Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind));
-        if (s.Splash.Raw == 0) { _hits.Add((target, e.Damage)); return; }
+        if (s.Splash.Raw == 0) { _hits.Add((target, e.Damage, e)); return; }
         foreach (var o in Entities)
         {
             if (o.Dead || o.Owner == e.Owner) continue;
             var reach = s.Splash + o.Stats.Radius;
-            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, e.Damage));
+            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, e.Damage, e));
         }
     }
 
-    readonly List<(Entity, int)> _hits = new();
+    readonly List<(Entity Target, int Damage, Entity By)> _hits = new();
+    readonly List<(Entity Who, FixVec2 Step)> _moves = new();
 
     /// <summary>The nearest live enemy within <paramref name="within"/> and no nearer than <paramref name="notNearer"/> (edge to edge).</summary>
     Entity NearestEnemy(Entity from, Fix within, Fix notNearer)
@@ -365,13 +406,16 @@ public sealed class World
         return best;
     }
 
-    /// <summary>Pushes overlapping units apart (and out of buildings) so they don't stack.</summary>
+    /// <summary>Pushes overlapping units apart (and out of buildings) so they don't stack: every push is worked out
+    /// from the same positions, then all are applied (one by one favoured whoever went first).</summary>
     void Separate()
     {
+        _moves.Clear();
         for (int i = 0; i < Entities.Count; i++)
         {
             var a = Entities[i];
             if (a.Dead || a.Stats.IsBuilding) continue;
+            var total = FixVec2.Zero;
             for (int j = 0; j < Entities.Count; j++)
             {
                 if (i == j) continue;
@@ -385,9 +429,11 @@ public sealed class World
                 // Exactly on top of each other: split by id so both machines agree.
                 var dir = len.Raw == 0 ? new FixVec2(a.Id < b.Id ? -1 : 1, 0) : d;
                 var push = b.Stats.IsBuilding ? min - len : (min - len) / 2;
-                a.Pos += dir.WithLength(push);
+                total += dir.WithLength(push);
             }
+            if (total.X.Raw != 0 || total.Z.Raw != 0) _moves.Add((a, total));
         }
+        foreach (var (e, step) in _moves) e.Pos += step;
     }
 
     void Reap()
@@ -411,7 +457,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank);
             foreach (var l in e.Levels) Mix(l);
         }
         return h;

@@ -16,7 +16,8 @@ int ReplayTest()
 {
     // Live run: two AIs, plus player 0 calls a pause at tick 600 and ends it early at 700.
     var world = new World(Seed);
-    var ais = new[] { new SimpleAi(0, Seed * 7 + 1), new SimpleAi(1, Seed * 7 + 2) };
+    var swap = Environment.GetEnvironmentVariable("SWAP_AI") == "1";   // each AI personality on the other side
+    var ais = new[] { new SimpleAi(0, Seed * 7 + (swap ? 2UL : 1UL)), new SimpleAi(1, Seed * 7 + (swap ? 1UL : 2UL)) };
     var log = new List<Command[]>();
     var sums = new List<ulong>();
     int pausedTicks = 0;
@@ -104,6 +105,8 @@ int LanTest()
     return 0;
 }
 
+static int MaxRank(World w) { int r = 0; foreach (var e in w.Entities) r = Math.Max(r, e.Rank); return r; }
+
 static void Report(World world)
 {
     int m0 = 0, m1 = 0, f0 = 0, f1 = 0;
@@ -113,5 +116,5 @@ static void Report(World world)
         if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}");
+    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
 }

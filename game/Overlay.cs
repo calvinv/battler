@@ -8,6 +8,11 @@ namespace Battler.Game;
 public partial class Overlay : Control
 {
     public readonly List<(Vector2 Centre, float Width, float Fraction, Color Team, bool Selected)> Bars = new();
+    /// <summary>Upgrade and veterancy marks over a unit or factory: a sword per damage level, a shield per armour
+    /// level (shown as pips under each), gold chevrons per veterancy rank.</summary>
+    public readonly List<(Vector2 Centre, int Sword, int Shield, int Rank)> Badges = new();
+
+    static readonly Color Steel = new(0.85f, 0.88f, 0.92f), Gold = new(1f, 0.8f, 0.25f), Ink = new(0f, 0f, 0f, 0.9f);
 
     public override void _Ready() => MouseFilter = MouseFilterEnum.Ignore;   // clicks go through to the game
 
@@ -23,6 +28,68 @@ public partial class Overlay : Control
             var fill = frac > 0.5f ? new Color(0.35f, 0.85f, 0.3f) : frac > 0.25f ? new Color(0.95f, 0.8f, 0.2f) : new Color(0.95f, 0.25f, 0.2f);
             DrawRect(new Rect2(r.Position, new Vector2(w * frac, h)), fill);
             DrawRect(new Rect2(r.Position, new Vector2(Mathf.Min(3f, w), h)), team);
+        }
+        foreach (var (c, sword, shield, rank) in Badges)
+        {
+            DrawSetTransform(c, 0, Vector2.One * 1.4f);   // icons drawn about their own centre, 1.4 times size
+            DrawBadges(Vector2.Zero, sword, shield, rank);
+        }
+        DrawSetTransform(Vector2.Zero, 0, Vector2.One);
+    }
+
+    void DrawBadges(Vector2 c, int sword, int shield, int rank)
+    {
+        const float Cell = 15f;
+        int n = (sword > 0 ? 1 : 0) + (shield > 0 ? 1 : 0) + (rank > 0 ? 1 : 0);
+        float x = c.X - (n - 1) * Cell / 2;
+        if (sword > 0) { Sword(new Vector2(x, c.Y)); Pips(new Vector2(x, c.Y + 9), sword, Steel); x += Cell; }
+        if (shield > 0) { Shield(new Vector2(x, c.Y)); Pips(new Vector2(x, c.Y + 9), shield, Steel); x += Cell; }
+        if (rank > 0) Chevrons(new Vector2(x, c.Y), rank);
+    }
+
+    void Sword(Vector2 c)
+    {
+        // A blade on the diagonal, a crossguard across it, a pommel; inked under.
+        var tip = c + new Vector2(5, -6);
+        var hilt = c + new Vector2(-3, 2);
+        DrawLine(hilt + new Vector2(-1, 1), tip, Ink, 4f);
+        DrawLine(hilt, tip, Steel, 2f);
+        DrawLine(c + new Vector2(-5, -1), c + new Vector2(0, 4), Ink, 3.5f);
+        DrawLine(c + new Vector2(-5, -1), c + new Vector2(0, 4), Gold, 2f);
+        DrawCircle(c + new Vector2(-5, 5), 1.6f, Gold);
+    }
+
+    void Shield(Vector2 c)
+    {
+        var pts = new[]
+        {
+            c + new Vector2(-5, -6), c + new Vector2(5, -6), c + new Vector2(5, 0), c + new Vector2(0, 6), c + new Vector2(-5, 0),
+        };
+        var ink = new Vector2[pts.Length];
+        for (int i = 0; i < pts.Length; i++) ink[i] = c + (pts[i] - c) * 1.3f;
+        DrawColoredPolygon(ink, Ink);
+        DrawColoredPolygon(pts, Steel);
+        DrawLine(c + new Vector2(0, -5), c + new Vector2(0, 4), new Color(0.45f, 0.5f, 0.6f), 1.5f);
+    }
+
+    void Chevrons(Vector2 c, int rank)
+    {
+        for (int i = 0; i < rank; i++)
+        {
+            float y = c.Y + 3 - i * 4;
+            var pts = new[] { new Vector2(c.X - 5, y - 3), new Vector2(c.X, y), new Vector2(c.X + 5, y - 3) };
+            DrawPolyline(pts, Ink, 4f);
+            DrawPolyline(pts, Gold, 2f);
+        }
+    }
+
+    void Pips(Vector2 c, int count, Color colour)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            var p = new Vector2(c.X + (i - (count - 1) / 2f) * 4f, c.Y);
+            DrawCircle(p, 1.8f, Ink);
+            DrawCircle(p, 1.2f, colour);
         }
     }
 }

@@ -101,10 +101,12 @@ public partial class Main : Node3D
 
         if (args.Contains("--shot"))
         {
-            for (int i = 0; i < 75 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
+            for (int i = 0; i < 150 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
             _focus = Vector3.Zero;
             _distance = 60;
-            _selected = W.Entities.FirstOrDefault(e => e.Owner == _me && e.Kind == Kind.Factory)?.Id ?? -1;   // show the stats panel and upgrades
+            _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the most upgraded: its panel, cogs and badges
+            var picked = W.Find(_selected);
+            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 5); _distance = 30; }   // close on it
             _shotFrames = 10;
         }
     }
@@ -253,11 +255,11 @@ public partial class Main : Node3D
         return x >= 0 && z >= 0 && x < FogW && z < FogH && _fogData[z * FogW + x] > 0;
     }
 
-    /// <summary>Whether to draw something: mine; anything my side sees now; enemy buildings once spotted; and
+    /// <summary>Whether to draw something: mine; anything my side sees now; enemy buildings once spotted; and the
     /// the enemy HQ, whose place everyone knows.</summary>
     bool Shown(Entity e)
     {
-        if (e.Owner == _me || e.Kind == Kind.Hq) return true;
+        if (e.Owner == _me || e.Kind is Kind.Hq or Kind.Tower) return true;
         if (World.CanSee(_me, e)) { if (e.Stats.IsBuilding) _seenBuildings.Add(e.Id); return true; }
         return _seenBuildings.Contains(e.Id);
     }
@@ -415,6 +417,7 @@ public partial class Main : Node3D
         m = k switch
         {
             Kind.Hq => new BoxMesh { Size = new Vector3(r * 1.6f, 3, r * 1.6f) },
+            Kind.Tower => new CylinderMesh { TopRadius = r * 0.55f, BottomRadius = r * 0.9f, Height = 4.5f, RadialSegments = 8 },
             Kind.Factory => new BoxMesh { Size = new Vector3(r * 1.7f, 2, r * 1.7f) },
             _ => new BoxMesh { Size = new Vector3(r * 1.6f, 1.6f, r * 1.2f) },
         };
@@ -448,13 +451,62 @@ public partial class Main : Node3D
         return box;
     }
 
+    // ---- production cogs: one brass cog over a factory per production upgrade, spinning ------------------------
+
+    readonly Dictionary<int, List<Node3D>> _cogs = new();
+    StandardMaterial3D _brass;
+    float _cogTurn;   // seconds the cogs have been turning (paused with the game)
+    float _frameDt;
+
+    static Node3D MakeCog(Material brass)
+    {
+        var cog = new Node3D();
+        cog.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.42f, BottomRadius = 0.42f, Height = 0.16f, RadialSegments = 12 }, MaterialOverride = brass });
+        for (int i = 0; i < 8; i++)
+        {
+            float a = i * Mathf.Tau / 8;
+            cog.AddChild(new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.2f, 0.16f, 0.2f) },
+                MaterialOverride = brass,
+                Position = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)) * 0.5f,
+                Rotation = new Vector3(0, -a, 0),
+            });
+        }
+        cog.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.12f, BottomRadius = 0.12f, Height = 0.22f, RadialSegments = 6 }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.18f, 0.15f) } });
+        return cog;
+    }
+
+    void UpdateCogs(Entity f, Node3D view, float dt)
+    {
+        int level = f.Level(Upgrade.Production);
+        if (!_cogs.TryGetValue(f.Id, out var cogs)) _cogs[f.Id] = cogs = new List<Node3D>();
+        _brass ??= new StandardMaterial3D { AlbedoColor = new Color(0.86f, 0.64f, 0.26f), Metallic = 0.6f, Roughness = 0.4f };
+        while (cogs.Count < level)
+        {
+            var cog = MakeCog(_brass);
+            view.AddChild(cog);
+            cogs.Add(cog);
+        }
+        // Face the camera (it looks down at 53 degrees from the south), side by side over the roof, neighbours
+        // turning opposite ways like meshed gears; quicker the more the factory's been upgraded.
+        var facing = new Basis(Vector3.Right, Mathf.DegToRad(53));
+        float speed = 1.2f + 0.9f * level;
+        for (int i = 0; i < cogs.Count; i++)
+        {
+            float spin = (i % 2 == 0 ? 1 : -1) * _cogTurn * speed + (i % 2) * Mathf.Pi / 8;
+            cogs[i].Basis = facing * new Basis(Vector3.Up, spin);
+            cogs[i].Position = new Vector3((i - (cogs.Count - 1) / 2f) * 0.98f, 2.6f, 0);
+        }
+    }
+
     static Vector3 ToV3(FixVec2 p) => new(p.X.ToFloat(), 0, p.Z.ToFloat());
 
     /// <summary>Where a view's origin sits above the ground: boxes are centred, unit models stand on y = 0.</summary>
-    static float HeightOf(Kind k) => k switch { Kind.Hq => 1.5f, Kind.Factory => 1f, _ => 0f };
+    static float HeightOf(Kind k) => k switch { Kind.Hq => 1.5f, Kind.Factory => 1f, Kind.Tower => 2.25f, _ => 0f };
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 3f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 3f, Kind.Tower => 4.2f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -481,6 +533,8 @@ public partial class Main : Node3D
         if (_acc > TickLength) _acc = 0;   // fell far behind; don't spiral
 
         FadeBlasts((float)delta);
+        _frameDt = (float)delta;
+        if (!W.Paused && W.Started) _cogTurn += _frameDt;
         Draw((float)(_acc / TickLength));
         TakeShotWhenReady();
     }
@@ -579,6 +633,7 @@ public partial class Main : Node3D
             }
             view.Position = pos + Vector3.Up * HeightOf(e.Kind);
             view.Visible = Shown(e);
+            if (e.Kind == Kind.Factory) UpdateCogs(e, view, _frameDt);
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
@@ -586,6 +641,7 @@ public partial class Main : Node3D
             _views.Remove(id);
             _prevPos.Remove(id);
             _facing.Remove(id);
+            _cogs.Remove(id);
         }
 
         DrawPlacement();
@@ -596,12 +652,13 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 3.4f, Kind.Factory => 3.0f, Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
+        Kind.Hq => 3.4f, Kind.Factory => 4.0f, Kind.Tower => 5.0f,   // (a factory's bar clears its cogs) Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
     };
 
     void DrawBarsAndSelection(float alpha)
     {
         _overlay.Bars.Clear();
+        _overlay.Badges.Clear();
         var right = _camera.GlobalBasis.X;
         Entity selected = null;
         foreach (var e in W.Entities)
@@ -611,6 +668,9 @@ public partial class Main : Node3D
             var top = pos + Vector3.Up * TopOf(e.Kind);
             if (!Shown(e)) continue;
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
+            int sword = e.Level(Upgrade.Damage), shield = e.Level(Upgrade.Armour);
+            if ((sword > 0 || shield > 0 || e.Rank > 0) && !_camera.IsPositionBehind(top))
+                _overlay.Badges.Add((_camera.UnprojectPosition(top) - new Vector2(0, 14), sword, shield, e.Rank));
             // A bar only once it's been hurt (or while it's selected).
             if (e.Hp >= e.MaxHp && e.Id != _selected) continue;
             if (_camera.IsPositionBehind(top)) continue;
@@ -665,6 +725,7 @@ public partial class Main : Node3D
                 Kind.Tank => "Tough all-rounder.",
                 Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
                 Kind.Hq => "Lose it and you lose the match.",
+                Kind.Tower => "Guards the base: long range and sight.",
                 _ => $"Makes: {e.Makes}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
             $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
