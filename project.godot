@@ -1,0 +1,19 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="Battler"
+config/description="3D mech base builder: build factories, they spawn mechs that fight on their own."
+run/main_scene="res://game/main.tscn"
+config/features=PackedStringArray("4.6", "C#")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[dotnet]
+
+project/assembly_name="Battler"

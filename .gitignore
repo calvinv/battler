@@ -1,0 +1,25 @@
+# Godot
+.godot/
+export_presets.cfg
+export/
+builds/
+
+# .NET
+bin/
+obj/
+.mono/
+mono_crash.*.json
+
+# AI-generated drafts from ai-tools (keepers get moved into art/)
+art/_gen/*
+!art/_gen/.gdignore
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+__pycache__/
+
+# Debug screenshots (--shot runs)
+screenshots/
