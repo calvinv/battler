@@ -20,3 +20,6 @@ public sealed record UpgradeFactory(int Player, int FactoryId, Upgrade Which) : 
 
 /// <summary>Where a factory's units gather and hold (Clear: none, so they attack).</summary>
 public sealed record SetRally(int Player, int FactoryId, bool Clear, FixVec2 Pos) : Command(Player);
+
+/// <summary>Deploys an outpost (a sub-base: factories can be built near it) somewhere this side can see.</summary>
+public sealed record PlaceOutpost(int Player, FixVec2 Pos) : Command(Player);

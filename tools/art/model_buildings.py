@@ -1,4 +1,4 @@
-"""Battler's buildings: model_buildings.py -- <factory_tank|factory_scout|factory_artillery|hq|tower>
+"""Battler's buildings: model_buildings.py -- <factory_tank|factory_scout|factory_artillery|hq|tower|outpost>
 (The user, 2026-10-19: "Please work on some factory models, dont over think it just get some stuff in".) The same gritty
 dieselpunk look as the units (model_units.py), each with its own outline from above: the tank works a long sawtooth-roofed
 shed with stacks; the scout bay a low stepped hangar with a radio mast; the artillery yard an open walled yard under a
@@ -133,6 +133,31 @@ def tower():
     k.finish("tower", 34.0, UNITS)
 
 
+def outpost():
+    """An outpost (a sub-base out in the field): a ring of sandbags round a low bunker with a team-coloured roof, a
+    radar dish on a mast, and a small gun turret."""
+    k.begin(0.0)
+    for i in range(12):                                              # the sandbag ring, a gap at the front
+        ang = (i + 0.5) * math.tau / 12
+        if abs(math.atan2(math.sin(ang), math.cos(ang))) < 0.3:
+            continue
+        a, x = math.cos(ang) * 11, math.sin(ang) * 11
+        k.drum(a, x, 1.6, 0, 1.4, "rust", 6, 1.3)
+        k.drum(a, x, 1.3, 1.4, 2.4, "plate", 6, 0.9)
+    k.box(-6, 6, -6, 6, 0, 4.5, "steel", nose=0.85, tail=0.85, sits=True)          # the bunker
+    k.box(-5, 5, -5, 5, 4.5, 5.2, "paint")                            # its roof in team colour
+    for s in (1, -1):
+        rivets(-5.5, 5.5, s * 6, 3.5, 7)
+    k.box(5.6, 6.3, -2.5, 2.5, 1.2, 2.2, "black")                     # firing slit
+    k.drum(-3, -3, 0.3, 5.2, 12, "dark", 6, 0.2)                      # radar mast and dish
+    k.drum(-2.6, -3, 2.2, 11.5, 11.9, "mid", 12, 1.6)
+    k.drum(-3, -3, 0.25, 12, 12.5, "ember", 6)
+    k.drum(2, 2, 2, 5.2, 7, "steel", 8, 1.7)                          # gun turret
+    k.tube(3.5, 8.5, 2, 6.2, 0.3, "mid", 6)
+    eye(6.35, -3.5, 3.2, 0.5)
+    k.finish("outpost", 34.0, UNITS)
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_scout": factory_scout, "factory_artillery": factory_artillery,
- "hq": hq, "tower": tower}[which]()
+ "hq": hq, "tower": tower, "outpost": outpost}[which]()

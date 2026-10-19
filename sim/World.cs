@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -81,6 +81,9 @@ public sealed class World
     public const int StartMetal = 600;
     public const int IncomePerTick = 2;
     public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
+    public const int OutpostCost = 600;
+    static readonly Fix OutpostReach = 15, OutpostReachPerLevel = 4;   // where factories can go round it; its "Production" track is reach
+    static readonly Fix KeepClearOfEnemy = 15;   // an outpost can't go this near an enemy building
 
     public const int MaxUpgradeLevel = 3;
     // Veterancy (the user, 2026-10-19: "they get 10% stat boosts after x kills"): a rank every 3 kills, up to 3;
@@ -121,6 +124,9 @@ public sealed class World
         // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
         // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
         new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 20, Reload = 10 },
+        // Outpost: a sub-base deployed out in the field (the user, 2026-10-19: "bases you can deploy further out as
+        // sub bases, those can be upgraded"): factories can be built near it; a light gun; upgrades reach, guns, armour.
+        new() { MaxHp = 1500, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 8, Reload = 10 },
     };
 
     public int Tick;
@@ -207,9 +213,59 @@ public sealed class World
     {
         var f = Find(factoryId);
         why = null;
-        if (f == null || f.Kind != Kind.Factory || f.Owner != player) { why = "Not your factory"; return false; }
+        if (f == null || f.Kind is not (Kind.Factory or Kind.Outpost) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
         if (f.Level(which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
         if (Players[player].Metal < UpgradeCost(f.Level(which) + 1)) { why = "Not enough metal"; return false; }
+        return true;
+    }
+
+    // ---- outposts: sub-bases out in the field ----------------------------------------------------------------
+
+    /// <summary>How far round an outpost factories can go: its "Production" upgrade track is reach.</summary>
+    public static Fix OutpostRadius(Entity o) => OutpostReach + OutpostReachPerLevel * o.Level(Upgrade.Production);
+
+    /// <summary>How far something sees, before high ground: an outpost's reach upgrades widen its sight too.</summary>
+    static Fix VisionOf(Entity e) =>
+        e.Kind == Kind.Outpost ? e.Stats.Vision + OutpostReachPerLevel * e.Level(Upgrade.Production) : e.Stats.Vision;
+
+    /// <summary>Whether a player may build a factory here: near their HQ, or near one of their outposts.</summary>
+    public bool InBuildRange(int player, FixVec2 pos)
+    {
+        if ((pos - Players[player].HqPos).LengthSq <= BuildRadius * BuildRadius) return true;
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Kind != Kind.Outpost || e.Owner != player) continue;
+            var r = OutpostRadius(e);
+            if ((pos - e.Pos).LengthSq <= r * r) return true;
+        }
+        return false;
+    }
+
+    /// <summary>An outpost goes anywhere on the map its side can see now, clear of other buildings and not right up
+    /// against the enemy's.</summary>
+    public bool CanPlaceOutpost(int player, FixVec2 pos, out string why)
+    {
+        var r = StatsFor[(int)Kind.Outpost].Radius;
+        why = null;
+        if (Players[player].Metal < OutpostCost) { why = "Not enough metal"; return false; }
+        if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
+        bool seen = false;
+        foreach (var e in Entities)
+        {
+            if (e.Dead) continue;
+            var d = (e.Pos - pos).LengthSq;
+            if (e.Owner == player)
+            {
+                var sight = VisionOf(e) + HighGround(e) + e.Stats.Radius;
+                if (d <= sight * sight) seen = true;
+            }
+            if (!e.Stats.IsBuilding) continue;
+            var gap = e.Stats.Radius + r + 1;
+            if (d < gap * gap) { why = "Blocked"; return false; }
+            var clear = KeepClearOfEnemy + e.Stats.Radius;
+            if (e.Owner != player && d < clear * clear) { why = "Too near the enemy"; return false; }
+        }
+        if (!seen) { why = "You can't see there"; return false; }
         return true;
     }
 
@@ -221,7 +277,7 @@ public sealed class World
         if (System.Array.IndexOf(UnitKinds, makes) < 0) { why = "Not a unit"; return false; }
         if (p.Metal < FactoryCost) { why = "Not enough metal"; return false; }
         if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
-        if ((pos - p.HqPos).LengthSq > BuildRadius * BuildRadius) { why = "Too far from your HQ"; return false; }
+        if (!InBuildRange(player, pos)) { why = "Too far from your HQ or an outpost"; return false; }
         foreach (var e in Entities)
         {
             if (e.Dead || !e.Stats.IsBuilding) continue;
@@ -281,7 +337,7 @@ public sealed class World
             foreach (var b in Entities)
             {
                 if (b.Dead || b.Owner == a.Owner || (a.SeenBy & (1 << b.Owner)) != 0) continue;
-                var reach = b.Stats.Vision + HighGround(b) + b.Stats.Radius + a.Stats.Radius;   // a hill lets it see further
+                var reach = VisionOf(b) + HighGround(b) + b.Stats.Radius + a.Stats.Radius;   // a hill lets it see further
                 if ((a.Pos - b.Pos).LengthSq <= reach * reach) a.SeenBy |= 1 << b.Owner;
             }
         }
@@ -309,7 +365,7 @@ public sealed class World
                 foreach (var mine in Entities)
                 {
                     if (mine.Owner != p.Id || mine.Dead) continue;
-                    var reach = mine.Stats.Vision + HighGround(mine) + mine.Stats.Radius;
+                    var reach = VisionOf(mine) + HighGround(mine) + mine.Stats.Radius;
                     if ((at - mine.Pos).LengthSq <= reach * reach) { _forget.Add(id); break; }
                 }
             }
@@ -383,6 +439,16 @@ public sealed class World
                 var f = Find(uf.FactoryId);
                 p.Metal -= UpgradeCost(f.Level(uf.Which) + 1);
                 f.Levels[(int)uf.Which]++;
+                if (f.Kind == Kind.Outpost)   // an outpost's own guns and armour improve at once
+                {
+                    int before = f.MaxHp;
+                    SetStats(f);
+                    f.Hp += f.MaxHp - before;
+                }
+                break;
+            case PlaceOutpost po when CanPlaceOutpost(po.Player, po.Pos, out _):
+                p.Metal -= OutpostCost;
+                Spawn(Kind.Outpost, po.Player, po.Pos);
                 break;
             case SetRally sr:
                 var rallying = Find(sr.FactoryId);

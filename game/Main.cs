@@ -74,7 +74,7 @@ public partial class Main : Node3D
     int _checkTick = -1;       // --check N: at tick N print the checksum, save a screenshot, quit
     string _shotName = "shot";
     bool _frozen;
-    MeshInstance3D _ring;
+    MeshInstance3D _ring;   // build-range rings (BuildRing)
 
     public override void _Ready()
     {
@@ -102,10 +102,11 @@ public partial class Main : Node3D
 
         if (args.Contains("--shot"))
         {
-            for (int i = 0; i < 150 * World.TicksPerSecond; i++)
+            int at = args.IndexOf("--at") is int ai and >= 0 && ai + 1 < args.Count ? int.Parse(args[ai + 1]) : 150;   // seconds in
+            for (int i = 0; i < at * World.TicksPerSecond; i++)
             {
                 // 30 s before the shot, my first factory's units are told to rally in front of the base.
-                if (i == 120 * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
+                if (i == (at - 30) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
                     _session.Issue(new SetRally(_me, rf.Id, false, ToFix(new Vector3(-28, 0, 8))));
                 StepWorld();
                 FadeBlasts((float)TickLength);
@@ -139,6 +140,11 @@ public partial class Main : Node3D
                 // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
                 unit.Basis = Basis.LookingAt(new Vector3(team == 0 ? 1 : -1, 0, 0.35f).Normalized(), Vector3.Up);
             }
+        // An outpost beside them, to judge its model.
+        var post = UnitArt.Make("outpost", TeamColor[0]);
+        AddChild(post);
+        post.Position = new Vector3(14, 0, 3);
+        post.Basis = Basis.LookingAt(Vector3.Right, Vector3.Up);
         // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
         for (int i = 0; i < 3; i++)
         {
@@ -162,7 +168,7 @@ public partial class Main : Node3D
         if (name == null) return;
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
         GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{name}.png");
-        if (_lineupFrame == 10) { _distance = 34; _focus = new Vector3(0, 0, 3); }
+        if (_lineupFrame == 10) { _distance = 40; _focus = new Vector3(3, 0, 3); }
         else GetTree().Quit();
     }
 
@@ -303,19 +309,30 @@ public partial class Main : Node3D
     }
 
     /// <summary>The build-range ring around my HQ.</summary>
+    /// <summary>The build-range rings: round my HQ and each of my outposts (redrawn each frame: outposts come, go
+    /// and grow their reach). They follow the ground.</summary>
     void BuildRing()
     {
-        var ring = new ImmediateMesh();
-        ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, Unshaded(new Color(TeamColor[_me], 0.5f)));
-        var c = ToV3(World.HqStart(_me));
-        for (int i = 0; i <= 64; i++)
+        if (_ring.Mesh is not ImmediateMesh ring) { ring = new ImmediateMesh(); _ring.Mesh = ring; _ringMat = Unshaded(new Color(TeamColor[_me], 0.5f)); }
+        ring.ClearSurfaces();
+        void Circle(FixVec2 at, float r)
         {
-            var a = Mathf.Tau * i / 64;
-            ring.SurfaceAddVertex(c + new Vector3(Mathf.Cos(a), 0.05f, Mathf.Sin(a)) * World.BuildRadius.ToFloat());
+            ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, _ringMat);
+            var c = ToV3(at);
+            for (int i = 0; i <= 64; i++)
+            {
+                var a = Mathf.Tau * i / 64;
+                var p = c + new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)) * r;
+                ring.SurfaceAddVertex(new Vector3(p.X, _terrain.HeightAt(p.X, p.Z) + 0.08f, p.Z));
+            }
+            ring.SurfaceEnd();
         }
-        ring.SurfaceEnd();
-        _ring.Mesh = ring;
+        Circle(World.HqStart(_me), World.BuildRadius.ToFloat());
+        foreach (var e in W.Entities)
+            if (e.Kind == Kind.Outpost && e.Owner == _me) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
     }
+
+    StandardMaterial3D _ringMat;
 
     // ---- scene -------------------------------------------------------------------------------
 
@@ -372,6 +389,8 @@ public partial class Main : Node3D
         _tracerMat = Unshaded(Colors.White);
         _tracerMat.VertexColorUseAsAlbedo = true;
         AddChild(new MeshInstance3D { Mesh = _tracers });
+        _dust = new Dust();
+        AddChild(_dust);
         _rallyLine = new ImmediateMesh();
         AddChild(new MeshInstance3D { Mesh = _rallyLine });
 
@@ -558,6 +577,7 @@ public partial class Main : Node3D
 
     readonly Dictionary<int, Node3D> _flags = new();
     ImmediateMesh _rallyLine;
+    Dust _dust;
 
     static Node3D MakeFlag(Color team)
     {
@@ -624,7 +644,7 @@ public partial class Main : Node3D
     static float HeightOf(Kind k) => 0f;   // every model stands on its origin
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -746,6 +766,13 @@ public partial class Main : Node3D
             {
                 var step = cur - prev;
                 if (step.LengthSquared() > 1e-4f) _facing[e.Id] = step.Normalized();
+                // Dust off the tracks while it moves (step is one tick's move).
+                var flat = new Vector3(step.X, 0, step.Z);
+                if (!W.Paused && flat.LengthSquared() > 1e-4f && Shown(e))
+                {
+                    float r = e.Stats.Radius.ToFloat();
+                    _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
+                }
                 var face = _facing.TryGetValue(e.Id, out var f) ? f : new Vector3(e.Owner == 0 ? 1 : -1, 0, 0);
                 view.Basis = Basis.LookingAt(face, Vector3.Up);
             }
@@ -762,10 +789,12 @@ public partial class Main : Node3D
             _prevPos.Remove(id);
             _facing.Remove(id);
             _cogs.Remove(id);
+            _dust.Forget(id);
             if (_flags.Remove(id, out var gone)) gone.QueueFree();
             if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
         }
 
+        BuildRing();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
         DrawHud();
@@ -774,7 +803,7 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
     };
 
@@ -820,11 +849,14 @@ public partial class Main : Node3D
     }
 
     static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
+    // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
+    static readonly string[] OutpostTrack = { "Reach", "Guns", "Armour" };
+    static readonly string[] OutpostEffect = { "+4 build reach and sight", "+25% gun damage", "+25% health" };
 
     /// <summary>The three upgrade buttons, for one of my factories only.</summary>
     void ShowUpgrades(Entity e)
     {
-        bool mine = e.Kind == Kind.Factory && e.Owner == _me;
+        bool mine = e.Kind is Kind.Factory or Kind.Outpost && e.Owner == _me;
         for (int i = 0; i < _upgradeButtons.Length; i++)
         {
             var b = _upgradeButtons[i];
@@ -832,9 +864,12 @@ public partial class Main : Node3D
             if (!mine) continue;
             var which = (Upgrade)i;
             int level = e.Level(which);
+            bool post = e.Kind == Kind.Outpost;
+            var name = post ? OutpostTrack[i] : which.ToString();
+            var effect = post ? OutpostEffect[i] : UpgradeEffect[i];
             b.Text = level >= World.MaxUpgradeLevel
-                ? $"{which}  {level}/{World.MaxUpgradeLevel}   (max)"
-                : $"{which}  {level}/{World.MaxUpgradeLevel}   buy for {World.UpgradeCost(level + 1)}:  {UpgradeEffect[i]}";
+                ? $"{name}  {level}/{World.MaxUpgradeLevel}   (max)"
+                : $"{name}  {level}/{World.MaxUpgradeLevel}   buy for {World.UpgradeCost(level + 1)}:  {effect}";
             b.Disabled = !W.CanUpgrade(_me, e.Id, which, out _) || W.Winner >= 0;
         }
     }
@@ -852,6 +887,7 @@ public partial class Main : Node3D
                 Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
                 Kind.Hq => "Lose it and you lose the match.",
                 Kind.Tower => "Guards the base: long range and sight.",
+                Kind.Outpost => "A sub-base: build factories inside its ring.",
                 _ => $"Makes: {e.Makes}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
             $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
@@ -895,7 +931,9 @@ public partial class Main : Node3D
         _placeProblem = null;
         if (_ghost.Visible)
         {
-            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value, out _placeProblem);
+            var ok = _placing == Kind.Outpost
+                ? W.CanPlaceOutpost(_me, ToFix(_mouseGround.Value), out _placeProblem)
+                : W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value, out _placeProblem);
             _ghostMat.AlbedoColor = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.4f);
             _ghost.Position = _mouseGround.Value + Vector3.Up * HeightOf(Kind.Factory);
         }
@@ -926,10 +964,10 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
-            $"[{i + 1}] {k}"));
+            $"[{i + 1}] {k}")) + $"   [4] Outpost {World.OutpostCost}";
         var building = _placing == null
-            ? $"Build ({World.FactoryCost} each): {menu}"
-            : $"Placing {_placing} factory: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
+            ? $"Build (factory {World.FactoryCost}): {menu}"
+            : $"Placing {(_placing == Kind.Outpost ? "an outpost (anywhere you can see)" : _placing + " factory")}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
             $"Metal {me.Metal}\n" +
             building + "\n" +
@@ -971,7 +1009,12 @@ public partial class Main : Node3D
                 if (_placing != null)
                 {
                     // One factory per build: placing it ends build mode. A bad spot keeps it, to try again.
-                    if (_placeProblem == null) { _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value)); _placing = null; }
+                    if (_placeProblem == null)
+                    {
+                        var at = ToFix(_mouseGround.Value);
+                        _session.Issue(_placing == Kind.Outpost ? new PlaceOutpost(_me, at) : new PlaceFactory(_me, at, _placing.Value));
+                        _placing = null;
+                    }
                 }
                 else _selected = EntityAt(_mouseGround.Value)?.Id ?? -1;
             }
@@ -987,6 +1030,7 @@ public partial class Main : Node3D
         {
             if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.UnitKinds.Length && W.Winner < 0)
                 _placing = World.UnitKinds[k.Keycode - Key.Key1];
+            else if (k.Keycode == Key.Key4 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
             else if (k.Keycode == Key.Escape)
             {
                 if (_placing != null) _placing = null;
