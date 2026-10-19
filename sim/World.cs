@@ -43,7 +43,9 @@ public sealed class Entity
     public int Damage;     // with damage upgrades and veterancy
     public int Kills;      // what it has finished off
     public int Rank;       // veterancy, 0 to World.MaxRank: every World.KillsPerRank kills
-    public int FactoryId;  // a unit: the factory that made it (its rally point steers it)
+    public int FactoryId;  // a unit: the factory that made it
+    public bool HasWaypoint;   // a unit: its factory's rally point when it was made, to reach before attacking
+    public FixVec2 Waypoint;
     public bool HasRally;  // a factory: whether its units gather at Rally instead of attacking
     public FixVec2 Rally;
 
@@ -58,6 +60,8 @@ public sealed class Player
     public int Metal;
     public int PausesLeft;
     public FixVec2 HqPos;
+    /// <summary>Enemies this side has seen, by id, at where they were last seen (World.UpdateVision keeps it).</summary>
+    public readonly SortedDictionary<int, FixVec2> Known = new();
 }
 
 /// <summary>A shot fired this tick, kept for drawing tracers.</summary>
@@ -81,6 +85,7 @@ public sealed class World
     // Veterancy (the user, 2026-10-19: "they get 10% stat boosts after x kills"): a rank every 3 kills, up to 3;
     // each rank +10% damage and health.
     public const int KillsPerRank = 3, MaxRank = 3;
+    static readonly Fix WaypointReach = 4;   // how near a rally point counts as having reached it
     static readonly int[] UpgradeCosts = { 200, 400, 700 };   // for levels 1, 2, 3
     public static int UpgradeCost(int toLevel) => UpgradeCosts[toLevel - 1];
     // Per level: production 15% quicker, damage +25%, armour (health) +25%.
@@ -155,7 +160,13 @@ public sealed class World
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
     {
         var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos, Makes = makes };
-        if (from != null) { from.Levels.CopyTo(e.Levels, 0); e.FactoryId = from.Id; }
+        if (from != null)
+        {
+            from.Levels.CopyTo(e.Levels, 0);
+            e.FactoryId = from.Id;
+            e.HasWaypoint = from.HasRally;
+            e.Waypoint = from.Rally;
+        }
         SetStats(e);
         e.Hp = e.MaxHp;
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
@@ -268,6 +279,51 @@ public sealed class World
                 if ((a.Pos - b.Pos).LengthSq <= reach * reach) a.SeenBy |= 1 << b.Owner;
             }
         }
+        Remember();
+    }
+
+    /// <summary>
+    /// Each side's memory of enemies (Player.Known): where each was last seen. Updated while in sight; forgotten when
+    /// it dies, or when the side looks at where it was and it's gone. The enemy HQ is always known.
+    /// </summary>
+    void Remember()
+    {
+        foreach (var p in Players)
+        {
+            int bit = 1 << p.Id;
+            foreach (var e in Entities)
+                if (e.Owner != p.Id && !e.Dead && ((e.SeenBy & bit) != 0 || e.Kind == Kind.Hq)) p.Known[e.Id] = e.Pos;
+            _forget.Clear();
+            foreach (var (id, at) in p.Known)
+            {
+                var e = Find(id);
+                if (e == null) { _forget.Add(id); continue; }
+                if ((e.SeenBy & bit) != 0 || e.Kind == Kind.Hq) continue;
+                // Out of sight: forget it if any of ours can see where it was (it has moved on).
+                foreach (var mine in Entities)
+                {
+                    if (mine.Owner != p.Id || mine.Dead) continue;
+                    var reach = mine.Stats.Vision + mine.Stats.Radius;
+                    if ((at - mine.Pos).LengthSq <= reach * reach) { _forget.Add(id); break; }
+                }
+            }
+            foreach (var id in _forget) p.Known.Remove(id);
+        }
+    }
+
+    readonly List<int> _forget = new();
+
+    /// <summary>Where the nearest enemy this side knows of is (or was last seen).</summary>
+    FixVec2 NearestKnown(int player, FixVec2 from)
+    {
+        var best = Players[1 - player].HqPos;
+        var bestD = (best - from).LengthSq;
+        foreach (var (_, at) in Players[player].Known)
+        {
+            var d = (at - from).LengthSq;
+            if (d < bestD) { best = at; bestD = d; }
+        }
+        return best;
     }
 
     public static bool CanSee(int player, Entity e) => (e.SeenBy & (1 << player)) != 0;
@@ -361,16 +417,14 @@ public sealed class World
             }
             else if (s.IsUnit)
             {
-                // No enemy in sight: gather at its factory's rally point if it has one (and hold there), else advance on
-                // the enemy HQ. Rally points are live: move one and its units go; clear it and they all attack.
-                var factory = e.FactoryId > 0 ? Find(e.FactoryId) : null;
-                if (factory != null && factory.HasRally)
-                {
-                    var away = factory.Rally - e.Pos;
-                    var dist = away.Length;
-                    if (dist > Fix.Ratio(15, 10)) _moves.Add((e, away.WithLength(Fix.Min(s.Speed, dist))));
-                }
-                else _moves.Add((e, (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed)));
+                // No enemy in sight: first to its rally point if it was given one, then on to the nearest enemy its side
+                // knows of (seen now, or where last seen; the enemy HQ at worst).
+                // (The user, 2026-10-19: "the rallied units should move there first and then to the nearest known or
+                // last seen enemy".) Close enough counts as there: a crowd can't all stand on the spot.
+                if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
+                var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos);
+                var away = goal - e.Pos;
+                _moves.Add((e, away.WithLength(Fix.Min(s.Speed, away.Length))));
             }
         }
         foreach (var (e, step) in _moves) e.Pos += step;
@@ -473,11 +527,15 @@ public sealed class World
         ulong h = 14695981039346656037UL;
         void Mix(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (i * 8)); h *= 1099511628211UL; } }
         Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State); Mix(Started ? 1 : 0);
-        foreach (var p in Players) { Mix(p.Metal); Mix(p.PausesLeft); }
+        foreach (var p in Players)
+        {
+            Mix(p.Metal); Mix(p.PausesLeft);
+            foreach (var (id, at) in p.Known) { Mix(id); Mix(at.X.Raw); Mix(at.Z.Raw); }
+        }
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw);
             foreach (var l in e.Levels) Mix(l);
         }
         return h;

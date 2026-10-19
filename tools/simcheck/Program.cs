@@ -25,12 +25,13 @@ int ReplayTest()
     {
         var cmds = new List<Command>();
         foreach (var ai in ais) ai.Think(world, cmds.Add);
-        if (world.Tick == 600) cmds.Add(new Pause(0));
-        if (world.Tick == 700) cmds.Add(new Resume(0));
+        bool script = Environment.GetEnvironmentVariable("NOSCRIPT") != "1";   // NOSCRIPT=1: just the AIs, for fair win counts
+        if (script && world.Tick == 600) cmds.Add(new Pause(0));
+        if (script && world.Tick == 700) cmds.Add(new Resume(0));
         // Player 0 holds its first factory's units near home for a while, then lets them go.
         var first0 = world.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
-        if (first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
-        if (first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
+        if (script && first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
+        if (script && first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
         var ordered = cmds.OrderBy(c => c.Player).ToArray();   // the agreed order
         log.Add(ordered);
         world.Step(ordered);

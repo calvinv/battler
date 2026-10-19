@@ -415,7 +415,7 @@ public partial class Main : Node3D
             column.AddChild(b);
             _upgradeButtons[i] = b;
         }
-        _rallyButton = new Button { Text = "Clear rally: send its units to attack", FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _rallyButton = new Button { Text = "Clear rally point", FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
         _rallyButton.AddThemeFontSizeOverride("font_size", 17);
         _rallyButton.Pressed += () => _session?.Issue(new SetRally(_me, _selected, true, FixVec2.Zero));
         column.AddChild(_rallyButton);
@@ -868,7 +868,7 @@ public partial class Main : Node3D
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory && e.Owner == _me)
-            lines.Add(e.HasRally ? "Units gather at the flag and hold" : "Units attack  (right-click the ground to rally them)");
+            lines.Add(e.HasRally ? "New units go to the flag first, then attack" : "Units attack  (right-click the ground to set a rally point)");
         return string.Join("\n", lines);
     }
 
