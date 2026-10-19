@@ -32,6 +32,18 @@ public sealed class Terrain : System.IDisposable
     /// <summary>The sim's ground (Battler.Sim.Ground): what's drawn is what the fight uses.</summary>
     public float HeightAt(float x, float z) => World.Ground.HeightAtF(x, z);
 
+    /// <summary>The height of the drawn ground exactly: its flat triangles (corners a b c and a c d of each unit square,
+    /// as <see cref="BuildGround"/> lays them), which can sit a little off the smooth <see cref="HeightAt"/>. For
+    /// things laid flat on it, like tread marks.</summary>
+    public float SurfaceAt(float x, float z)
+    {
+        float gx = x + _halfX + Margin, gz = z + _halfZ + Margin;
+        float i = Mathf.Floor(gx), j = Mathf.Floor(gz), fx = gx - i, fz = gz - j;
+        float x0 = i - _halfX - Margin, z0 = j - _halfZ - Margin;
+        float a = HeightAt(x0, z0), b = HeightAt(x0 + 1, z0), c = HeightAt(x0 + 1, z0 + 1), d = HeightAt(x0, z0 + 1);
+        return fx >= fz ? a + (b - a) * fx + (c - b) * fz : a + (c - d) * fx + (d - a) * fz;
+    }
+
     /// <summary>The ground mesh, coloured by height and slope (vertex colours: the fog shader multiplies them).</summary>
     public MeshInstance3D BuildGround(Material material)
     {
@@ -48,8 +60,7 @@ public sealed class Terrain : System.IDisposable
             float slope = Mathf.Abs(HeightAt(p.X + 1, p.Z) - p.Y) + Mathf.Abs(HeightAt(p.X, p.Z + 1) - p.Y);
             var c = dust.Lerp(scrub, Mathf.Clamp(-p.Y / 1.6f, 0, 1));
             c = c.Lerp(stone, Mathf.Clamp((p.Y - 1.2f) / 2f + slope * 0.6f, 0, 1));
-            float grain = _noise.GetNoise2D(p.X * 7.3f, p.Z * 7.3f) * 0.06f;   // a little mottling
-            return new Color(c.R + grain, c.G + grain, c.B + grain);
+            return c;   // (fine mottling is done in ground_fog.gdshader: per-corner grain drew dashes along the triangle edges)
         }
         for (int j = 0; j < nz; j++)
             for (int i = 0; i < nx; i++)
@@ -57,6 +68,7 @@ public sealed class Terrain : System.IDisposable
                 var a = P(i, j); var b = P(i + 1, j); var c = P(i + 1, j + 1); var d = P(i, j + 1);
                 foreach (var v in new[] { a, b, c, a, c, d }) { st.SetColor(C(v)); st.AddVertex(v); }
             }
+        st.Index();   // weld shared corners, so the normals come out smooth rather than one per triangle
         st.GenerateNormals();
         return new MeshInstance3D { Mesh = st.Commit(), MaterialOverride = material };
     }

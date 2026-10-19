@@ -9,10 +9,11 @@ namespace Battler.Game;
 /// </summary>
 public partial class Dust : MultiMeshInstance3D
 {
-    const int Max = 900;
+    const int Max = 1500;
     const float Life = 1.1f;
 
-    struct Puff { public Vector3 At, Drift; public float Age, Size; }
+    struct Puff { public Vector3 At, Drift; public float Age, Size; public Color Col; }
+    static readonly Color Dirt = new(0.55f, 0.48f, 0.38f);
 
     readonly List<Puff> _puffs = new();
     readonly RandomNumberGenerator _rng = new() { Seed = 99 };
@@ -59,13 +60,21 @@ public partial class Dust : MultiMeshInstance3D
                 {
                     At = back + right * side * halfWidth + Vector3.Up * 0.15f,
                     Drift = -forward * 0.4f + new Vector3(_rng.RandfRange(-0.3f, 0.3f), _rng.RandfRange(0.4f, 0.8f), _rng.RandfRange(-0.3f, 0.3f)),
-                    Size = _rng.RandfRange(0.35f, 0.6f) * (halfWidth + 0.4f),
+                    Size = _rng.RandfRange(0.35f, 0.6f) * (halfWidth + 0.4f), Col = Dirt,
                 });
             }
             due += Mathf.Clamp(0.5f / speed, 0.06f, 0.3f);   // quicker vehicles kick up more
         }
         _due[id] = due;
     }
+
+    /// <summary>One puff of smoke or dirt (gun smoke, shell bursts).</summary>
+    public void Add(Vector3 at, Vector3 drift, float size, Color col)
+    {
+        if (_puffs.Count < Max) _puffs.Add(new Puff { At = at, Drift = drift, Size = size, Col = col });
+    }
+
+    public void Clear() { _puffs.Clear(); _due.Clear(); }
 
     public void Forget(int id) => _due.Remove(id);
 
@@ -89,7 +98,7 @@ public partial class Dust : MultiMeshInstance3D
             float t = p.Age / Life;
             float size = p.Size * (1f + 2.2f * t);
             mm.SetInstanceTransform(i, new Transform3D(Basis.Identity.Scaled(Vector3.One * size), p.At));
-            mm.SetInstanceColor(i, new Color(0.55f, 0.48f, 0.38f, 0.55f * (1f - t) * Mathf.Min(1f, t * 8f)));
+            mm.SetInstanceColor(i, new Color(p.Col.R, p.Col.G, p.Col.B, 0.55f * (1f - t) * Mathf.Min(1f, t * 8f)));
         }
     }
 }

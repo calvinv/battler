@@ -13,12 +13,14 @@ namespace Battler.Game;
 /// ticks), and turns the player's clicks and keys into commands.
 ///
 /// Controls: 1-3 pick a factory (scout, tank, artillery) and a click places it near your HQ (Esc or right click cancels);
-/// otherwise a click selects a unit or building to see its stats (Esc clears). WASD/arrows pan, wheel zooms,
+/// 4 deploys an outpost. Otherwise a click selects a unit or building to see its stats, upgrades and Sell (Esc clears).
+/// WASD/arrows pan, wheel zooms,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
 /// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
-/// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit.
+/// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit (with --at N seconds, --wide for the whole map, --fight
+/// to close on the busiest fight, --frames N to play on N frames first, --placing to hold a factory under the centre).
 /// </summary>
 public partial class Main : Node3D
 {
@@ -47,11 +49,18 @@ public partial class Main : Node3D
     Label _stats;
     MeshInstance3D _selRing;
     readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
+    Button _sellButton;
+    int _sellArmed = -1;          // the building a first click on Sell asked about
+    ulong _sellArmedUntil;
     Button _rallyButton;
     string _placeProblem;          // why the factory can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
     readonly Dictionary<int, Vector3> _facing = new();
+    readonly Dictionary<int, (int Target, int Until)> _aim = new();   // per shooter: what it last fired at, and until which tick it keeps facing it
+    Projectiles _proj;
+    Tracks _tracks;
+    bool _placeAtCentre;   // --placing: aim at the screen centre, not the mouse
     readonly Dictionary<(Kind, int), Mesh> _meshes = new();
     readonly Dictionary<(Kind, int), Material> _materials = new();
 
@@ -60,8 +69,7 @@ public partial class Main : Node3D
     float _distance = 70;
     MeshInstance3D _ghost;
     StandardMaterial3D _ghostMat;
-    readonly List<MeshInstance3D> _heldGhosts = new();
-    ImmediateMesh _tracers;
+    readonly List<Node3D> _heldGhosts = new();
     StandardMaterial3D _tracerMat;
     Label _hud;
     Label _banner;
@@ -110,6 +118,7 @@ public partial class Main : Node3D
                     _session.Issue(new SetRally(_me, rf.Id, false, ToFix(new Vector3(-28, 0, 8))));
                 StepWorld();
                 FadeBlasts((float)TickLength);
+                _proj.Advance((float)TickLength);
             }
             _focus = Vector3.Zero;
             _distance = 60;
@@ -117,7 +126,16 @@ public partial class Main : Node3D
             var picked = W.Find(_selected);
             if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 3); _distance = 26; }   // close on it and its door
             if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 125; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
-            _shotFrames = 10;
+            if (args.Contains("--fight"))   // close on the busiest fight, fog lifted
+            {
+                var hot = W.Entities.Where(e => e.Stats.IsUnit)
+                    .OrderByDescending(e => W.Entities.Count(o => o.Owner != e.Owner && (o.Pos - e.Pos).LengthSq < Fix.FromInt(15 * 15)))
+                    .FirstOrDefault();
+                if (hot != null) { _focus = ToV3(hot.Pos); _distance = 24; _noFog = true; UpdateFog(); _selected = -1; }
+            }
+            if (args.Contains("--placing")) { _placing = Kind.Tank; _placeAtCentre = true; }   // a tank factory in hand, under the screen's centre
+            // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
+            _shotFrames = args.IndexOf("--frames") is int fi and >= 0 && fi + 1 < args.Count ? int.Parse(args[fi + 1]) : 10;
         }
     }
 
@@ -297,7 +315,8 @@ public partial class Main : Node3D
     void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
-        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _seenBuildings.Clear();
+        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear();
+        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear();
         _session = session;
         _me = session.LocalPlayer;
         _acc = 0;
@@ -385,12 +404,15 @@ public partial class Main : Node3D
         _ring = new MeshInstance3D();
         AddChild(_ring);
 
-        _tracers = new ImmediateMesh();
         _tracerMat = Unshaded(Colors.White);
         _tracerMat.VertexColorUseAsAlbedo = true;
-        AddChild(new MeshInstance3D { Mesh = _tracers });
+        _tracks = new Tracks { HeightAt = _terrain.SurfaceAt };
+        AddChild(_tracks);
         _dust = new Dust();
         AddChild(_dust);
+        _proj = new Projectiles { Dust = _dust };
+        _proj.OnShellLands = at => { if (SeenAt(at)) Blast(at, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat()); };
+        AddChild(_proj);
         _rallyLine = new ImmediateMesh();
         AddChild(new MeshInstance3D { Mesh = _rallyLine });
 
@@ -438,6 +460,20 @@ public partial class Main : Node3D
         _rallyButton.AddThemeFontSizeOverride("font_size", 17);
         _rallyButton.Pressed += () => _session?.Issue(new SetRally(_me, _selected, true, FixVec2.Zero));
         column.AddChild(_rallyButton);
+        _sellButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _sellButton.AddThemeFontSizeOverride("font_size", 17);
+        _sellButton.Pressed += () =>
+        {
+            // Two clicks: the first asks, the second (within a few seconds, same building) sells.
+            if (_sellArmed == _selected && Time.GetTicksMsec() < _sellArmedUntil)
+            {
+                _session?.Issue(new Sell(_me, _selected));
+                _sellArmed = -1;
+                _selected = -1;
+            }
+            else { _sellArmed = _selected; _sellArmedUntil = Time.GetTicksMsec() + 3000; }
+        };
+        column.AddChild(_sellButton);
         _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
@@ -646,6 +682,12 @@ public partial class Main : Node3D
     /// <summary>The height shots leave from: about each one's gun.</summary>
     static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
 
+    /// <summary>How far in front of its centre a gun's muzzle is (units face their target, so it is along that line).</summary>
+    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.9f, Kind.Artillery => 2.2f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, _ => 0f };
+
+    /// <summary>How quickly each kind swings round, in radians a second.</summary>
+    static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, _ => 4f };
+
     // ---- loop --------------------------------------------------------------------------------
 
     public override void _Process(double delta)
@@ -692,30 +734,21 @@ public partial class Main : Node3D
         foreach (var (id, p) in prev) _prevPos[id] = p;
         UpdateFog();
 
-        _tracers.ClearSurfaces();
-        var shots = W.Shots.Where(s => SeenAt(ToV3(s.From)) || SeenAt(ToV3(s.To))).ToList();   // not from fog to fog
-        if (shots.Count > 0)
+        foreach (var s in W.Shots)
         {
-            _tracers.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
-            foreach (var s in shots)
-            {
-                var col = TeamColor[s.Owner].Lightened(0.5f);
-                var from = ToV3(s.From) + Vector3.Up * MuzzleOf(s.By);
-                var to = ToV3(s.To) + Vector3.Up * 0.6f;
-                // Artillery lobs its shell in an arc; everything else fires straight.
-                int segments = s.By == Kind.Artillery ? 10 : 1;
-                float peak = s.By == Kind.Artillery ? from.DistanceTo(to) * 0.35f : 0f;
-                for (int i = 0; i < segments; i++)
-                {
-                    float t0 = i / (float)segments, t1 = (i + 1) / (float)segments;
-                    _tracers.SurfaceSetColor(col);
-                    _tracers.SurfaceAddVertex(from.Lerp(to, t0) + Vector3.Up * peak * 4 * t0 * (1 - t0));
-                    _tracers.SurfaceSetColor(col);
-                    _tracers.SurfaceAddVertex(from.Lerp(to, t1) + Vector3.Up * peak * 4 * t1 * (1 - t1));
-                }
-                if (s.By == Kind.Artillery && SeenAt(to)) Blast(to, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat());
-            }
-            _tracers.SurfaceEnd();
+            // Whoever fires keeps facing its target until a little after it could fire again.
+            _aim[s.ShooterId] = (s.TargetId, W.Tick + World.StatsFor[(int)s.By].Reload + 10);
+            var at = ToV3(s.From);
+            var to = ToV3(s.To);
+            if (!SeenAt(at) && !SeenAt(to)) continue;   // not from fog to fog
+            var dir = new Vector3(to.X - at.X, 0, to.Z - at.Z);
+            dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Right;
+            if (World.StatsFor[(int)s.By].IsUnit) _facing.TryAdd(s.ShooterId, dir);
+            var from = at + Vector3.Up * MuzzleOf(s.By) + dir * BarrelOf(s.By);
+            var target = W.Find(s.TargetId);
+            var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
+            if (s.By == Kind.Artillery) aimAt = to;   // shells burst on the ground
+            _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner]);
         }
         return true;
     }
@@ -765,16 +798,33 @@ public partial class Main : Node3D
             if (e.Stats.IsUnit)
             {
                 var step = cur - prev;
-                if (step.LengthSquared() > 1e-4f) _facing[e.Id] = step.Normalized();
                 // Dust off the tracks while it moves (step is one tick's move).
                 var flat = new Vector3(step.X, 0, step.Z);
-                if (!W.Paused && flat.LengthSquared() > 1e-4f && Shown(e))
+                bool moving = flat.LengthSquared() > 1e-4f;
+                if (!W.Paused && moving && Shown(e))
                 {
                     float r = e.Stats.Radius.ToFloat();
                     _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
+                    // Tread marks under each track (the scout's wheels leave thinner, fainter ones).
+                    bool wheels = e.Kind == Kind.Scout;
+                    _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
                 }
+                // Face where it's going; standing still, face what it's shooting at. It swings round, not snaps.
                 var face = _facing.TryGetValue(e.Id, out var f) ? f : new Vector3(e.Owner == 0 ? 1 : -1, 0, 0);
-                view.Basis = Basis.LookingAt(face, Vector3.Up);
+                var want = face;
+                if (moving) want = flat.Normalized();
+                else if (_aim.TryGetValue(e.Id, out var aim) && aim.Until >= W.Tick && W.Find(aim.Target) is { Dead: false } t)
+                {
+                    var to = ToV3(t.Pos) - cur;
+                    to.Y = 0;
+                    if (to.LengthSquared() > 1e-4f) want = to.Normalized();
+                }
+                float turn = face.SignedAngleTo(want, Vector3.Up), most = TurnRateOf(e.Kind) * (W.Paused ? 0 : _frameDt);
+                face = face.Rotated(Vector3.Up, Mathf.Clamp(turn, -most, most)).Normalized();
+                _facing[e.Id] = face;
+                // Tilt with the ground under it.
+                float ahead = _terrain.HeightAt(pos.X + face.X, pos.Z + face.Z), behind = _terrain.HeightAt(pos.X - face.X, pos.Z - face.Z);
+                view.Basis = Basis.LookingAt(new Vector3(face.X, (ahead - behind) * 0.5f, face.Z), Vector3.Up);
             }
             view.Position = pos + Vector3.Up * HeightOf(e.Kind);
             view.Visible = Shown(e);
@@ -788,8 +838,10 @@ public partial class Main : Node3D
             _views.Remove(id);
             _prevPos.Remove(id);
             _facing.Remove(id);
+            _aim.Remove(id);
             _cogs.Remove(id);
             _dust.Forget(id);
+            _tracks.Forget(id);
             if (_flags.Remove(id, out var gone)) gone.QueueFree();
             if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
         }
@@ -844,6 +896,7 @@ public partial class Main : Node3D
         _stats.Text = Describe(selected);
         ShowUpgrades(selected);
         _rallyButton.Visible = selected.Kind == Kind.Factory && selected.Owner == _me && selected.HasRally;
+        ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
         _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
     }
@@ -852,6 +905,18 @@ public partial class Main : Node3D
     // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
     static readonly string[] OutpostTrack = { "Reach", "Guns", "Armour" };
     static readonly string[] OutpostEffect = { "+4 build reach and sight", "+25% gun damage", "+25% health" };
+
+    /// <summary>The Sell button, for my factories and outposts: 75% back of all it cost, upgrades included.</summary>
+    void ShowSell(Entity e)
+    {
+        _sellButton.Visible = W.CanSell(_me, e.Id, out _);
+        if (!_sellButton.Visible) return;
+        int value = World.SellValue(e);
+        bool armed = _sellArmed == e.Id && Time.GetTicksMsec() < _sellArmedUntil;
+        _sellButton.Text = armed ? $"Click again to sell for {value}" : $"Sell for {value}  ({World.SellBackPercent}% of {World.SpentOn(e)} spent)";
+        _sellButton.Modulate = armed ? new Color(1f, 0.6f, 0.5f) : Colors.White;
+        _sellButton.Disabled = !W.Started || W.Winner >= 0;
+    }
 
     /// <summary>The three upgrade buttons, for one of my factories only.</summary>
     void ShowUpgrades(Entity e)
@@ -934,23 +999,45 @@ public partial class Main : Node3D
             var ok = _placing == Kind.Outpost
                 ? W.CanPlaceOutpost(_me, ToFix(_mouseGround.Value), out _placeProblem)
                 : W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value, out _placeProblem);
-            _ghostMat.AlbedoColor = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.4f);
-            _ghost.Position = _mouseGround.Value + Vector3.Up * HeightOf(Kind.Factory);
+            // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
+            // what it's building"), green where it can go and red where it can't.
+            var name = _placing == Kind.Outpost ? "outpost" : "factory_" + ModelOf(_placing.Value);
+            if (_placeModel == null || _placeModelKey != (name, ok))
+            {
+                _placeModel?.QueueFree();
+                _placeModel = PlacementModel(name, ok ? new Color(0.3f, 1f, 0.45f) : new Color(1f, 0.25f, 0.2f));
+                _placeModelKey = (name, ok);
+            }
+            _placeModel.Position = _mouseGround.Value;
         }
+        if (_placeModel != null) _placeModel.Visible = _ghost.Visible;
+        _ghost.Visible = false;   // (the plain box is only the fallback now)
 
-        // Factories ordered during a pause, waiting for it to end.
-        var held = W.HeldDuringPause.OfType<PlaceFactory>().Where(c => c.Player == _me).ToList();
-        while (_heldGhosts.Count < held.Count)
+        // Factories and outposts ordered during a pause, waiting for it to end.
+        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceOutpost)
+            .Select(c => c is PlaceFactory pf ? ("factory_" + ModelOf(pf.Makes), pf.Pos) : ("outpost", ((PlaceOutpost)c).Pos)).ToList();
+        if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
-            var g = new MeshInstance3D { Mesh = MeshFor(Kind.Factory), MaterialOverride = Unshaded(new Color(TeamColor[_me], 0.35f)) };
-            AddChild(g);
-            _heldGhosts.Add(g);
+            foreach (var g in _heldGhosts) g.QueueFree();
+            _heldGhosts.Clear();
+            _heldGhostNames.Clear();
+            foreach (var (name, _) in held) { _heldGhosts.Add(PlacementModel(name, TeamColor[_me])); _heldGhostNames.Add(name); }
         }
-        for (int i = 0; i < _heldGhosts.Count; i++)
-        {
-            _heldGhosts[i].Visible = i < held.Count;
-            if (i < held.Count) _heldGhosts[i].Position = ToV3(held[i].Pos) + Vector3.Up * HeightOf(Kind.Factory);
-        }
+        for (int i = 0; i < held.Count; i++) _heldGhosts[i].Position = ToV3(held[i].Item2);
+    }
+
+    Node3D _placeModel;
+    (string, bool) _placeModelKey;
+    readonly List<string> _heldGhostNames = new();
+
+    /// <summary>A building's model as an unbuilt hologram, facing the enemy like the real thing.</summary>
+    Node3D PlacementModel(string name, Color tint)
+    {
+        var model = UnitArt.MakeBuilding(name, tint);
+        UnitArt.SetBuilt(model, -0.05f);   // (below zero, so even its foot is hologram, not solid)
+        model.Basis = Basis.LookingAt(new Vector3(_me == 0 ? 1 : -1, 0, 0), Vector3.Up);
+        AddChild(model);
+        return model;
     }
 
     void DrawHud()
@@ -1063,7 +1150,7 @@ public partial class Main : Node3D
 
     Vector3? GroundUnderMouse()
     {
-        var mouse = GetViewport().GetMousePosition();
+        var mouse = _placeAtCentre ? GetViewport().GetVisibleRect().Size / 2 : GetViewport().GetMousePosition();
         var from = _camera.ProjectRayOrigin(mouse);
         var dir = _camera.ProjectRayNormal(mouse);
         if (Mathf.Abs(dir.Y) < 1e-4f) return null;
