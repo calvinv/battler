@@ -47,6 +47,7 @@ public partial class Main : Node3D
     Label _stats;
     MeshInstance3D _selRing;
     readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
+    Button _rallyButton;
     string _placeProblem;          // why the factory can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
@@ -101,12 +102,20 @@ public partial class Main : Node3D
 
         if (args.Contains("--shot"))
         {
-            for (int i = 0; i < 150 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
+            for (int i = 0; i < 150 * World.TicksPerSecond; i++)
+            {
+                // 30 s before the shot, my first factory's units are told to rally in front of the base.
+                if (i == 120 * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
+                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(new Vector3(-28, 0, 8))));
+                StepWorld();
+                FadeBlasts((float)TickLength);
+            }
             _focus = Vector3.Zero;
             _distance = 60;
-            _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the most upgraded: its panel, cogs and badges
+            _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.HasRally).ThenByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the rallying one, else the most upgraded
             var picked = W.Find(_selected);
-            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 5); _distance = 30; }   // close on it
+            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(14, 0, 4); _distance = 52; }   // on it and its base
+            if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 125; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
             _shotFrames = 10;
         }
     }
@@ -152,6 +161,7 @@ public partial class Main : Node3D
     {
         _listener?.Stop();
         UnitArt.Release();
+        _terrain?.Dispose();
         _net?.Dispose();
     }
 
@@ -208,6 +218,7 @@ public partial class Main : Node3D
 
     const int FogRes = 2;   // fog cells per world unit
     static readonly int FogW = World.MapHalfX.ToInt() * 2 * FogRes, FogH = World.MapHalfZ.ToInt() * 2 * FogRes;
+    bool _noFog;            // --wide: everything shown, to look at the landscape
     byte[] _fogData;        // what's seen, hard edged: for SeenAt
     byte[] _fogSoft;        // the same blurred a little: what the ground shows
     Image _fogImage;
@@ -218,6 +229,7 @@ public partial class Main : Node3D
     void UpdateFog()
     {
         System.Array.Clear(_fogData);
+        if (_noFog) System.Array.Fill(_fogData, (byte)255);
         foreach (var e in W.Entities)
         {
             if (e.Owner != _me) continue;
@@ -327,11 +339,8 @@ public partial class Main : Node3D
             LightEnergy = 0.3f,
         });
 
-        var ground = new MeshInstance3D
-        {
-            Mesh = new PlaneMesh { Size = new Vector2(World.MapHalfX.ToFloat() * 2, World.MapHalfZ.ToFloat() * 2) },
-        };
-        // Dusty wasteland (olive machines stand out on it), darkened where we can't see.
+        // Dusty wasteland hills (olive machines stand out on it), darkened where we can't see.
+        _terrain = new Terrain(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat());
         _fogData = new byte[FogW * FogH];
         _fogSoft = new byte[FogW * FogH];
         System.Array.Fill(_fogData, (byte)255);
@@ -341,8 +350,11 @@ public partial class Main : Node3D
         var groundMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/ground_fog.gdshader") };
         groundMat.SetShaderParameter("fog", _fogTexture);
         groundMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
-        ground.MaterialOverride = groundMat;
-        AddChild(ground);
+        AddChild(_terrain.BuildGround(groundMat));
+        var waterMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/water_fog.gdshader") };
+        waterMat.SetShaderParameter("fog", _fogTexture);
+        waterMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
+        AddChild(_terrain.BuildDecor(waterMat));
 
         _ring = new MeshInstance3D();
         AddChild(_ring);
@@ -351,6 +363,8 @@ public partial class Main : Node3D
         _tracerMat = Unshaded(Colors.White);
         _tracerMat.VertexColorUseAsAlbedo = true;
         AddChild(new MeshInstance3D { Mesh = _tracers });
+        _rallyLine = new ImmediateMesh();
+        AddChild(new MeshInstance3D { Mesh = _rallyLine });
 
         _ghostMat = Unshaded(new Color(0.3f, 1f, 0.4f, 0.4f));
         _ghost = new MeshInstance3D { Mesh = MeshFor(Kind.Factory), MaterialOverride = _ghostMat, Visible = false };
@@ -392,6 +406,10 @@ public partial class Main : Node3D
             column.AddChild(b);
             _upgradeButtons[i] = b;
         }
+        _rallyButton = new Button { Text = "Clear rally: send its units to attack", FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _rallyButton.AddThemeFontSizeOverride("font_size", 17);
+        _rallyButton.Pressed += () => _session?.Issue(new SetRally(_me, _selected, true, FixVec2.Zero));
+        column.AddChild(_rallyButton);
         _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
@@ -448,16 +466,12 @@ public partial class Main : Node3D
             UnitArt.AddEmblems(unit, ModelOf(e.Kind), e.Level(Upgrade.Damage), e.Level(Upgrade.Armour));
             return unit;
         }
-        var box = new MeshInstance3D { Mesh = MeshFor(e.Kind), MaterialOverride = MaterialFor(e.Kind, e.Owner) };
-        if (e.Kind == Kind.Factory)
-        {
-            var sign = UnitArt.Make(ModelOf(e.Makes), TeamColor[e.Owner]);
-            sign.Scale = Vector3.One * 0.7f;
-            sign.Position = Vector3.Up * 1f;   // on the roof (the box's middle is its origin)
-            sign.Basis = Basis.LookingAt(new Vector3(e.Owner == 0 ? 1 : -1, 0, 0.4f).Normalized(), Vector3.Up).Scaled(Vector3.One * 0.7f);
-            box.AddChild(sign);
-        }
-        return box;
+        // Buildings (tools/art/model_buildings.py): each factory kind its own building; all face the enemy's side,
+        // so units roll out of the door.
+        var name = e.Kind == Kind.Factory ? "factory_" + ModelOf(e.Makes) : ModelOf(e.Kind);
+        var building = UnitArt.Make(name, TeamColor[e.Owner]);
+        building.Basis = Basis.LookingAt(new Vector3(e.Owner == 0 ? 1 : -1, 0, 0), Vector3.Up);
+        return building;
     }
 
     // ---- production cogs: one brass cog over a factory per production upgrade, spinning ------------------------
@@ -501,21 +515,86 @@ public partial class Main : Node3D
         // turning opposite ways like meshed gears; quicker the more the factory's been upgraded.
         var facing = new Basis(Vector3.Right, Mathf.DegToRad(53));
         float speed = 1.2f + 0.9f * level;
+        var undo = view.Basis.Inverse();   // the building is turned to face the enemy; the cogs face the camera
         for (int i = 0; i < cogs.Count; i++)
         {
             float spin = (i % 2 == 0 ? 1 : -1) * _cogTurn * speed + (i % 2) * Mathf.Pi / 8;
-            cogs[i].Basis = facing * new Basis(Vector3.Up, spin);
-            cogs[i].Position = new Vector3((i - (cogs.Count - 1) / 2f) * 0.98f, 2.6f, 0);
+            cogs[i].Basis = undo * facing * new Basis(Vector3.Up, spin);
+            cogs[i].Position = undo * new Vector3((i - (cogs.Count - 1) / 2f) * 0.98f, 3.6f, 0);
         }
     }
 
-    static Vector3 ToV3(FixVec2 p) => new(p.X.ToFloat(), 0, p.Z.ToFloat());
+    // ---- rally flags: where my factories' units gather -----------------------------------------------------------
+
+    readonly Dictionary<int, Node3D> _flags = new();
+    ImmediateMesh _rallyLine;
+
+    static Node3D MakeFlag(Color team)
+    {
+        var flag = new Node3D();
+        flag.AddChild(new MeshInstance3D
+        {
+            Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.07f, Height = 2.6f, RadialSegments = 6 },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.18f, 0.16f) },
+            Position = new Vector3(0, 1.3f, 0),
+        });
+        flag.AddChild(new MeshInstance3D
+        {
+            Mesh = new PrismMesh { Size = new Vector3(1.0f, 0.7f, 0.05f), LeftToRight = 0f },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = team, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
+            Position = new Vector3(0.5f, 2.2f, 0),
+            RotationDegrees = new Vector3(0, 0, -90),
+        });
+        flag.AddChild(new MeshInstance3D   // a ring on the ground: how close they gather
+        {
+            Mesh = new TorusMesh { InnerRadius = 1.4f, OuterRadius = 1.55f, Rings = 24, RingSegments = 3 },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(team, 0.7f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha },
+            Position = new Vector3(0, 0.1f, 0),
+        });
+        return flag;
+    }
+
+    /// <summary>My factory's flag where its units rally (none for the enemy's: you don't see their orders).</summary>
+    void UpdateRallyFlag(Entity f)
+    {
+        _flags.TryGetValue(f.Id, out var flag);
+        if (f.Owner != _me || !f.HasRally) { if (flag != null) flag.Visible = false; return; }
+        if (flag == null) { flag = MakeFlag(TeamColor[_me]); AddChild(flag); _flags[f.Id] = flag; }
+        flag.Visible = true;
+        flag.Position = ToV3(f.Rally);
+    }
+
+    /// <summary>A line from the selected factory of mine to its flag.</summary>
+    void DrawRallyLine(Entity selected)
+    {
+        _rallyLine.ClearSurfaces();
+        if (selected is not { Kind: Kind.Factory, HasRally: true } || selected.Owner != _me) return;
+        var from = ToV3(selected.Pos);
+        var to = ToV3(selected.Rally);
+        _rallyLine.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
+        int dashes = Mathf.Max(2, (int)(from.DistanceTo(to) / 1.2f));
+        for (int i = 0; i < dashes; i += 2)   // dashed, following the ground
+        {
+            for (int k = 0; k < 2; k++)
+            {
+                var p = from.Lerp(to, (i + k) / (float)dashes);
+                _rallyLine.SurfaceSetColor(TeamColor[_me].Lightened(0.4f));
+                _rallyLine.SurfaceAddVertex(new Vector3(p.X, _terrain.HeightAt(p.X, p.Z) + 0.25f, p.Z));
+            }
+        }
+        _rallyLine.SurfaceEnd();
+    }
+
+    /// <summary>A place in the sim, stood on the landscape (the sim is flat; the hills are only for looks).</summary>
+    Vector3 ToV3(FixVec2 p) { float x = p.X.ToFloat(), z = p.Z.ToFloat(); return new(x, _terrain.HeightAt(x, z), z); }
+
+    Terrain _terrain;
 
     /// <summary>Where a view's origin sits above the ground: boxes are centred, unit models stand on y = 0.</summary>
-    static float HeightOf(Kind k) => k switch { Kind.Hq => 1.5f, Kind.Factory => 1f, Kind.Tower => 2.25f, _ => 0f };
+    static float HeightOf(Kind k) => 0f;   // every model stands on its origin
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 3f, Kind.Tower => 4.2f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -643,6 +722,7 @@ public partial class Main : Node3D
             view.Position = pos + Vector3.Up * HeightOf(e.Kind);
             view.Visible = Shown(e);
             if (e.Kind == Kind.Factory) UpdateCogs(e, view, _frameDt);
+            if (e.Kind == Kind.Factory) UpdateRallyFlag(e);
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
@@ -651,6 +731,7 @@ public partial class Main : Node3D
             _prevPos.Remove(id);
             _facing.Remove(id);
             _cogs.Remove(id);
+            if (_flags.Remove(id, out var gone)) gone.QueueFree();
         }
 
         DrawPlacement();
@@ -661,7 +742,7 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 3.4f, Kind.Factory => 4.0f, Kind.Tower => 5.0f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
     };
 
@@ -695,11 +776,13 @@ public partial class Main : Node3D
         if (selected == null) _selected = -1;   // (it died)
         _selRing.Visible = selected != null;
         _statsPanel.Visible = selected != null;
+        DrawRallyLine(selected);
         if (selected == null) return;
         var ring = selected.Stats.Radius.ToFloat() * (selected.Stats.IsUnit ? 1.25f : 1.15f);
         _selRing.Scale = new Vector3(ring, 1, ring);
         _stats.Text = Describe(selected);
         ShowUpgrades(selected);
+        _rallyButton.Visible = selected.Kind == Kind.Factory && selected.Owner == _me && selected.HasRally;
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
         _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
     }
@@ -752,6 +835,8 @@ public partial class Main : Node3D
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        if (e.Kind == Kind.Factory && e.Owner == _me)
+            lines.Add(e.HasRally ? "Units gather at the flag and hold" : "Units attack  (right-click the ground to rally them)");
         return string.Join("\n", lines);
     }
 
@@ -856,7 +941,13 @@ public partial class Main : Node3D
                 }
                 else _selected = EntityAt(_mouseGround.Value)?.Id ?? -1;
             }
-            else if (mb.ButtonIndex == MouseButton.Right) { _placing = null; }
+            else if (mb.ButtonIndex == MouseButton.Right)
+            {
+                // Cancels build mode; otherwise, with one of my factories selected, sets where its units rally.
+                if (_placing != null) _placing = null;
+                else if (W.Find(_selected) is { Kind: Kind.Factory } f && f.Owner == _me && W.Winner < 0)
+                    _session.Issue(new SetRally(_me, f.Id, false, ToFix(_mouseGround.Value)));
+            }
         }
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
@@ -898,9 +989,17 @@ public partial class Main : Node3D
         var from = _camera.ProjectRayOrigin(mouse);
         var dir = _camera.ProjectRayNormal(mouse);
         if (Mathf.Abs(dir.Y) < 1e-4f) return null;
-        var t = -from.Y / dir.Y;
-        if (t < 0) return null;
-        var hit = from + dir * t;
+        // Where the ray meets the hills: start at sea level, then step to the ground's height there a few times.
+        float level = 0;
+        Vector3 hit = from;
+        for (int i = 0; i < 5; i++)
+        {
+            var t = (level - from.Y) / dir.Y;
+            if (t < 0) return null;
+            hit = from + dir * t;
+            level = _terrain.HeightAt(hit.X, hit.Z);
+        }
+        hit.Y = level;
         if (Mathf.Abs(hit.X) > World.MapHalfX.ToFloat() || Mathf.Abs(hit.Z) > World.MapHalfZ.ToFloat()) return null;
         return hit;
     }

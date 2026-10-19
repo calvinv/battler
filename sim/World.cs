@@ -43,6 +43,9 @@ public sealed class Entity
     public int Damage;     // with damage upgrades and veterancy
     public int Kills;      // what it has finished off
     public int Rank;       // veterancy, 0 to World.MaxRank: every World.KillsPerRank kills
+    public int FactoryId;  // a unit: the factory that made it (its rally point steers it)
+    public bool HasRally;  // a factory: whether its units gather at Rally instead of attacking
+    public FixVec2 Rally;
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -142,6 +145,8 @@ public sealed class World
         }
     }
 
+    static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
+
     public static FixVec2 HqStart(int player) => new(player == 0 ? -45 : 45, 0);
     /// <summary>Where a starting watch tower stands: 12 toward the enemy from the HQ, `side` across.</summary>
     public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -33 : 33, side);
@@ -150,7 +155,7 @@ public sealed class World
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
     {
         var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos, Makes = makes };
-        if (from != null) from.Levels.CopyTo(e.Levels, 0);
+        if (from != null) { from.Levels.CopyTo(e.Levels, 0); e.FactoryId = from.Id; }
         SetStats(e);
         e.Hp = e.MaxHp;
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
@@ -222,7 +227,7 @@ public sealed class World
             // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
             // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
             foreach (var c in commands)
-                if (c is PlaceFactory or UpgradeFactory) Apply(c);
+                if (c is PlaceFactory or UpgradeFactory or SetRally) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
             UpdateVision();
             return;
@@ -292,6 +297,12 @@ public sealed class World
                 p.Metal -= UpgradeCost(f.Level(uf.Which) + 1);
                 f.Levels[(int)uf.Which]++;
                 break;
+            case SetRally sr:
+                var rallying = Find(sr.FactoryId);
+                if (rallying == null || rallying.Kind != Kind.Factory || rallying.Owner != sr.Player) break;
+                rallying.HasRally = !sr.Clear;
+                rallying.Rally = new FixVec2(Clamp(sr.Pos.X, MapHalfX - 2), Clamp(sr.Pos.Z, MapHalfZ - 2));
+                break;
         }
     }
 
@@ -350,7 +361,16 @@ public sealed class World
             }
             else if (s.IsUnit)
             {
-                _moves.Add((e, (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed)));
+                // No enemy in sight: gather at its factory's rally point if it has one (and hold there), else advance on
+                // the enemy HQ. Rally points are live: move one and its units go; clear it and they all attack.
+                var factory = e.FactoryId > 0 ? Find(e.FactoryId) : null;
+                if (factory != null && factory.HasRally)
+                {
+                    var away = factory.Rally - e.Pos;
+                    var dist = away.Length;
+                    if (dist > Fix.Ratio(15, 10)) _moves.Add((e, away.WithLength(Fix.Min(s.Speed, dist))));
+                }
+                else _moves.Add((e, (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed)));
             }
         }
         foreach (var (e, step) in _moves) e.Pos += step;
@@ -457,7 +477,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw);
             foreach (var l in e.Levels) Mix(l);
         }
         return h;

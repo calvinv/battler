@@ -27,6 +27,10 @@ int ReplayTest()
         foreach (var ai in ais) ai.Think(world, cmds.Add);
         if (world.Tick == 600) cmds.Add(new Pause(0));
         if (world.Tick == 700) cmds.Add(new Resume(0));
+        // Player 0 holds its first factory's units near home for a while, then lets them go.
+        var first0 = world.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
+        if (first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
+        if (first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
         var ordered = cmds.OrderBy(c => c.Player).ToArray();   // the agreed order
         log.Add(ordered);
         world.Step(ordered);
@@ -86,6 +90,9 @@ int LanTest()
                 // The client calls a pause and ends it early.
                 if (i == 1 && w.Tick == 600) ss.Issue(new Pause(1));
                 if (i == 1 && w.Tick == 700) ss.Issue(new Resume(1));
+                var first1 = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 1);
+                if (i == 1 && first1 != null && w.Tick == 300) ss.Issue(new SetRally(1, first1.Id, false, new FixVec2(30, -5)));
+                if (i == 1 && first1 != null && w.Tick == 1500) ss.Issue(new SetRally(1, first1.Id, true, FixVec2.Zero));
             }
             if (ss.TryStep()) { any = true; if (w.Paused) pausedTicks[i]++; if (i == 0 && w.Tick % 1200 == 0) Report(w); }
             else stalls++;

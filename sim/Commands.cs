@@ -17,3 +17,6 @@ public sealed record Resume(int Player) : Command(Player);
 
 /// <summary>Buys the next level of one of a factory's upgrades.</summary>
 public sealed record UpgradeFactory(int Player, int FactoryId, Upgrade Which) : Command(Player);
+
+/// <summary>Where a factory's units gather and hold (Clear: none, so they attack).</summary>
+public sealed record SetRally(int Player, int FactoryId, bool Clear, FixVec2 Pos) : Command(Player);
