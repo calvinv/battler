@@ -14,3 +14,6 @@ public sealed record Pause(int Player) : Command(Player);
 
 /// <summary>Ends a pause early; only the player who called it can.</summary>
 public sealed record Resume(int Player) : Command(Player);
+
+/// <summary>Buys the next level of one of a factory's upgrades.</summary>
+public sealed record UpgradeFactory(int Player, int FactoryId, Upgrade Which) : Command(Player);

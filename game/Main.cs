@@ -46,6 +46,7 @@ public partial class Main : Node3D
     PanelContainer _statsPanel;
     Label _stats;
     MeshInstance3D _selRing;
+    readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
     string _placeProblem;          // why the factory can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
@@ -103,7 +104,7 @@ public partial class Main : Node3D
             for (int i = 0; i < 75 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
             _focus = Vector3.Zero;
             _distance = 60;
-            _selected = W.Entities.FirstOrDefault(e => e.Owner == _me && e.Kind == Kind.Tank)?.Id ?? -1;   // show the stats panel
+            _selected = W.Entities.FirstOrDefault(e => e.Owner == _me && e.Kind == Kind.Factory)?.Id ?? -1;   // show the stats panel and upgrades
             _shotFrames = 10;
         }
     }
@@ -300,7 +301,19 @@ public partial class Main : Node3D
         });
         _stats = new Label();
         _stats.AddThemeFontSizeOverride("font_size", 18);
-        _statsPanel.AddChild(_stats);
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 6);
+        column.AddChild(_stats);
+        for (int i = 0; i < _upgradeButtons.Length; i++)
+        {
+            var which = (Upgrade)i;
+            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+            b.AddThemeFontSizeOverride("font_size", 17);
+            b.Pressed += () => _session?.Issue(new UpgradeFactory(_me, _selected, which));
+            column.AddChild(b);
+            _upgradeButtons[i] = b;
+        }
+        _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
         _hud.AddThemeFontSizeOverride("font_size", 20);
@@ -521,11 +534,11 @@ public partial class Main : Node3D
             var top = pos + Vector3.Up * TopOf(e.Kind);
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
             // A bar only once it's been hurt (or while it's selected).
-            if (e.Hp >= e.Stats.MaxHp && e.Id != _selected) continue;
+            if (e.Hp >= e.MaxHp && e.Id != _selected) continue;
             if (_camera.IsPositionBehind(top)) continue;
             var r = e.Stats.Radius.ToFloat();
             var width = _camera.UnprojectPosition(top + right * r).X - _camera.UnprojectPosition(top - right * r).X;
-            _overlay.Bars.Add((_camera.UnprojectPosition(top), width, Mathf.Clamp(e.Hp / (float)e.Stats.MaxHp, 0, 1),
+            _overlay.Bars.Add((_camera.UnprojectPosition(top), width, Mathf.Clamp(e.Hp / (float)e.MaxHp, 0, 1),
                                TeamColor[e.Owner], e.Id == _selected));
         }
         _overlay.QueueRedraw();
@@ -537,7 +550,29 @@ public partial class Main : Node3D
         var ring = selected.Stats.Radius.ToFloat() * (selected.Stats.IsUnit ? 1.25f : 1.15f);
         _selRing.Scale = new Vector3(ring, 1, ring);
         _stats.Text = Describe(selected);
+        ShowUpgrades(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
+        _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
+    }
+
+    static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
+
+    /// <summary>The three upgrade buttons, for one of my factories only.</summary>
+    void ShowUpgrades(Entity e)
+    {
+        bool mine = e.Kind == Kind.Factory && e.Owner == _me;
+        for (int i = 0; i < _upgradeButtons.Length; i++)
+        {
+            var b = _upgradeButtons[i];
+            b.Visible = mine;
+            if (!mine) continue;
+            var which = (Upgrade)i;
+            int level = e.Level(which);
+            b.Text = level >= World.MaxUpgradeLevel
+                ? $"{which}  {level}/{World.MaxUpgradeLevel}   (max)"
+                : $"{which}  {level}/{World.MaxUpgradeLevel}   buy for {World.UpgradeCost(level + 1)}:  {UpgradeEffect[i]}";
+            b.Disabled = !W.CanUpgrade(_me, e.Id, which, out _) || W.Winner >= 0;
+        }
     }
 
     string Describe(Entity e)
@@ -552,18 +587,20 @@ public partial class Main : Node3D
                 Kind.Tank => "Tough all-rounder.",
                 Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
                 Kind.Hq => "Lose it and you lose the match.",
-                _ => $"Makes a {e.Makes} every {World.StatsFor[(int)e.Makes].BuildTicks / World.TicksPerSecond} s",
+                _ => $"Makes: {e.Makes}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
-            $"Health  {Mathf.Max(e.Hp, 0)} / {s.MaxHp}",
+            $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
         };
         if (s.Reload > 0)
         {
             float every = s.Reload / (float)World.TicksPerSecond;
-            lines.Add($"Damage  {s.Damage} every {every:0.#} s  ({s.Damage / every:0.#} per s)");
+            lines.Add($"Damage  {e.Damage} every {every:0.#} s  ({e.Damage / every:0.#} per s)");
             lines.Add($"Range  {s.Range}" + (s.MinRange.Raw > 0 ? $"   (none within {s.MinRange})" : ""));
             if (s.Splash.Raw > 0) lines.Add($"Splash  {s.Splash} wide");
         }
         if (s.IsUnit) lines.Add($"Speed  {s.Speed.ToFloat() * World.TicksPerSecond:0.#} per s");
+        if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
+            lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         return string.Join("\n", lines);
     }
@@ -620,9 +657,9 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
-            $"[{i + 1}] {k} {World.StatsFor[(int)k].FactoryCost}"));
+            $"[{i + 1}] {k}"));
         var building = _placing == null
-            ? $"Build: {menu}"
+            ? $"Build ({World.FactoryCost} each): {menu}"
             : $"Placing {_placing} factory: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
             $"Metal {me.Metal}\n" +

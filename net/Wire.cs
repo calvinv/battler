@@ -60,6 +60,7 @@ public static class Wire
             case PlaceFactory pf: w.Write((byte)1); w.Write((byte)pf.Player); w.Write(pf.Pos.X.Raw); w.Write(pf.Pos.Z.Raw); w.Write((byte)pf.Makes); break;
             case Pause: w.Write((byte)2); w.Write((byte)c.Player); break;
             case Resume: w.Write((byte)3); w.Write((byte)c.Player); break;
+            case UpgradeFactory uf: w.Write((byte)4); w.Write((byte)uf.Player); w.Write(uf.FactoryId); w.Write((byte)uf.Which); break;
             default: throw new InvalidDataException($"no wire format for {c.GetType().Name}");
         }
     }
@@ -73,6 +74,7 @@ public static class Wire
             1 => new PlaceFactory(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64())), (Kind)r.ReadByte()),
             2 => new Pause(player),
             3 => new Resume(player),
+            4 => new UpgradeFactory(player, r.ReadInt32(), (Upgrade)r.ReadByte()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
     }

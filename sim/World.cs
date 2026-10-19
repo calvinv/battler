@@ -4,6 +4,9 @@ namespace Battler.Sim;
 
 public enum Kind { Hq, Factory, Scout, Tank, Artillery }
 
+/// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
+public enum Upgrade { Production, Damage, Armour }
+
 public sealed class Stats
 {
     public int MaxHp;
@@ -15,7 +18,6 @@ public sealed class Stats
     public Fix Splash;     // shots also hit enemies this close to the target
     public int Damage;
     public int Reload;     // ticks between shots; zero = unarmed
-    public int FactoryCost;   // a unit: what the factory that makes it costs
     public int BuildTicks;    // a unit: how often its factory makes one
 
     public bool IsBuilding => Speed.Raw == 0;
@@ -33,6 +35,12 @@ public sealed class Entity
     public int Timer;      // factory: ticks until the next unit
     public Kind Makes;     // factory: the unit it makes
     public bool Dead;
+    // A factory's upgrade levels by Upgrade; a unit carries its factory's at the time it was made.
+    public readonly int[] Levels = new int[3];
+    public int MaxHp;      // with armour upgrades
+    public int Damage;     // with damage upgrades
+
+    public int Level(Upgrade u) => Levels[(int)u];
 
     public Stats Stats => World.StatsFor[(int)Kind];
 }
@@ -58,8 +66,17 @@ public sealed class World
     public const int TicksPerSecond = 10;
     public const int PauseTicks = 30 * TicksPerSecond;
     public const int PausesPerPlayer = 3;
-    public const int StartMetal = 400;
-    public const int IncomePerTick = 1;
+    public const int StartMetal = 600;
+    public const int IncomePerTick = 2;
+    public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
+
+    public const int MaxUpgradeLevel = 3;
+    static readonly int[] UpgradeCosts = { 200, 400, 700 };   // for levels 1, 2, 3
+    public static int UpgradeCost(int toLevel) => UpgradeCosts[toLevel - 1];
+    // Per level: production 15% quicker, damage +25%, armour (health) +25%.
+    public static int WithDamage(int baseDamage, int level) => baseDamage * (100 + 25 * level) / 100;
+    public static int WithArmour(int baseHp, int level) => baseHp * (100 + 25 * level) / 100;
+    public static int WithProduction(int baseTicks, int level) => baseTicks * (100 - 15 * level) / 100;
     public static readonly Fix BuildRadius = 25;
     public static readonly Fix MapHalfX = 60, MapHalfZ = 40;
 
@@ -75,13 +92,13 @@ public sealed class World
         new() { MaxHp = 800, Radius = 2 },
         // Scout
         new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Range = 6, Aggro = 18,
-                Damage = 5, Reload = 5, FactoryCost = 150, BuildTicks = 6 * TicksPerSecond },
+                Damage = 5, Reload = 5, BuildTicks = 6 * TicksPerSecond },
         // Tank
         new() { MaxHp = 240, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14,
-                Damage = 24, Reload = 15, FactoryCost = 250, BuildTicks = 12 * TicksPerSecond },
+                Damage = 24, Reload = 15, BuildTicks = 12 * TicksPerSecond },
         // Artillery
         new() { MaxHp = 90, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22,
-                Splash = Fix.Ratio(25, 10), Damage = 40, Reload = 40, FactoryCost = 300, BuildTicks = 16 * TicksPerSecond },
+                Splash = Fix.Ratio(25, 10), Damage = 40, Reload = 40, BuildTicks = 16 * TicksPerSecond },
     };
 
     public int Tick;
@@ -114,13 +131,33 @@ public sealed class World
 
     public static FixVec2 HqStart(int player) => new(player == 0 ? -45 : 45, 0);
 
-    public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq)
+    /// <param name="from">a unit's factory: the unit takes its upgrade levels</param>
+    public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
     {
         var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos, Makes = makes };
-        e.Hp = e.Stats.MaxHp;
-        if (kind == Kind.Factory) e.Timer = StatsFor[(int)makes].BuildTicks;
+        if (from != null) from.Levels.CopyTo(e.Levels, 0);
+        e.MaxHp = WithArmour(e.Stats.MaxHp, e.Level(Upgrade.Armour));
+        e.Damage = WithDamage(e.Stats.Damage, e.Level(Upgrade.Damage));
+        e.Hp = e.MaxHp;
+        if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
         Entities.Add(e);
         return e;
+    }
+
+    /// <summary>How often a factory makes a unit, with its production upgrades.</summary>
+    public static int BuildTicksOf(Entity factory) =>
+        WithProduction(StatsFor[(int)factory.Makes].BuildTicks, factory.Level(Upgrade.Production));
+
+    public Entity Find(int id) => Entities.Find(e => e.Id == id && !e.Dead);
+
+    public bool CanUpgrade(int player, int factoryId, Upgrade which, out string why)
+    {
+        var f = Find(factoryId);
+        why = null;
+        if (f == null || f.Kind != Kind.Factory || f.Owner != player) { why = "Not your factory"; return false; }
+        if (f.Level(which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
+        if (Players[player].Metal < UpgradeCost(f.Level(which) + 1)) { why = "Not enough metal"; return false; }
+        return true;
     }
 
     public bool CanPlaceFactory(int player, FixVec2 pos, Kind makes, out string why)
@@ -129,7 +166,7 @@ public sealed class World
         var r = StatsFor[(int)Kind.Factory].Radius;
         why = null;
         if (System.Array.IndexOf(UnitKinds, makes) < 0) { why = "Not a unit"; return false; }
-        if (p.Metal < StatsFor[(int)makes].FactoryCost) { why = "Not enough metal"; return false; }
+        if (p.Metal < FactoryCost) { why = "Not enough metal"; return false; }
         if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
         if ((pos - p.HqPos).LengthSq > BuildRadius * BuildRadius) { why = "Too far from your HQ"; return false; }
         foreach (var e in Entities)
@@ -180,8 +217,13 @@ public sealed class World
                 PauseTicksLeft = PauseTicks;
                 break;
             case PlaceFactory pf when CanPlaceFactory(pf.Player, pf.Pos, pf.Makes, out _):
-                p.Metal -= StatsFor[(int)pf.Makes].FactoryCost;
+                p.Metal -= FactoryCost;
                 Spawn(Kind.Factory, pf.Player, pf.Pos, pf.Makes);
+                break;
+            case UpgradeFactory uf when CanUpgrade(uf.Player, uf.FactoryId, uf.Which, out _):
+                var f = Find(uf.FactoryId);
+                p.Metal -= UpgradeCost(f.Level(uf.Which) + 1);
+                f.Levels[(int)uf.Which]++;
                 break;
         }
     }
@@ -202,12 +244,12 @@ public sealed class World
         {
             var f = Entities[i];
             if (f.Dead || f.Kind != Kind.Factory || --f.Timer > 0) continue;
-            f.Timer = StatsFor[(int)f.Makes].BuildTicks;
+            f.Timer = BuildTicksOf(f);
             // Roll out on the side facing the enemy, with a little spread so they don't stack.
             var dir = Players[1 - f.Owner].HqPos - f.Pos;
             var spawn = f.Pos + dir.WithLength(f.Stats.Radius + StatsFor[(int)f.Makes].Radius + 1)
                         + new FixVec2(0, Fix.Ratio(Rng.Range(-10, 10), 10));
-            Spawn(f.Makes, f.Owner, spawn);
+            Spawn(f.Makes, f.Owner, spawn, from: f);
         }
     }
 
@@ -252,12 +294,12 @@ public sealed class World
         var s = e.Stats;
         e.Cooldown = s.Reload;
         Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind));
-        if (s.Splash.Raw == 0) { _hits.Add((target, s.Damage)); return; }
+        if (s.Splash.Raw == 0) { _hits.Add((target, e.Damage)); return; }
         foreach (var o in Entities)
         {
             if (o.Dead || o.Owner == e.Owner) continue;
             var reach = s.Splash + o.Stats.Radius;
-            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, s.Damage));
+            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, e.Damage));
         }
     }
 
@@ -330,7 +372,8 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage);
+            foreach (var l in e.Levels) Mix(l);
         }
         return h;
     }

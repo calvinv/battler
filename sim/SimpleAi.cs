@@ -22,6 +22,17 @@ public sealed class SimpleAi
     {
         if (w.Paused || w.Tick % 20 != 0) return;
         var p = w.Players[_player];
+        // A third of the time, try upgrading one of its factories instead of saving for a new one.
+        if (_rng.Next(3) == 0)
+        {
+            var mine = w.Entities.FindAll(e => e.Kind == Kind.Factory && e.Owner == _player);
+            if (mine.Count > 0)
+            {
+                var f = mine[_rng.Next(mine.Count)];
+                var which = (Upgrade)_rng.Next(3);
+                if (w.CanUpgrade(_player, f.Id, which, out _)) { issue(new UpgradeFactory(_player, f.Id, which)); return; }
+            }
+        }
         // Mostly tanks, with some scouts and artillery.
         var roll = _rng.Next(4);
         var makes = roll < 2 ? Kind.Tank : roll == 2 ? Kind.Scout : Kind.Artillery;
