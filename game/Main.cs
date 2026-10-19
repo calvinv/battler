@@ -12,7 +12,7 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: left click places a factory near your HQ, WASD/arrows pan, wheel zooms,
+/// Controls: 1-3 choose a factory (scout, tank, artillery), left click places it near your HQ, WASD/arrows pan, wheel zooms,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
@@ -38,7 +38,10 @@ public partial class Main : Node3D
     string _joinAddress;
     string _connectStatus;
 
-    readonly Dictionary<int, MeshInstance3D> _views = new();
+    readonly Dictionary<int, Node3D> _views = new();
+    Kind _buildKind = Kind.Tank;   // the factory a click places (keys 1-3)
+    string _placeProblem;          // why the factory can't go under the mouse
+    readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
     readonly Dictionary<int, Vector3> _facing = new();
     readonly Dictionary<(Kind, int), Mesh> _meshes = new();
@@ -46,7 +49,7 @@ public partial class Main : Node3D
 
     Camera3D _camera;
     Vector3 _focus;
-    float _distance = 90;
+    float _distance = 70;
     MeshInstance3D _ghost;
     StandardMaterial3D _ghostMat;
     readonly List<MeshInstance3D> _heldGhosts = new();
@@ -91,9 +94,9 @@ public partial class Main : Node3D
 
         if (args.Contains("--shot"))
         {
-            for (int i = 0; i < 60 * World.TicksPerSecond; i++) StepWorld();
+            for (int i = 0; i < 75 * World.TicksPerSecond; i++) { StepWorld(); FadeBlasts((float)TickLength); }
             _focus = Vector3.Zero;
-            _distance = 110;
+            _distance = 60;
             _shotFrames = 10;
         }
     }
@@ -306,16 +309,36 @@ public partial class Main : Node3D
     Material MaterialFor(Kind k, int owner)
     {
         if (_materials.TryGetValue((k, owner), out var m)) return m;
-        var col = TeamColor[owner];
-        if (k != Kind.Mech) col = col.Darkened(0.35f);
-        m = new StandardMaterial3D { AlbedoColor = col, Roughness = 0.8f };
+        m = new StandardMaterial3D { AlbedoColor = TeamColor[owner].Darkened(0.35f), Roughness = 0.8f };
         _materials[(k, owner)] = m;
         return m;
     }
 
+    static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
+
+    /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
+    Node3D MakeView(Entity e)
+    {
+        if (e.Stats.IsUnit) return UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
+        var box = new MeshInstance3D { Mesh = MeshFor(e.Kind), MaterialOverride = MaterialFor(e.Kind, e.Owner) };
+        if (e.Kind == Kind.Factory)
+        {
+            var sign = UnitArt.Make(ModelOf(e.Makes), TeamColor[e.Owner]);
+            sign.Scale = Vector3.One * 0.7f;
+            sign.Position = Vector3.Up * 1f;   // on the roof (the box's middle is its origin)
+            sign.Basis = Basis.LookingAt(new Vector3(e.Owner == 0 ? 1 : -1, 0, 0.4f).Normalized(), Vector3.Up).Scaled(Vector3.One * 0.7f);
+            box.AddChild(sign);
+        }
+        return box;
+    }
+
     static Vector3 ToV3(FixVec2 p) => new(p.X.ToFloat(), 0, p.Z.ToFloat());
 
-    static float HeightOf(Kind k) => k switch { Kind.Hq => 1.5f, Kind.Factory => 1f, _ => 0.8f };
+    /// <summary>Where a view's origin sits above the ground: boxes are centred, unit models stand on y = 0.</summary>
+    static float HeightOf(Kind k) => k switch { Kind.Hq => 1.5f, Kind.Factory => 1f, _ => 0f };
+
+    /// <summary>The height shots leave from: about each one's gun.</summary>
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 3f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -341,6 +364,7 @@ public partial class Main : Node3D
         }
         if (_acc > TickLength) _acc = 0;   // fell far behind; don't spiral
 
+        FadeBlasts((float)delta);
         Draw((float)(_acc / TickLength));
         TakeShotWhenReady();
     }
@@ -366,14 +390,50 @@ public partial class Main : Node3D
             foreach (var s in W.Shots)
             {
                 var col = TeamColor[s.Owner].Lightened(0.5f);
-                _tracers.SurfaceSetColor(col);
-                _tracers.SurfaceAddVertex(ToV3(s.From) + Vector3.Up * 1.2f);
-                _tracers.SurfaceSetColor(col);
-                _tracers.SurfaceAddVertex(ToV3(s.To) + Vector3.Up * 0.8f);
+                var from = ToV3(s.From) + Vector3.Up * MuzzleOf(s.By);
+                var to = ToV3(s.To) + Vector3.Up * 0.6f;
+                // Artillery lobs its shell in an arc; everything else fires straight.
+                int segments = s.By == Kind.Artillery ? 10 : 1;
+                float peak = s.By == Kind.Artillery ? from.DistanceTo(to) * 0.35f : 0f;
+                for (int i = 0; i < segments; i++)
+                {
+                    float t0 = i / (float)segments, t1 = (i + 1) / (float)segments;
+                    _tracers.SurfaceSetColor(col);
+                    _tracers.SurfaceAddVertex(from.Lerp(to, t0) + Vector3.Up * peak * 4 * t0 * (1 - t0));
+                    _tracers.SurfaceSetColor(col);
+                    _tracers.SurfaceAddVertex(from.Lerp(to, t1) + Vector3.Up * peak * 4 * t1 * (1 - t1));
+                }
+                if (s.By == Kind.Artillery) Blast(to, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat());
             }
             _tracers.SurfaceEnd();
         }
         return true;
+    }
+
+    /// <summary>A flash where a shell lands, as wide as its splash, fading over half a second.</summary>
+    void Blast(Vector3 at, float radius)
+    {
+        var flash = new MeshInstance3D
+        {
+            Mesh = new SphereMesh { Radius = radius, Height = radius, RadialSegments = 12, Rings = 4 },
+            MaterialOverride = Unshaded(new Color(1f, 0.6f, 0.2f, 0.45f)),
+            Position = at,
+        };
+        AddChild(flash);
+        _blasts.Add((flash, 0f));
+    }
+
+    void FadeBlasts(float dt)
+    {
+        for (int i = _blasts.Count - 1; i >= 0; i--)
+        {
+            var (node, age) = _blasts[i];
+            age += dt;
+            if (age > 0.5f) { node.QueueFree(); _blasts.RemoveAt(i); continue; }
+            node.Scale = Vector3.One * (0.6f + age);
+            ((StandardMaterial3D)node.MaterialOverride).AlbedoColor = new Color(1f, 0.6f, 0.2f, 0.45f * (1 - age / 0.5f));
+            _blasts[i] = (node, age);
+        }
     }
 
     void Draw(float alpha)
@@ -385,14 +445,14 @@ public partial class Main : Node3D
             alive.Add(e.Id);
             if (!_views.TryGetValue(e.Id, out var view))
             {
-                view = new MeshInstance3D { Mesh = MeshFor(e.Kind), MaterialOverride = MaterialFor(e.Kind, e.Owner) };
+                view = MakeView(e);
                 AddChild(view);
                 _views[e.Id] = view;
             }
             var cur = ToV3(e.Pos);
             var prev = _prevPos.TryGetValue(e.Id, out var p) ? p : cur;
             var pos = prev.Lerp(cur, alpha);
-            if (e.Kind == Kind.Mech)
+            if (e.Stats.IsUnit)
             {
                 var step = cur - prev;
                 if (step.LengthSquared() > 1e-4f) _facing[e.Id] = step.Normalized();
@@ -420,7 +480,7 @@ public partial class Main : Node3D
         _ghost.Visible = canPlay && _mouseGround.HasValue;
         if (_ghost.Visible)
         {
-            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), out _);
+            var ok = W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _buildKind, out _placeProblem);
             _ghostMat.AlbedoColor = ok ? new Color(0.3f, 1f, 0.4f, 0.4f) : new Color(1f, 0.25f, 0.2f, 0.4f);
             _ghost.Position = _mouseGround.Value + Vector3.Up * HeightOf(Kind.Factory);
         }
@@ -443,16 +503,19 @@ public partial class Main : Node3D
     void DrawHud()
     {
         var me = W.Players[_me];
-        int myMechs = 0, theirMechs = 0;
+        int myUnits = 0, theirUnits = 0;
         int myHq = 0, theirHq = 0;
         foreach (var e in W.Entities)
         {
-            if (e.Kind == Kind.Mech) { if (e.Owner == _me) myMechs++; else theirMechs++; }
+            if (e.Stats.IsUnit) { if (e.Owner == _me) myUnits++; else theirUnits++; }
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
+        var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
+            $"{(k == _buildKind ? ">" : " ")}{i + 1} {k} {World.StatsFor[(int)k].FactoryCost}"));
         _hud.Text =
-            $"Metal {me.Metal}   (factory {World.StatsFor[(int)Kind.Factory].Cost})\n" +
-            $"Mechs {myMechs} vs {theirMechs}\n" +
+            $"Metal {me.Metal}\n" +
+            $"Factory: {menu}" + (_ghost.Visible && _placeProblem != null ? $"   ({_placeProblem})" : "") + "\n" +
+            $"Units {myUnits} vs {theirUnits}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
@@ -482,11 +545,13 @@ public partial class Main : Node3D
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
             else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(160, _distance * 1.1f);
             else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue && W.Winner < 0)
-                _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value)));
+                _session.Issue(new PlaceFactory(_me, ToFix(_mouseGround.Value), _buildKind));
         }
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
+            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.UnitKinds.Length)
+                _buildKind = World.UnitKinds[k.Keycode - Key.Key1];
+            else if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
             else if (k.Keycode == Key.Enter) _session.Issue(new Resume(_me));
             else if (k.Keycode == Key.R && W.Winner >= 0 && _session is LocalSession) StartMatch(new LocalSession((ulong)GD.Randi()));
         }

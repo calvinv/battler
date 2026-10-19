@@ -22,10 +22,13 @@ public sealed class SimpleAi
     {
         if (w.Paused || w.Tick % 20 != 0) return;
         var p = w.Players[_player];
+        // Mostly tanks, with some scouts and artillery.
+        var roll = _rng.Next(4);
+        var makes = roll < 2 ? Kind.Tank : roll == 2 ? Kind.Scout : Kind.Artillery;
         for (int attempt = 0; attempt < 10; attempt++)
         {
             var pos = p.HqPos + new FixVec2(_rng.Range(-20, 20), _rng.Range(-20, 20));
-            if (w.CanPlaceFactory(_player, pos, out _)) { issue(new PlaceFactory(_player, pos)); return; }
+            if (w.CanPlaceFactory(_player, pos, makes, out _)) { issue(new PlaceFactory(_player, pos, makes)); return; }
         }
     }
 }

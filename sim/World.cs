@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Mech }
+public enum Kind { Hq, Factory, Scout, Tank, Artillery }
 
 public sealed class Stats
 {
@@ -10,12 +10,16 @@ public sealed class Stats
     public Fix Radius;
     public Fix Speed;      // ground units per tick; zero for buildings
     public Fix Range;      // weapon reach, measured edge to edge
+    public Fix MinRange;   // can't fire at anything nearer than this (artillery)
     public Fix Aggro;      // how far it looks for targets
+    public Fix Splash;     // shots also hit enemies this close to the target
     public int Damage;
     public int Reload;     // ticks between shots; zero = unarmed
-    public int Cost;
+    public int FactoryCost;   // a unit: what the factory that makes it costs
+    public int BuildTicks;    // a unit: how often its factory makes one
 
     public bool IsBuilding => Speed.Raw == 0;
+    public bool IsUnit => !IsBuilding;
 }
 
 public sealed class Entity
@@ -26,7 +30,8 @@ public sealed class Entity
     public FixVec2 Pos;
     public int Hp;
     public int Cooldown;   // ticks until it can fire again
-    public int Timer;      // factory: ticks until the next mech
+    public int Timer;      // factory: ticks until the next unit
+    public Kind Makes;     // factory: the unit it makes
     public bool Dead;
 
     public Stats Stats => World.StatsFor[(int)Kind];
@@ -41,7 +46,7 @@ public sealed class Player
 }
 
 /// <summary>A shot fired this tick, kept for drawing tracers.</summary>
-public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner);
+public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner, Kind By);
 
 /// <summary>
 /// The whole battle. Deterministic: given the same seed and the same commands on the same ticks,
@@ -55,18 +60,28 @@ public sealed class World
     public const int PausesPerPlayer = 3;
     public const int StartMetal = 400;
     public const int IncomePerTick = 1;
-    public const int FactoryInterval = 10 * TicksPerSecond;
     public static readonly Fix BuildRadius = 25;
     public static readonly Fix MapHalfX = 60, MapHalfZ = 40;
 
+    public static readonly Kind[] UnitKinds = { Kind.Scout, Kind.Tank, Kind.Artillery };
+
+    // Roles: the scout is fast and fragile; the tank is tough, the all-rounder; artillery outranges everything and
+    // hits an area, but can't fire at anything close, so it's helpless once reached.
     public static readonly Stats[] StatsFor =
     {
         // Hq
         new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Damage = 15, Reload = 10 },
         // Factory
-        new() { MaxHp = 800, Radius = 2, Cost = 200 },
-        // Mech
-        new() { MaxHp = 100, Radius = Fix.Ratio(6, 10), Speed = Fix.Ratio(3, 10), Range = 8, Aggro = 16, Damage = 10, Reload = 8 },
+        new() { MaxHp = 800, Radius = 2 },
+        // Scout
+        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Range = 6, Aggro = 18,
+                Damage = 5, Reload = 5, FactoryCost = 150, BuildTicks = 6 * TicksPerSecond },
+        // Tank
+        new() { MaxHp = 240, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14,
+                Damage = 24, Reload = 15, FactoryCost = 250, BuildTicks = 12 * TicksPerSecond },
+        // Artillery
+        new() { MaxHp = 90, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22,
+                Splash = Fix.Ratio(25, 10), Damage = 40, Reload = 40, FactoryCost = 300, BuildTicks = 16 * TicksPerSecond },
     };
 
     public int Tick;
@@ -99,21 +114,22 @@ public sealed class World
 
     public static FixVec2 HqStart(int player) => new(player == 0 ? -45 : 45, 0);
 
-    public Entity Spawn(Kind kind, int owner, FixVec2 pos)
+    public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq)
     {
-        var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos };
+        var e = new Entity { Id = _nextId++, Kind = kind, Owner = owner, Pos = pos, Makes = makes };
         e.Hp = e.Stats.MaxHp;
-        if (kind == Kind.Factory) e.Timer = FactoryInterval;
+        if (kind == Kind.Factory) e.Timer = StatsFor[(int)makes].BuildTicks;
         Entities.Add(e);
         return e;
     }
 
-    public bool CanPlaceFactory(int player, FixVec2 pos, out string why)
+    public bool CanPlaceFactory(int player, FixVec2 pos, Kind makes, out string why)
     {
         var p = Players[player];
         var r = StatsFor[(int)Kind.Factory].Radius;
         why = null;
-        if (p.Metal < StatsFor[(int)Kind.Factory].Cost) { why = "Not enough metal"; return false; }
+        if (System.Array.IndexOf(UnitKinds, makes) < 0) { why = "Not a unit"; return false; }
+        if (p.Metal < StatsFor[(int)makes].FactoryCost) { why = "Not enough metal"; return false; }
         if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
         if ((pos - p.HqPos).LengthSq > BuildRadius * BuildRadius) { why = "Too far from your HQ"; return false; }
         foreach (var e in Entities)
@@ -163,9 +179,9 @@ public sealed class World
                 PausedBy = c.Player;
                 PauseTicksLeft = PauseTicks;
                 break;
-            case PlaceFactory pf when CanPlaceFactory(pf.Player, pf.Pos, out _):
-                p.Metal -= StatsFor[(int)Kind.Factory].Cost;
-                Spawn(Kind.Factory, pf.Player, pf.Pos);
+            case PlaceFactory pf when CanPlaceFactory(pf.Player, pf.Pos, pf.Makes, out _):
+                p.Metal -= StatsFor[(int)pf.Makes].FactoryCost;
+                Spawn(Kind.Factory, pf.Player, pf.Pos, pf.Makes);
                 break;
         }
     }
@@ -181,16 +197,17 @@ public sealed class World
 
     void Produce()
     {
-        int count = Entities.Count;   // mechs spawned now don't act until next tick
+        int count = Entities.Count;   // units made now don't act until next tick
         for (int i = 0; i < count; i++)
         {
             var f = Entities[i];
             if (f.Dead || f.Kind != Kind.Factory || --f.Timer > 0) continue;
-            f.Timer = FactoryInterval;
-            // Step out on the side facing the enemy, with a little spread so they don't stack.
+            f.Timer = StatsFor[(int)f.Makes].BuildTicks;
+            // Roll out on the side facing the enemy, with a little spread so they don't stack.
             var dir = Players[1 - f.Owner].HqPos - f.Pos;
-            var spawn = f.Pos + dir.WithLength(f.Stats.Radius + 1) + new FixVec2(0, Fix.Ratio(Rng.Range(-10, 10), 10));
-            Spawn(Kind.Mech, f.Owner, spawn);
+            var spawn = f.Pos + dir.WithLength(f.Stats.Radius + StatsFor[(int)f.Makes].Radius + 1)
+                        + new FixVec2(0, Fix.Ratio(Rng.Range(-10, 10), 10));
+            Spawn(f.Makes, f.Owner, spawn);
         }
     }
 
@@ -203,30 +220,51 @@ public sealed class World
             if (e.Cooldown > 0) e.Cooldown--;
             if (s.Reload == 0) continue;
 
-            var target = NearestEnemy(e, s.Aggro);
+            var target = NearestEnemy(e, s.Aggro, s.MinRange);
+            // Artillery with an enemy too close to shoot holds still: that's its weakness.
+            if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, s.Aggro, Fix.Zero) != null) continue;
             if (target != null)
             {
                 var gap = (target.Pos - e.Pos).Length - s.Radius - target.Stats.Radius;
                 if (gap <= s.Range)
                 {
-                    if (e.Cooldown == 0)
-                    {
-                        target.Hp -= s.Damage;
-                        e.Cooldown = s.Reload;
-                        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner));
-                    }
+                    if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (!s.IsBuilding) e.Pos += (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - s.Range));
+                if (s.IsUnit) e.Pos += (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - s.Range));
             }
-            else if (!s.IsBuilding)
+            else if (s.IsUnit)
             {
                 e.Pos += (Players[1 - e.Owner].HqPos - e.Pos).WithLength(s.Speed);
             }
         }
+        foreach (var (target, damage) in _hits) target.Hp -= damage;
+        _hits.Clear();
     }
 
-    Entity NearestEnemy(Entity from, Fix within)
+    /// <summary>
+    /// Records the damage a shot does; it lands after everyone has fired (<see cref="Fight"/>). Applying it at once
+    /// let whichever unit came first in the list kill before the other could shoot back, and player 0's units tend to
+    /// come first (their commands apply first): he won 21 of 30 AI matches.
+    /// </summary>
+    void Fire(Entity e, Entity target)
+    {
+        var s = e.Stats;
+        e.Cooldown = s.Reload;
+        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind));
+        if (s.Splash.Raw == 0) { _hits.Add((target, s.Damage)); return; }
+        foreach (var o in Entities)
+        {
+            if (o.Dead || o.Owner == e.Owner) continue;
+            var reach = s.Splash + o.Stats.Radius;
+            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, s.Damage));
+        }
+    }
+
+    readonly List<(Entity, int)> _hits = new();
+
+    /// <summary>The nearest live enemy within <paramref name="within"/> and no nearer than <paramref name="notNearer"/> (edge to edge).</summary>
+    Entity NearestEnemy(Entity from, Fix within, Fix notNearer)
     {
         Entity best = null;
         var bestD = Fix.Zero;
@@ -236,12 +274,17 @@ public sealed class World
             var reach = within + e.Stats.Radius;
             var d = (e.Pos - from.Pos).LengthSq;
             if (d > reach * reach) continue;
+            if (notNearer.Raw > 0)
+            {
+                var close = notNearer + e.Stats.Radius + from.Stats.Radius;
+                if (d < close * close) continue;
+            }
             if (best == null || d < bestD) { best = e; bestD = d; }
         }
         return best;
     }
 
-    /// <summary>Pushes overlapping mechs apart (and out of buildings) so they don't stack.</summary>
+    /// <summary>Pushes overlapping units apart (and out of buildings) so they don't stack.</summary>
     void Separate()
     {
         for (int i = 0; i < Entities.Count; i++)
@@ -287,7 +330,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes);
         }
         return h;
     }

@@ -6,7 +6,8 @@ namespace Battler.Sim;
 /// </summary>
 public abstract record Command(int Player);
 
-public sealed record PlaceFactory(int Player, FixVec2 Pos) : Command(Player);
+/// <summary>A factory at Pos that makes Makes (one of World.UnitKinds).</summary>
+public sealed record PlaceFactory(int Player, FixVec2 Pos, Kind Makes) : Command(Player);
 
 /// <summary>Starts one of the player's tactical pauses.</summary>
 public sealed record Pause(int Player) : Command(Player);

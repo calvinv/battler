@@ -109,9 +109,9 @@ static void Report(World world)
     int m0 = 0, m1 = 0, f0 = 0, f1 = 0;
     foreach (var e in world.Entities)
     {
-        if (e.Kind == Kind.Mech) { if (e.Owner == 0) m0++; else m1++; }
+        if (e.Stats.IsUnit) { if (e.Owner == 0) m0++; else m1++; }
         if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  mechs {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}");
+    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}");
 }
