@@ -84,6 +84,7 @@ public readonly struct FixVec2
 
     public static FixVec2 operator +(FixVec2 a, FixVec2 b) => new(a.X + b.X, a.Z + b.Z);
     public static FixVec2 operator -(FixVec2 a, FixVec2 b) => new(a.X - b.X, a.Z - b.Z);
+    public static FixVec2 operator -(FixVec2 a) => new(-a.X, -a.Z);
     public static FixVec2 operator *(FixVec2 a, Fix s) => new(a.X * s, a.Z * s);
 
     public Fix LengthSq => X * X + Z * Z;

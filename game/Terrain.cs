@@ -16,15 +16,9 @@ public sealed class Terrain : System.IDisposable
     static readonly Vector2[] Bases = { V(World.HqStart(0)), V(World.HqStart(1)) };
     static Vector2 V(FixVec2 p) => new(p.X.ToFloat(), p.Z.ToFloat());
     static readonly (Vector2 At, float R)[] Ponds = System.Array.ConvertAll(Ground.Ponds, p => (V(p.At), p.R.ToFloat()));
-    static readonly (Vector2 At, float Rx, float Rz)[] Lakes = System.Array.ConvertAll(Ground.Lakes, l => (V(l.At), l.Rx.ToFloat(), l.Rz.ToFloat()));
 
-    /// <summary>How far into a lake: under 1 inside, 1 on the shore (as Ground.LakeReach, in floats for drawing).</summary>
-    static float LakeReach(float x, float z)
-    {
-        float best = 100f;
-        foreach (var (at, rx, rz) in Lakes) best = Mathf.Min(best, new Vector2((x - at.X) / rx, (z - at.Y) / rz).Length());
-        return best;
-    }
+    /// <summary>How far out into the water a place is (Ground.WaterDepth; negative on land).</summary>
+    static float WaterDepth(float x, float z) => Ground.WaterDepthF(x, z);
     public const float WaterLevel = -0.75f;
 
     readonly FastNoiseLite _noise = new()
@@ -125,7 +119,7 @@ public sealed class Terrain : System.IDisposable
     {
         float wet = 0;
         foreach (var (at, r) in Ponds) wet = Mathf.Max(wet, 1f - Mathf.Clamp((new Vector2(x, z).DistanceTo(at) - r) / 3f, 0f, 1f));
-        wet = Mathf.Max(wet, 1f - Mathf.Clamp((LakeReach(x, z) - 1f) * 12f, 0f, 1f));   // (about three units of shore)
+        wet = Mathf.Max(wet, 1f - Mathf.Clamp(-WaterDepth(x, z) / 3f, 0f, 1f));   // (about three units of shore)
         return wet;
     }
 
@@ -187,13 +181,12 @@ public sealed class Terrain : System.IDisposable
         var root = new Node3D { Name = "Decor" };
         foreach (var (at, r) in Ponds)
             root.AddChild(new MeshInstance3D { Mesh = Disc(r + 0.9f, 48), MaterialOverride = water, Position = new Vector3(at.X, WaterLevel, at.Y) });
-        // The lakes: one big disc each, stretched to the lake's shape; the banks rise through its rim.
-        foreach (var (at, rx, rz) in Lakes)
-            root.AddChild(new MeshInstance3D
-            {
-                Mesh = Disc(1f, 128, 12), MaterialOverride = water,
-                Position = new Vector3(at.X, WaterLevel, at.Y), Scale = new Vector3(rx * 1.12f, 1, rz * 1.12f),
-            });
+        // The north and south water: a sheet each following its shore out past the map's edge (the south one is the
+        // north one turned round, as the map is). Its UV.x runs 1 at the shore's edge (just up the bank, fading out)
+        // to 0 far out, as water_fog.gdshader expects of a pond.
+        var sheet = WaterSheet();
+        root.AddChild(new MeshInstance3D { Mesh = sheet, MaterialOverride = water, Position = new Vector3(0, WaterLevel, 0) });
+        root.AddChild(new MeshInstance3D { Mesh = sheet, MaterialOverride = water, Position = new Vector3(0, WaterLevel, 0), Rotation = new Vector3(0, Mathf.Pi, 0) });
 
         var rng = new RandomNumberGenerator { Seed = 1234 };
         var pines = new List<Transform3D>();
@@ -202,10 +195,8 @@ public sealed class Terrain : System.IDisposable
         bool Clear(Vector2 p, float room)
         {
             foreach (var b in Bases) if (p.DistanceTo(b) < 31) return false;
-            if (Mathf.Abs(p.Y) < 13 && Mathf.Abs(p.X) < _halfX) return false;   // the lane the armies use
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + room) return false;
-            if (LakeReach(p.X, p.Y) < 1.06f + room * 0.01f) return false;                       // not in the lakes
-            if (Mathf.Abs(p.X) < 16 && Mathf.Abs(p.Y) < 15) return false;                        // the pass kept open
+            if (WaterDepth(p.X, p.Y) > -2f - room) return false;                                     // not in the water
             foreach (var d in World.Deposits) if (p.DistanceTo(new Vector2(d.X.ToFloat(), d.Z.ToFloat())) < 5 + room) return false;   // room to mine
             return Mathf.Abs(p.X) < _halfX + Margin - 2 && Mathf.Abs(p.Y) < _halfZ + Margin - 2;
         }
@@ -316,7 +307,7 @@ public sealed class Terrain : System.IDisposable
             bool nearBase = false;
             foreach (var b in Bases) if (p.DistanceTo(b) < 26) nearBase = true;
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + 0.6f) nearBase = true;   // (nor in the water)
-            if (LakeReach(p.X, p.Y) < 1.03f) nearBase = true;
+            if (WaterDepth(p.X, p.Y) > -1f) nearBase = true;
             if (nearBase) continue;
             float size = rng.RandfRange(0.35f, 0.8f) * (0.6f + 0.6f * g);
             var basis = new Basis(Vector3.Up, rng.RandfRange(0, Mathf.Tau)).Scaled(new Vector3(size * 1.3f, size, size * 1.3f));
@@ -348,6 +339,43 @@ void fragment() {
 	ROUGHNESS = 0.9;
 }";
     static StandardMaterial3D Flat(Color c) => new() { AlbedoColor = c, Roughness = 0.95f };
+
+    /// <summary>The north water's surface: strips from just up the shore out to beyond the map's top edge, in rows
+    /// whose UV.x falls from 1 (the shore) to 0 (open water).</summary>
+    ArrayMesh WaterSheet()
+    {
+        // Rows by how far out from the shore line (negative: up the bank) and the UV.x each gets.
+        (float Out, float U)[] rows = { (-2.5f, 1f), (1.5f, 0.9f), (5f, 0.8f), (12f, 0.55f), (30f, 0.25f), (float.MaxValue, 0f) };   // (the last: the far edge)
+        var verts = new List<Vector3>(); var uvs = new List<Vector2>(); var normals = new List<Vector3>(); var idx = new List<int>();
+        float edge = _halfX + Margin + 5;
+        int columns = 0;
+        for (float x = -edge; x <= edge + 0.01f; x += 2f, columns++)
+        {
+            float shore = Ground.NorthShore(Fix.FromFloat(x)).ToFloat();
+            foreach (var (o, u) in rows)
+            {
+                verts.Add(new Vector3(x, 0, Mathf.Max(shore - o, -_halfZ - Margin)));   // north of the shore is smaller z; not past the ground's edge
+                uvs.Add(new Vector2(u, 0));
+                normals.Add(Vector3.Up);
+            }
+        }
+        int n = rows.Length;
+        for (int c = 0; c < columns - 1; c++)
+            for (int r = 0; r < n - 1; r++)
+            {
+                int a = c * n + r, b = (c + 1) * n + r, cc = (c + 1) * n + r + 1, d = c * n + r + 1;
+                idx.AddRange(new[] { a, cc, b, a, d, cc });   // wound to face up (clockwise seen from above)
+            }
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
+        arrays[(int)Mesh.ArrayType.Normal] = normals.ToArray();
+        arrays[(int)Mesh.ArrayType.TexUV] = uvs.ToArray();
+        arrays[(int)Mesh.ArrayType.Index] = idx.ToArray();
+        var mesh = new ArrayMesh();
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        return mesh;
+    }
 
     /// <summary>A flat disc facing up, in rings, its UV.x how far out a point is (0 middle, 1 rim): water_fog.gdshader
     /// shades by it.</summary>

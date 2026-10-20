@@ -5,54 +5,63 @@ namespace Battler.Sim;
 /// <summary>
 /// The battlefield's shape: a fixed heightmap, the same every match and on every machine (fixed-point, built from an
 /// integer hash, no floats). Height matters (the user, 2026-10-19: "hills should matter"): see World's HighGround.
-/// Rolling hills, flat where the bases build, gentle down the middle lane where the armies meet, dips for ponds.
-/// Across the middle (the user, 2026-10-20: "two bodies of water, north and south that are quite large, a ridge in the
-/// middle that acts as a bottle neck"): a big lake north and another south, running off the map's edges, and between
-/// them a steep ridge with one pass through its middle. Water and the ridge's cliffs can't be crossed (Passable;
-/// units find their way round: Nav), so the pass is the only way across.
+///
+/// The layout is the user's sketch (2026-10-20, ../untitled.png), the same turned half round about the middle, so
+/// neither side has the better map:
+///  - water north and south: the north water fills the top left and thins to a strip toward the top right (its shore
+///    curves down out of the top-left corner, then runs straight up to the top-right corner); the south water is the
+///    same turned round. What's left is a band of land running corner to corner.
+///  - each HQ on a hill in its corner (bottom left, top right), a flat top to build on;
+///  - a long hill in the middle with a peak: the high ground both sides want;
+///  - a valley across the band between each base and the middle hill: low ground to cross under the hill's guns.
+/// Water can't be crossed (Passable; units find their way round: Nav).
 /// The game draws the same heights (<see cref="HeightAtF"/>), out past the map's edge by <see cref="Margin"/>.
 /// </summary>
 public sealed class Ground
 {
     public const int Margin = 20;
-    public static readonly (FixVec2 At, Fix R)[] Ponds =
+
+    /// <summary>No small ponds on this map (kept for the drawing code, which places any there are).</summary>
+    public static readonly (FixVec2 At, Fix R)[] Ponds = { };
+
+    // The middle hill: a rounded box HillHalfX by HillHalfZ (flat-topped to HillHigh), its sides HillSlope wide, a peak
+    // on top. The valleys: troughs ValleyHalf wide either side of x = ValleyX, from ValleyZ0 to ValleyZ1 (player 0's;
+    // the other is the same turned round), ValleyDeep down.
+    static readonly Fix HillHalfX = 50, HillHalfZ = 21, HillSlope = 14, HillHigh = 6, PeakHigh = 3;
+    static readonly Fix ValleyX = -77, ValleyHalf = 13, ValleyZ0 = -22, ValleyZ1 = 54, ValleyDeep = 3;
+    static readonly Fix BaseHill = 4;   // how high each HQ's hill stands
+
+    /// <summary>Where the north water's shore is at x: water lies north of it (smaller z). Out of the top-left corner it
+    /// curves down to (-63, -24), then runs straight up to the top-right corner.</summary>
+    public static Fix NorthShore(Fix x)
     {
-        // Mirrored left to right like the rest of the ground, so neither side has the better map.
-        (new FixVec2(95, -42), 5), (new FixVec2(-95, -42), 5), (new FixVec2(105, 62), Fix.Ratio(9, 2)), (new FixVec2(-105, 62), Fix.Ratio(9, 2)),
-    };
-
-    /// <summary>The two lakes: ellipses centred on the middle line, north and south, reaching past the map's edges.</summary>
-    public static readonly (FixVec2 At, Fix Rx, Fix Rz)[] Lakes = { (new FixVec2(0, 70), 50, 37), (new FixVec2(0, -70), 50, 37) };
-
-    /// <summary>The ridge runs north-south along x = 0: its crest RidgeCrest either side, its foot RidgeFoot; the pass
-    /// through it is open where |z| is under PassHalf, ramping up to full height by PassHalf + PassRamp.</summary>
-    public static readonly Fix RidgeCrest = 6, RidgeFoot = 14, RidgeHigh = 9, PassHalf = 12, PassRamp = 6;
-
-    /// <summary>How far into a lake a point is: under 1 inside (0 at its middle), 1 on its shore.</summary>
-    public static Fix LakeReach(FixVec2 p)
-    {
-        var best = Fix.FromInt(100);
-        foreach (var (at, rx, rz) in Lakes)
+        if (x <= -63)
         {
-            var dx = (p.X - at.X) / rx;
-            var dz = (p.Z - at.Z) / rz;
-            best = Fix.Min(best, Fix.Sqrt(dx * dx + dz * dz));
+            var t = Fix.Max(Fix.Zero, Fix.Min(Fix.One, (x + 140) / 77));
+            var ease = Fix.One - (Fix.One - t) * (Fix.One - t);
+            return -85 + 61 * ease;
         }
-        return best;
+        return -24 - 61 * (x + 63) / 203;
     }
 
-    /// <summary>How much of the ridge stands here, 0 to 1 (0 off it and in the pass).</summary>
-    public static Fix RidgeAt(FixVec2 p) =>
-        SmoothStep(RidgeFoot, RidgeCrest, Fix.Abs(p.X)) * SmoothStep(PassHalf, PassHalf + PassRamp, Fix.Abs(p.Z));
+    /// <summary>The south water's shore: the north one turned round (water south of it, larger z).</summary>
+    public static Fix SouthShore(Fix x) => -NorthShore(-x);
 
-    /// <summary>Whether ground units can be here: not in water, not up the ridge's cliffs.</summary>
-    public static bool Passable(FixVec2 p)
+    /// <summary>How far out into the water a place is, square to the shore (negative on land: how far from it).</summary>
+    public static Fix WaterDepth(FixVec2 p)
     {
-        if (LakeReach(p) < Fix.Ratio(98, 100)) return false;
-        foreach (var (at, r) in Ponds)
-            if ((p - at).LengthSq < (r - 1) * (r - 1)) return false;
-        return RidgeAt(p) < Fix.Ratio(35, 100);
+        Fix Across(Func<Fix, Fix> shore)   // the shore's slope, to measure square to it rather than straight north
+        {
+            var m = (shore(p.X + 1) - shore(p.X - 1)) / 2;
+            return Fix.Sqrt(Fix.One + m * m);
+        }
+        var north = (NorthShore(p.X) - p.Z) / Across(NorthShore);
+        var south = (p.Z - SouthShore(p.X)) / Across(SouthShore);
+        return Fix.Max(north, south);
     }
+
+    /// <summary>Whether ground units can be here: not in the water (nor its very edge).</summary>
+    public static bool Passable(FixVec2 p) => WaterDepth(p) < Fix.Ratio(-1, 2);
 
     readonly int _x0, _z0, _w, _h;   // the grid: one height per world unit, from (_x0, _z0)
     readonly Fix[] _heights;
@@ -71,24 +80,35 @@ public sealed class Ground
 
     static Fix Shape(int x, int z, FixVec2[] bases)
     {
-        // Three octaves of value noise, about +-5 high.
-        // Mirrored about the middle (x = 0): each side's half of the map is the other's reflection, for fairness.
-        int mx = Math.Abs(x);
-        var n = Value(mx, z, 24, 0) + Value(mx, z, 12, 1) * Fix.Ratio(1, 2) + Value(mx, z, 6, 2) * Fix.Ratio(1, 4);
-        var h = n * Fix.Ratio(20, 7);
+        // Gentle rolling ground: three octaves of value noise, about +-3. The same turned round about the middle:
+        // every place on player 1's half takes its noise from the matching place on player 0's.
+        bool turn = x > 0 || (x == 0 && z > 0);
+        int nx = turn ? -x : x, nz = turn ? -z : z;
+        var n = Value(nx, nz, 24, 0) + Value(nx, nz, 12, 1) * Fix.Ratio(1, 2) + Value(nx, nz, 6, 2) * Fix.Ratio(1, 4);
+        var h = n * Fix.Ratio(12, 7);
         var p = new FixVec2(x, z);
-        foreach (var b in bases) h *= SmoothStep(27, 38, (p - b).Length);                  // flat where bases build
-        h *= Lerp(Fix.Ratio(3, 10), Fix.One, SmoothStep(6, 20, Fix.Abs(p.Z)));             // gentle in the lane
-        foreach (var (at, r) in Ponds)
+        var q = turn ? new FixVec2(-x, -z) : p;   // the place on player 0's half that matches this one
+
+        // Each HQ's hill: flat on top where the base builds, sloping off.
+        foreach (var b in bases)
         {
-            var d = (p - at).Length;
-            if (d < r + 5) h = Lerp(Fix.Ratio(-17, 10), h, SmoothStep(r - Fix.Ratio(3, 2), r + 5, d));
+            var d = (p - b).Length;
+            h *= SmoothStep(24, 36, d);
+            h += BaseHill * SmoothStep(38, 24, d);
         }
-        // The ridge rises over everything, a little rough along its crest; the lakes then cut it off at their shores.
-        var ridge = RidgeAt(p);
-        if (ridge.Raw > 0) h += ridge * (RidgeHigh + Value(mx, z, 6, 3) * Fix.Ratio(3, 2));
-        var reach = LakeReach(p);
-        if (reach < Fix.Ratio(13, 10)) h = Lerp(Fix.FromInt(-4), h, SmoothStep(Fix.Ratio(8, 10), Fix.Ratio(13, 10), reach));
+        // The middle hill: a rounded box, a peak along its middle.
+        var bx = Fix.Max(Fix.Zero, Fix.Abs(p.X) - HillHalfX);
+        var bz = Fix.Max(Fix.Zero, Fix.Abs(p.Z) - HillHalfZ);
+        var off = Fix.Sqrt(bx * bx + bz * bz);
+        h += HillHigh * SmoothStep(HillSlope, Fix.Zero, off);
+        h += PeakHigh * SmoothStep(36, 0, Fix.Abs(p.X)) * SmoothStep(16, 0, Fix.Abs(p.Z));
+        // The valley on this half (player 0's, turned round on the other): a trough across the band.
+        var across = SmoothStep(ValleyHalf, ValleyHalf - 7, Fix.Abs(q.X - ValleyX));
+        var along = SmoothStep(ValleyZ0 - 8, ValleyZ0, q.Z) * SmoothStep(ValleyZ1 + 8, ValleyZ1, q.Z);
+        h -= ValleyDeep * across * along;
+        // The water: the ground falls away under it.
+        var depth = WaterDepth(p);
+        if (depth > -4) h = Lerp(h, Fix.FromInt(-4), SmoothStep(-4, 8, depth));
         return h;
     }
 
@@ -146,4 +166,7 @@ public sealed class Ground
         float bottom = F(i, j + 1) + (F(i + 1, j + 1) - F(i, j + 1)) * fx;
         return top + (bottom - top) * fz;
     }
+
+    /// <summary>WaterDepth in floats, for drawing only.</summary>
+    public static float WaterDepthF(float x, float z) => WaterDepth(new FixVec2(Fix.FromFloat(x), Fix.FromFloat(z))).ToFloat();
 }

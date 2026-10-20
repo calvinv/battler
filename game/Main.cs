@@ -123,9 +123,9 @@ public partial class Main : Node3D
             {
                 // 30 s before the shot, my first factory's units are told to rally in front of the base.
                 if (i == (at - 30) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
-                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 44 : -44, 0, 8))));
+                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + TowardEnemy(_me) * 44)));
                 if (args.Contains("--hq") && i == (at - 20) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } rh)
-                    _session.Issue(new SetRally(_me, rh.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 14 : -14, 0, -8))));   // a base rally in front of the HQ
+                    _session.Issue(new SetRally(_me, rh.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + TowardEnemy(_me) * 16)));   // a base rally in front of the HQ
                 StepWorld();
                 FadeBlasts((float)TickLength);
                 _proj.Advance((float)TickLength);
@@ -352,7 +352,7 @@ public partial class Main : Node3D
         _me = session.LocalPlayer;
         _acc = 0;
         _autoThoughtAt = -1;
-        _focus = ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 20 : -20, 0, 0);
+        _focus = ToV3(W.Players[_me].HqPos) + TowardEnemy(_me) * 20;
         if (_auto) _autoMe = new SimpleAi(_me, (ulong)GD.Randi());
         BuildRing();
         UpdateFog();
@@ -663,6 +663,12 @@ public partial class Main : Node3D
         return m;
     }
 
+    /// <summary>The flat direction from a player's HQ to the other's: which way its buildings face, and so on.</summary>
+    static Vector3 TowardEnemy(int player)
+    {
+        var d = World.HqStart(1 - player) - World.HqStart(player);
+        return new Vector3(d.X.ToFloat(), 0, d.Z.ToFloat()).Normalized();
+    }
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
     /// <summary>A kind as the player reads it.</summary>
@@ -682,7 +688,7 @@ public partial class Main : Node3D
         // so units roll out of the door.
         var name = e.Kind == Kind.Factory ? "factory_" + ModelOf(e.Makes) : ModelOf(e.Kind);
         var building = UnitArt.Make(name, TeamColor[e.Owner]);
-        building.Basis = Basis.LookingAt(new Vector3(e.Owner == 0 ? 1 : -1, 0, 0), Vector3.Up);
+        building.Basis = Basis.LookingAt(TowardEnemy(e.Owner), Vector3.Up);
         return building;
     }
 
@@ -959,7 +965,7 @@ public partial class Main : Node3D
                     _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
                 }
                 // Face where it's going; standing still, face what it's shooting at. It swings round, not snaps.
-                var face = _facing.TryGetValue(e.Id, out var f) ? f : new Vector3(e.Owner == 0 ? 1 : -1, 0, 0);
+                var face = _facing.TryGetValue(e.Id, out var f) ? f : TowardEnemy(e.Owner);
                 var want = face;
                 if (moving) want = flat.Normalized();
                 else if (_aim.TryGetValue(e.Id, out var aim) && aim.Until >= W.Tick && W.Find(aim.Target) is { Dead: false } t)
@@ -1271,7 +1277,7 @@ public partial class Main : Node3D
     {
         var model = UnitArt.MakeBuilding(name, tint);
         UnitArt.SetBuilt(model, -0.05f);   // (below zero, so even its foot is hologram, not solid)
-        model.Basis = Basis.LookingAt(new Vector3(_me == 0 ? 1 : -1, 0, 0), Vector3.Up);
+        model.Basis = Basis.LookingAt(TowardEnemy(_me), Vector3.Up);
         AddChild(model);
         return model;
     }

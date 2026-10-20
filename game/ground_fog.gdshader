@@ -91,7 +91,7 @@ void fragment() {
 	col = mix(col, col * 0.55 + vec3(0.0, 0.01, 0.01), wet * 0.85);
 
 	// Rock on the steep slopes and the heights: grey, in bands that follow the height, cracked.
-	float rocky = smoothstep(0.18, 0.4, slope + (noise(p * 0.5) - 0.5) * 0.15) + smoothstep(2.6, 4.2, world.y) * 0.6;
+	float rocky = smoothstep(0.18, 0.4, slope + (noise(p * 0.5) - 0.5) * 0.15);   // (by steepness only: hilltops stay earth and grass)
 	float strata = 0.5 + 0.5 * sin(world.y * 7.0 + noise(p * 0.8) * 4.0);
 	vec3 rock = mix(vec3(0.24, 0.23, 0.21), vec3(0.38, 0.36, 0.33), strata) * (0.8 + 0.4 * noise(p * 3.0));
 	float crack = smoothstep(0.04, 0.0, abs(noise(p * 1.4) - 0.5));

@@ -131,8 +131,8 @@ public sealed class World
     public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery };
 
     /// <summary>
-    /// The metal deposits, the same every match and mirrored left to right: few for the size of the map. One inside
-    /// each HQ's build ring, two out in the field on each side by the lakes, and one in the pass through the ridge.
+    /// The metal deposits, the same every match and turned round for the other side: few for the size of the map. On
+    /// each side: one on the HQ's hill, one by the water behind the valley, one in the valley, one on the middle hill.
     /// Every deposit outside the home rings has an outpost pad beside it (<see cref="Pads"/>): mine the deposit, then
     /// an outpost can go on its pad (the user, 2026-10-20: "it needs to be more clear that you build next to resource
     /// extractors for outposts").
@@ -144,21 +144,20 @@ public sealed class World
 
     static World()
     {
-        // (deposit, its pad) on the west side; the east is the mirror. The middle two are shared.
+        // (deposit, its pad) on player 0's half; player 1's are the same turned round about the middle.
         var west = new (FixVec2 At, FixVec2? Pad)[]
         {
-            (new(-108, 16), null),                                                   // home, inside the HQ ring
-            (new(-62, 42), new FixVec2(-62, 34)), (new(-64, -44), new FixVec2(-64, -36)),   // two out in the field, by the lakes
+            (new(-125, 38), null),                                   // home, on the HQ's hill
+            (new(-100, -15), new FixVec2(-100, -5)),                 // out by the north water, behind the valley
+            (new(-77, 20), new FixVec2(-77, 10)),                    // down in the valley
+            (new(-24, -6), new FixVec2(-14, -6)),                    // up on the middle hill: contested
         };
-        // One in the pass through the ridge, its pad beside it: hold it and you hold the way across.
-        var middle = new (FixVec2 At, FixVec2? Pad)[] { (new(0, -5), new FixVec2(0, 6)) };
         var all = new List<(FixVec2 At, FixVec2? Pad)>();
         foreach (var d in west)
         {
             all.Add(d);
-            all.Add((new FixVec2(-d.At.X, d.At.Z), d.Pad is { } p ? new FixVec2(-p.X, p.Z) : null));
+            all.Add((-d.At, d.Pad is { } p ? -p : null));
         }
-        all.AddRange(middle);
         Deposits = all.ConvertAll(d => d.At).ToArray();
         Pads = all.ConvertAll(d => d.Pad ?? d.At).ToArray();
         HasPad = all.ConvertAll(d => d.Pad.HasValue).ToArray();
@@ -230,9 +229,14 @@ public sealed class World
 
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
 
-    public static FixVec2 HqStart(int player) => new(player == 0 ? -115 : 115, 0);
-    /// <summary>Where a starting watch tower stands: 12 toward the enemy from the HQ, `side` across.</summary>
-    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -103 : 103, side);
+    // Each HQ on the hill in its corner: player 0 bottom left, player 1 top right (the map turned round).
+    public static FixVec2 HqStart(int player) => player == 0 ? new FixVec2(-112, 50) : new FixVec2(112, -50);
+    /// <summary>Where a starting watch tower stands: one each side of the way out of the base toward the middle.</summary>
+    public static FixVec2 TowerStart(int player, int side)
+    {
+        var off = side < 0 ? new FixVec2(13, -3) : new FixVec2(4, -13);
+        return player == 0 ? HqStart(0) + off : HqStart(1) - off;
+    }
 
     /// <param name="from">a unit's factory: the unit takes its upgrade levels</param>
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)
