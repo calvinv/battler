@@ -123,9 +123,9 @@ public partial class Main : Node3D
             {
                 // 30 s before the shot, my first factory's units are told to rally in front of the base.
                 if (i == (at - 30) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
-                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(new Vector3(-28, 0, 8))));
+                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 44 : -44, 0, 8))));
                 if (args.Contains("--hq") && i == (at - 20) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } rh)
-                    _session.Issue(new SetRally(_me, rh.Id, false, ToFix(new Vector3(-58, 0, -8))));   // a base rally in front of the HQ
+                    _session.Issue(new SetRally(_me, rh.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + new Vector3(_me == 0 ? 14 : -14, 0, -8))));   // a base rally in front of the HQ
                 StepWorld();
                 FadeBlasts((float)TickLength);
                 _proj.Advance((float)TickLength);
@@ -135,7 +135,7 @@ public partial class Main : Node3D
             _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.HasRally).ThenByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the rallying one, else the most upgraded
             var picked = W.Find(_selected);
             if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 3); _distance = 26; }   // close on it and its door
-            if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 125; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
+            if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 200; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
             if (args.Contains("--fight"))   // close on the busiest fight, fog lifted
             {
                 var hot = W.Entities.Where(e => e.Stats.IsUnit)
@@ -468,7 +468,7 @@ public partial class Main : Node3D
             LightEnergy = 1.6f,
             LightColor = new Color(1f, 0.95f, 0.86f),   // a warm sun against the cool sky
             ShadowEnabled = true,
-            DirectionalShadowMaxDistance = 220f,        // the whole view at the widest zoom
+            DirectionalShadowMaxDistance = 320f,        // the whole view at the widest zoom
             DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel4Splits,
             LightAngularDistance = 0.6f,                // slightly soft shadow edges
             ShadowBlur = 1.2f,
@@ -1397,7 +1397,7 @@ public partial class Main : Node3D
         if (ev is InputEventMouseButton mb && mb.Pressed)
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
-            else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(160, _distance * 1.1f);
+            else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(240, _distance * 1.1f);   // (the map is wide)
             else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue)
             {
                 if (_placing != null)

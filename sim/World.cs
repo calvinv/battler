@@ -116,8 +116,10 @@ public sealed class World
     public static int WithProduction(int baseTicks, int level) => baseTicks * (100 - 15 * level) / 100;
     public static readonly Fix BuildRadius = 25;
     // (The user, 2026-10-19: "the maps should also be further apart": the HQs 144 apart, was 90.)
-    public static readonly Fix MapHalfX = 90, MapHalfZ = 50;
-    public static readonly Ground Ground = new(90, 50, new[] { HqStart(0), HqStart(1) });
+    // (The user, 2026-10-20: "make more expansive maps with less resources on them": 280 by 170, the HQs 230 apart,
+    // eight deposits where there were twelve.)
+    public static readonly Fix MapHalfX = 140, MapHalfZ = 85;
+    public static readonly Ground Ground = new(140, 85, new[] { HqStart(0), HqStart(1) });
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
     /// <summary>What factories can make (scouts come from the HQ).</summary>
@@ -126,14 +128,14 @@ public sealed class World
     public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery };
 
     /// <summary>
-    /// The metal deposits, the same every match and mirrored left to right: two inside each HQ's build ring, two out
-    /// on each flank, one forward on each side, and two in the middle for both to fight over. Clear of the ponds.
+    /// The metal deposits, the same every match and mirrored left to right: few for the size of the map. One inside
+    /// each HQ's build ring, two out in the field on each side, and two in the middle for both to fight over.
     /// Every deposit outside the home rings has an outpost pad beside it (<see cref="Pads"/>): mine the deposit, then
     /// an outpost can go on its pad (the user, 2026-10-20: "it needs to be more clear that you build next to resource
     /// extractors for outposts").
     /// </summary>
     public static readonly FixVec2[] Deposits;
-    /// <summary>Per deposit, where its outpost goes; HasPad false for the two home ones on each side.</summary>
+    /// <summary>Per deposit, where its outpost goes; HasPad false for the home one on each side.</summary>
     public static readonly FixVec2[] Pads;
     public static readonly bool[] HasPad;
 
@@ -142,10 +144,10 @@ public sealed class World
         // (deposit, its pad) on the west side; the east is the mirror. The middle two are shared.
         var west = new (FixVec2 At, FixVec2? Pad)[]
         {
-            (new(-66, 17), null), (new(-66, -17), null),
-            (new(-44, 40), new FixVec2(-44, 32)), (new(-50, -38), new FixVec2(-50, -30)), (new(-28, 12), new FixVec2(-36, 12)),
+            (new(-108, 16), null),                                                   // home, inside the HQ ring
+            (new(-78, 52), new FixVec2(-78, 44)), (new(-52, -40), new FixVec2(-52, -32)),   // two out in the field
         };
-        var middle = new (FixVec2 At, FixVec2? Pad)[] { (new(0, 22), new FixVec2(0, 30)), (new(0, -24), new FixVec2(0, -31)) };
+        var middle = new (FixVec2 At, FixVec2? Pad)[] { (new(0, 45), new FixVec2(0, 37)), (new(0, -42), new FixVec2(0, -34)) };
         var all = new List<(FixVec2 At, FixVec2? Pad)>();
         foreach (var d in west)
         {
@@ -224,9 +226,9 @@ public sealed class World
 
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
 
-    public static FixVec2 HqStart(int player) => new(player == 0 ? -72 : 72, 0);
+    public static FixVec2 HqStart(int player) => new(player == 0 ? -115 : 115, 0);
     /// <summary>Where a starting watch tower stands: 12 toward the enemy from the HQ, `side` across.</summary>
-    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -60 : 60, side);
+    public static FixVec2 TowerStart(int player, int side) => new(player == 0 ? -103 : 103, side);
 
     /// <param name="from">a unit's factory: the unit takes its upgrade levels</param>
     public Entity Spawn(Kind kind, int owner, FixVec2 pos, Kind makes = Kind.Hq, Entity from = null)

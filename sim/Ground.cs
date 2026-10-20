@@ -14,8 +14,9 @@ public sealed class Ground
     public static readonly (FixVec2 At, Fix R)[] Ponds =
     {
         // Mirrored left to right like the rest of the ground, so neither side has the better map.
-        (new FixVec2(30, 33), 5), (new FixVec2(-30, 33), 5), (new FixVec2(38, -30), Fix.Ratio(9, 2)), (new FixVec2(-38, -30), Fix.Ratio(9, 2)),
-        (new FixVec2(55, 34), 4), (new FixVec2(-55, 34), 4), (new FixVec2(9, -36), 5), (new FixVec2(-9, -36), 5),
+        (new FixVec2(28, 62), 6), (new FixVec2(-28, 62), 6), (new FixVec2(60, -66), 5), (new FixVec2(-60, -66), 5),
+        (new FixVec2(95, -42), 5), (new FixVec2(-95, -42), 5), (new FixVec2(105, 62), Fix.Ratio(9, 2)), (new FixVec2(-105, 62), Fix.Ratio(9, 2)),
+        (new FixVec2(48, 24), 4), (new FixVec2(-48, 24), 4), (new FixVec2(20, -60), 5), (new FixVec2(-20, -60), 5),
     };
 
     readonly int _x0, _z0, _w, _h;   // the grid: one height per world unit, from (_x0, _z0)

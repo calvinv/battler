@@ -196,7 +196,7 @@ public sealed class Terrain : System.IDisposable
             return new Transform3D(basis.Scaled(Vector3.One * scale), new Vector3(p.X, HeightAt(p.X, p.Y) - 0.1f, p.Y));
         }
         // Copses: a few pines or dead trees each, in clumps.
-        for (int c = 0; c < 80; c++)
+        for (int c = 0; c < 200; c++)
         {
             var centre = new Vector2(rng.RandfRange(-_halfX - 6, _halfX + 6), rng.RandfRange(-_halfZ - 6, _halfZ + 6));   // mostly on the map
             bool living = rng.Randf() < 0.45f;
@@ -210,7 +210,7 @@ public sealed class Terrain : System.IDisposable
             }
         }
         // Rocks: scattered, and a ring of boulders round each pond.
-        for (int i = 0; i < 150; i++)
+        for (int i = 0; i < 380; i++)
         {
             var p = new Vector2(rng.RandfRange(-_halfX - Margin, _halfX + Margin), rng.RandfRange(-_halfZ - Margin, _halfZ + Margin));
             if (Clear(p, 0.8f)) rocks.Add(Stand(p, rng.RandfRange(0.4f, 1.4f)));
@@ -237,7 +237,7 @@ public sealed class Terrain : System.IDisposable
         root.AddChild(GrassTufts(rng));
         // Pebbles strewn on the open ground: small, many, a little detail at any zoom.
         var pebbles = new List<Transform3D>();
-        for (int i = 0; i < 2500; i++)
+        for (int i = 0; i < 6000; i++)
         {
             var p = new Vector2(rng.RandfRange(-_halfX - Margin, _halfX + Margin), rng.RandfRange(-_halfZ - Margin, _halfZ + Margin));
             if (!Clear(p, 0.3f) && rng.Randf() < 0.85f) continue;   // (a few even in the lane)
@@ -289,7 +289,7 @@ public sealed class Terrain : System.IDisposable
             card.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
         }
         var spots = new List<(Transform3D At, Color Tint)>();
-        for (int i = 0; i < 60000 && spots.Count < 16000; i++)
+        for (int i = 0; i < 150000 && spots.Count < 36000; i++)
         {
             var p = new Vector2(rng.RandfRange(-_halfX - Margin, _halfX + Margin), rng.RandfRange(-_halfZ - Margin, _halfZ + Margin));
             float g = Grassy(p.X, p.Y);
