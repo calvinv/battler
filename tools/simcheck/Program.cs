@@ -12,7 +12,7 @@ const int MaxTicks = 20 * 60 * World.TicksPerSecond;   // 20 minutes
 
 if (args.Contains("probe"))   // print the ground at a few places (for checking map shapes)
 {
-    foreach (var (x, z) in new[] { (-120, -80), (-120, -60), (-80, -30), (0, -60), (0, 0), (120, 80), (-112, 50) })
+    foreach (var (x, z) in new[] { (-126, -100), (-126, -60), (-200, -120), (0, -120), (0, 0), (126, 100), (-224, 100) })
     {
         var p = new FixVec2(x, z);
         Console.WriteLine($"({x},{z}) shore N {Ground.NorthShore(Fix.FromInt(x)).ToFloat():0.0} S {Ground.SouthShore(Fix.FromInt(x)).ToFloat():0.0} depth {Ground.WaterDepth(p).ToFloat():0.0} height {World.Ground.HeightAt(p).ToFloat():0.0} open {Nav.OpenAt(p)}");

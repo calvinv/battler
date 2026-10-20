@@ -121,8 +121,8 @@ public sealed class World
     // (The user, 2026-10-19: "the maps should also be further apart": the HQs 144 apart, was 90.)
     // (The user, 2026-10-20: "make more expansive maps with less resources on them": 280 by 170, the HQs 230 apart,
     // seven deposits where there were twelve.)
-    public static readonly Fix MapHalfX = 140, MapHalfZ = 85;
-    public static readonly Ground Ground = new(140, 85, new[] { HqStart(0), HqStart(1) });
+    public static readonly Fix MapHalfX = 140 * Ground.Scale, MapHalfZ = 85 * Ground.Scale;   // (2026-10-20: "4x bigger", four times the area)
+    public static readonly Ground Ground = new(140 * Ground.Scale, 85 * Ground.Scale, new[] { HqStart(0), HqStart(1) });
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
     /// <summary>What factories can make (scouts come from the HQ).</summary>
@@ -147,10 +147,10 @@ public sealed class World
         // (deposit, its pad) on player 0's half; player 1's are the same turned round about the middle.
         var west = new (FixVec2 At, FixVec2? Pad)[]
         {
-            (new(-125, 38), null),                                   // home, on the HQ's hill
-            (new(-100, -15), new FixVec2(-100, -5)),                 // out by the north water, behind the valley
-            (new(-77, 20), new FixVec2(-77, 10)),                    // down in the valley
-            (new(-24, -6), new FixVec2(-14, -6)),                    // up on the middle hill: contested
+            (new(-237, 88), null),                                   // home, on the HQ's hill
+            (new(-200, -30), new FixVec2(-200, -20)),                // out by the north water, behind the valley
+            (new(-154, 40), new FixVec2(-154, 30)),                  // down in the valley
+            (new(-48, -12), new FixVec2(-38, -12)),                  // up on the middle hill: contested
         };
         var all = new List<(FixVec2 At, FixVec2? Pad)>();
         foreach (var d in west)
@@ -230,11 +230,11 @@ public sealed class World
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
 
     // Each HQ on the hill in its corner: player 0 bottom left, player 1 top right (the map turned round).
-    public static FixVec2 HqStart(int player) => player == 0 ? new FixVec2(-112, 50) : new FixVec2(112, -50);
+    public static FixVec2 HqStart(int player) => player == 0 ? new FixVec2(-224, 100) : new FixVec2(224, -100);
     /// <summary>Where a starting watch tower stands: one each side of the way out of the base toward the middle.</summary>
     public static FixVec2 TowerStart(int player, int side)
     {
-        var off = side < 0 ? new FixVec2(13, -3) : new FixVec2(4, -13);
+        var off = side < 0 ? new FixVec2(22, -5) : new FixVec2(7, -22);
         return player == 0 ? HqStart(0) + off : HqStart(1) - off;
     }
 

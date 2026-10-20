@@ -31,9 +31,18 @@ public sealed class Ground
     static readonly Fix ValleyX = -77, ValleyHalf = 24, ValleyZ0 = -22, ValleyZ1 = 54, ValleyDeep = 3;
     static readonly Fix BaseHill = 4;   // how high each HQ's hill stands
 
+    /// <summary>How many times bigger than the sketch's first build (280 x 170) the map is, each way (the user,
+    /// 2026-10-20: "make the map 4x bigger": four times the area). Every feature of the layout scales with it; the
+    /// heights don't, so slopes are gentler still.</summary>
+    public const int Scale = 2;
+    static readonly Fix Shrink = Fix.Ratio(1, Scale);
+
     /// <summary>Where the north water's shore is at x: water lies north of it (smaller z). Out of the top-left corner it
-    /// curves down to (-63, -24), then runs straight up to the top-right corner.</summary>
-    public static Fix NorthShore(Fix x)
+    /// curves down, then runs straight up to the top-right corner.</summary>
+    public static Fix NorthShore(Fix x) => LayoutShore(x * Shrink) * Scale;
+
+    /// <summary>The shore in the layout's own units (280 x 170): out of the corner it curves down to (-63, -24).</summary>
+    static Fix LayoutShore(Fix x)
     {
         if (x <= -63)
         {
@@ -84,16 +93,18 @@ public sealed class Ground
         // the average of the noise there and at its turned-round twin (taking one half's noise for both left a seam
         // down x = 0).
         bool turn = x > 0 || (x == 0 && z > 0);
-        Fix Rolling(int a, int b) => Value(a, b, 32, 0) + Value(a, b, 16, 1) * Fix.Ratio(2, 5) + Value(a, b, 8, 2) * Fix.Ratio(1, 8);
+        Fix Rolling(int a, int b) => Value(a, b, 48, 0) + Value(a, b, 24, 1) * Fix.Ratio(2, 5) + Value(a, b, 10, 2) * Fix.Ratio(1, 8);
         var n = (Rolling(x, z) + Rolling(-x, -z)) / 2;
         var h = n * Fix.Ratio(18, 7);   // (the average is flatter than either; scaled back up)
-        var p = new FixVec2(x, z);
-        var q = turn ? new FixVec2(-x, -z) : p;   // the place on player 0's half that matches this one
+        var world = new FixVec2(x, z);
+        // The layout's features are placed in its own units: this place shrunk back to them.
+        var p = world * Shrink;
+        var q = turn ? -p : p;   // the place on player 0's half that matches this one
 
         // Each HQ's hill: flat on top where the base builds, sloping off.
         foreach (var b in bases)
         {
-            var d = (p - b).Length;
+            var d = (p - b * Shrink).Length;
             h *= SmoothStep(18, 50, d);
             h += BaseHill * SmoothStep(54, 20, d);   // (the user, 2026-10-20: "more gradiented": long gentle slopes)
         }
@@ -108,7 +119,7 @@ public sealed class Ground
         var along = SmoothStep(ValleyZ0 - 18, ValleyZ0, q.Z) * SmoothStep(ValleyZ1 + 18, ValleyZ1, q.Z);
         h -= ValleyDeep * across * along;
         // The water: the ground falls away under it.
-        var depth = WaterDepth(p);
+        var depth = WaterDepth(world) * Shrink;
         if (depth > -6) h = Lerp(h, Fix.FromInt(-4), SmoothStep(Fix.Ratio(-11, 2), 14, depth));   // a long shallow beach
         return h;
     }
