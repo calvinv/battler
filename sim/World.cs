@@ -671,7 +671,13 @@ public sealed class World
                 break;
             case PlaceOutpost po when CanPlaceOutpost(po.Player, po.Deposit, out _):
                 p.Metal -= OutpostCost;
-                Spawn(Kind.Outpost, po.Player, Pads[po.Deposit]);
+                var post = Spawn(Kind.Outpost, po.Player, Pads[po.Deposit]);
+                // Factories left standing in its ring after their base died (or was sold) take its slots: a rebuilt
+                // outpost doesn't give two fresh ones (the user, 2026-10-20, found that).
+                var r = OutpostRadius(post);
+                foreach (var orphan in Entities)
+                    if (!orphan.Dead && orphan.Kind == Kind.Factory && orphan.Owner == po.Player && Find(orphan.BaseId) == null && (orphan.Pos - post.Pos).LengthSq <= r * r)
+                        orphan.BaseId = post.Id;
                 break;
             case Sell se when CanSell(se.Player, se.BuildingId, out _):
                 var sold = Find(se.BuildingId);

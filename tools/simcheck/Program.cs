@@ -10,7 +10,39 @@ using Battler.Sim;
 ulong Seed = args.Length > 0 && ulong.TryParse(args[0], out var s) ? s : 12345;
 const int MaxTicks = 20 * 60 * World.TicksPerSecond;   // 20 minutes
 
+if (!SlotTest()) return 1;
 return args.Contains("lan") ? LanTest() : ReplayTest();
+
+// An outpost with both its factory slots full dies and is rebuilt: the factories still standing must fill the new one
+// (it used to come back with two fresh slots).
+bool SlotTest()
+{
+    var w = new World(1);
+    foreach (var p in w.Players) p.Metal = 100000;
+    w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(10, 0), Kind.Tank), new PlaceFactory(1, World.HqStart(1) - new FixVec2(10, 0), Kind.Tank) });
+    int d = Array.FindIndex(World.Deposits, at => at.X.Raw < 0 && World.HasPad[Array.IndexOf(World.Deposits, at)]);
+    w.Spawn(Kind.Extractor, 0, World.Deposits[d]).Deposit = d;
+    w.Step(new Command[] { new PlaceOutpost(0, d) });
+    var post = w.Entities.Find(e => e.Kind == Kind.Outpost);
+    int placed = 0;
+    for (int dx = -12; dx <= 12 && placed < 2; dx += 3)
+        for (int dz = -12; dz <= 12 && placed < 2; dz += 3)
+        {
+            var at = World.Pads[d] + new FixVec2(dx, dz);
+            if (!w.CanPlaceFactory(0, at, Kind.Tank, out _) || w.BaseFor(0, at, out _) != post) continue;
+            w.Step(new Command[] { new PlaceFactory(0, at, Kind.Tank) });
+            placed++;
+        }
+    int before = w.SlotsUsed(post);
+    post.Hp = 0;
+    w.Step(Array.Empty<Command>());
+    w.Step(new Command[] { new PlaceOutpost(0, d) });
+    var again = w.Entities.Find(e => e.Kind == Kind.Outpost);
+    int after = again == null ? -1 : w.SlotsUsed(again);
+    bool ok = placed == 2 && before == 2 && after == 2;
+    Console.WriteLine($"Slot test: {placed} factories by the outpost, {before}/2 before it died, {after}/2 once rebuilt: {(ok ? "OK" : "FAILED")}");
+    return ok;
+}
 
 int ReplayTest()
 {
