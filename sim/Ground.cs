@@ -27,8 +27,8 @@ public sealed class Ground
     // The middle hill: a rounded box HillHalfX by HillHalfZ (flat-topped to HillHigh), its sides HillSlope wide, a peak
     // on top. The valleys: troughs ValleyHalf wide either side of x = ValleyX, from ValleyZ0 to ValleyZ1 (player 0's;
     // the other is the same turned round), ValleyDeep down.
-    static readonly Fix HillHalfX = 50, HillHalfZ = 21, HillSlope = 14, HillHigh = 6, PeakHigh = 3;
-    static readonly Fix ValleyX = -77, ValleyHalf = 13, ValleyZ0 = -22, ValleyZ1 = 54, ValleyDeep = 3;
+    static readonly Fix HillHalfX = 34, HillHalfZ = 8, HillSlope = 32, HillHigh = 6, PeakHigh = 3;
+    static readonly Fix ValleyX = -77, ValleyHalf = 24, ValleyZ0 = -22, ValleyZ1 = 54, ValleyDeep = 3;
     static readonly Fix BaseHill = 4;   // how high each HQ's hill stands
 
     /// <summary>Where the north water's shore is at x: water lies north of it (smaller z). Out of the top-left corner it
@@ -80,12 +80,13 @@ public sealed class Ground
 
     static Fix Shape(int x, int z, FixVec2[] bases)
     {
-        // Gentle rolling ground: three octaves of value noise, about +-3. The same turned round about the middle:
-        // every place on player 1's half takes its noise from the matching place on player 0's.
+        // Gentle rolling ground: broad swells, little chop. The same turned round about the middle: each place takes
+        // the average of the noise there and at its turned-round twin (taking one half's noise for both left a seam
+        // down x = 0).
         bool turn = x > 0 || (x == 0 && z > 0);
-        int nx = turn ? -x : x, nz = turn ? -z : z;
-        var n = Value(nx, nz, 24, 0) + Value(nx, nz, 12, 1) * Fix.Ratio(1, 2) + Value(nx, nz, 6, 2) * Fix.Ratio(1, 4);
-        var h = n * Fix.Ratio(12, 7);
+        Fix Rolling(int a, int b) => Value(a, b, 32, 0) + Value(a, b, 16, 1) * Fix.Ratio(2, 5) + Value(a, b, 8, 2) * Fix.Ratio(1, 8);
+        var n = (Rolling(x, z) + Rolling(-x, -z)) / 2;
+        var h = n * Fix.Ratio(18, 7);   // (the average is flatter than either; scaled back up)
         var p = new FixVec2(x, z);
         var q = turn ? new FixVec2(-x, -z) : p;   // the place on player 0's half that matches this one
 
@@ -93,22 +94,22 @@ public sealed class Ground
         foreach (var b in bases)
         {
             var d = (p - b).Length;
-            h *= SmoothStep(24, 36, d);
-            h += BaseHill * SmoothStep(38, 24, d);
+            h *= SmoothStep(18, 50, d);
+            h += BaseHill * SmoothStep(54, 20, d);   // (the user, 2026-10-20: "more gradiented": long gentle slopes)
         }
         // The middle hill: a rounded box, a peak along its middle.
         var bx = Fix.Max(Fix.Zero, Fix.Abs(p.X) - HillHalfX);
         var bz = Fix.Max(Fix.Zero, Fix.Abs(p.Z) - HillHalfZ);
         var off = Fix.Sqrt(bx * bx + bz * bz);
         h += HillHigh * SmoothStep(HillSlope, Fix.Zero, off);
-        h += PeakHigh * SmoothStep(36, 0, Fix.Abs(p.X)) * SmoothStep(16, 0, Fix.Abs(p.Z));
+        h += PeakHigh * SmoothStep(54, 0, Fix.Abs(p.X)) * SmoothStep(30, 0, Fix.Abs(p.Z));
         // The valley on this half (player 0's, turned round on the other): a trough across the band.
-        var across = SmoothStep(ValleyHalf, ValleyHalf - 7, Fix.Abs(q.X - ValleyX));
-        var along = SmoothStep(ValleyZ0 - 8, ValleyZ0, q.Z) * SmoothStep(ValleyZ1 + 8, ValleyZ1, q.Z);
+        var across = SmoothStep(ValleyHalf, Fix.Zero, Fix.Abs(q.X - ValleyX));   // a bowl, deepest down its middle
+        var along = SmoothStep(ValleyZ0 - 18, ValleyZ0, q.Z) * SmoothStep(ValleyZ1 + 18, ValleyZ1, q.Z);
         h -= ValleyDeep * across * along;
         // The water: the ground falls away under it.
         var depth = WaterDepth(p);
-        if (depth > -4) h = Lerp(h, Fix.FromInt(-4), SmoothStep(-4, 8, depth));
+        if (depth > -6) h = Lerp(h, Fix.FromInt(-4), SmoothStep(Fix.Ratio(-11, 2), 14, depth));   // a long shallow beach
         return h;
     }
 
