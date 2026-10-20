@@ -21,7 +21,8 @@ namespace Battler.Game;
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
 /// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
 /// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit (with --at N seconds, --wide for the whole map, --fight
-/// to close on the busiest fight, --frames N to play on N frames first, --placing to hold a factory under the centre).
+/// to close on the busiest fight, --frames N to play on N frames first, --placing [outpost] to hold a building under the
+/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu).
 /// </summary>
 public partial class Main : Node3D
 {
@@ -152,6 +153,7 @@ public partial class Main : Node3D
             }
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
+            if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
             // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
             _shotFrames = args.IndexOf("--frames") is int fi and >= 0 && fi + 1 < args.Count ? int.Parse(args[fi + 1]) : 10;
         }
@@ -586,6 +588,7 @@ public partial class Main : Node3D
         };
         _banner.AddThemeFontSizeOverride("font_size", 32);
         ui.AddChild(_banner);
+        BuildMenu(ui);
     }
 
     static StandardMaterial3D Unshaded(Color c) => new()
@@ -802,6 +805,7 @@ public partial class Main : Node3D
             if (_session == null) return;
         }
 
+        if (MenuHoldsGame) { _acc = 0; _frameDt = 0; Draw(1); TakeShotWhenReady(); return; }   // paused from the menu: nothing moves
         _acc += delta;
         int steps = 0;
         _waiting = false;
@@ -965,6 +969,17 @@ public partial class Main : Node3D
     {
         _overlay.Bars.Clear();
         _overlay.Badges.Clear();
+        _overlay.Tags.Clear();
+        // Over each of my bases: its factory slots in use, "2/3" (amber when full).
+        foreach (var b in W.Entities)
+        {
+            if (b.Owner != _me || !World.IsBase(b)) continue;
+            var over = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.6f);
+            if (_camera.IsPositionBehind(over)) continue;
+            int used = W.SlotsUsed(b), slots = World.SlotsOf(b);
+            _overlay.Tags.Add((_camera.UnprojectPosition(over) - new Vector2(0, 30), $"{used}/{slots}",
+                               used >= slots ? new Color(1f, 0.75f, 0.3f) : new Color(0.75f, 0.92f, 1f)));
+        }
         var right = _camera.GlobalBasis.X;
         Entity selected = null;
         foreach (var e in W.Entities)
@@ -1257,11 +1272,74 @@ public partial class Main : Node3D
         else _banner.Text = "";
     }
 
+    // ---- the Escape menu (the user, 2026-10-20: "we need escape to pause") -----------------------------------------
+
+    Control _menu;
+    Label _menuNote;
+    Button _restartButton;
+    bool _menuOpen;
+
+    /// <summary>Against the computer the menu stops the game; in a LAN match it can't (the other side plays on).</summary>
+    bool MenuHoldsGame => _menuOpen && _session is LocalSession;
+
+    void BuildMenu(CanvasLayer ui)
+    {
+        _menu = new ColorRect { Color = new Color(0, 0, 0, 0.45f), AnchorRight = 1, AnchorBottom = 1, Visible = false };
+        var centre = new CenterContainer { AnchorRight = 1, AnchorBottom = 1 };
+        var panel = new PanelContainer();
+        panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.08f, 0.09f, 0.11f, 0.95f), BorderColor = new Color(0.45f, 0.75f, 0.9f),
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            ContentMarginLeft = 28, ContentMarginRight = 28, ContentMarginTop = 18, ContentMarginBottom = 18,
+        });
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 10);
+        var title = new Label { Text = "Paused", HorizontalAlignment = HorizontalAlignment.Center };
+        title.AddThemeFontSizeOverride("font_size", 30);
+        column.AddChild(title);
+        _menuNote = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+        _menuNote.AddThemeFontSizeOverride("font_size", 15);
+        column.AddChild(_menuNote);
+        Button MenuButton(string text, System.Action pressed)
+        {
+            var b = new Button { Text = text, FocusMode = Control.FocusModeEnum.None, CustomMinimumSize = new Vector2(260, 44) };
+            b.AddThemeFontSizeOverride("font_size", 19);
+            b.Pressed += pressed;
+            column.AddChild(b);
+            return b;
+        }
+        MenuButton("Resume  (Esc)", () => SetMenu(false));
+        _restartButton = MenuButton("Restart match", () => { SetMenu(false); StartMatch(new LocalSession((ulong)GD.Randi())); });
+        MenuButton("Quit to desktop", () => GetTree().Quit());
+        panel.AddChild(column);
+        centre.AddChild(panel);
+        _menu.AddChild(centre);
+        ui.AddChild(_menu);
+    }
+
+    void SetMenu(bool open)
+    {
+        _menuOpen = open;
+        _menu.Visible = open;
+        bool local = _session is LocalSession;
+        _restartButton.Visible = local;
+        _menuNote.Text = local ? "The battle is stopped." : "A LAN match can't stop here: it plays on.\nP calls one of your tactical pauses.";
+        // Shells, dust and tread marks hold still with the battle.
+        var effects = MenuHoldsGame ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
+        foreach (Node n in new Node[] { _dust, _proj, _tracks }) if (n != null) n.ProcessMode = effects;
+    }
+
     // ---- input -------------------------------------------------------------------------------
 
     public override void _UnhandledInput(InputEvent ev)
     {
         if (_session == null) return;
+        if (_menuOpen)   // the menu takes everything; Escape closes it
+        {
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) SetMenu(false);
+            return;
+        }
         if (ev is InputEventMouseButton mb && mb.Pressed)
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
@@ -1344,8 +1422,10 @@ public partial class Main : Node3D
             }
             else if (k.Keycode == Key.Escape)
             {
+                // One thing per press: stop placing, else let go of what's picked, else open the menu.
                 if (_placing != null) _placing = null;
-                else { _selected = -1; _scouts.Clear(); }
+                else if (_selected >= 0 || _scouts.Count > 0) { _selected = -1; _scouts.Clear(); }
+                else SetMenu(true);
             }
             else if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
             else if (k.Keycode == Key.Enter) _session.Issue(new Resume(_me));

@@ -11,6 +11,8 @@ public partial class Overlay : Control
     /// <summary>Upgrade and veterancy marks over a unit or factory: a sword per damage level, a shield per armour
     /// level (shown as pips under each), gold chevrons per veterancy rank.</summary>
     public readonly List<(Vector2 Centre, int Sword, int Shield, int Rank)> Badges = new();
+    /// <summary>Short text tags over things: a base's factory slots in use ("2/3").</summary>
+    public readonly List<(Vector2 Centre, string Text, Color Colour)> Tags = new();
     /// <summary>The box being dragged to pick scouts, if any.</summary>
     public Rect2? Box;
 
@@ -37,6 +39,17 @@ public partial class Overlay : Control
             DrawBadges(Vector2.Zero, sword, shield, rank);
         }
         DrawSetTransform(Vector2.Zero, 0, Vector2.One);
+        var font = ThemeDB.FallbackFont;
+        foreach (var (c, text, colour) in Tags)
+        {
+            // A dark pill with the text in it, so it reads over any ground.
+            const int Size = 17;
+            var width = font.GetStringSize(text, HorizontalAlignment.Left, -1, Size).X;
+            var pill = new Rect2(c.X - width / 2 - 7, c.Y - 12, width + 14, 23);
+            DrawRect(pill, new Color(0.04f, 0.05f, 0.07f, 0.8f));
+            DrawRect(pill, colour, false, 1.5f);
+            DrawString(font, new Vector2(c.X - width / 2, c.Y + 6), text, HorizontalAlignment.Left, -1, Size, colour);
+        }
         if (Box is { } box)
         {
             DrawRect(box, new Color(1, 1, 1, 0.08f));
