@@ -37,6 +37,47 @@ def factory_tank():
     k.finish("factory_tank", 34.0, UNITS)
 
 
+def factory_lighttank():
+    """The light vehicle works: a low, wide garage with two bays side by side at the front, a flat roof with a team
+    stripe and a radar mast; quick, small work. Lower and wider than the land factory."""
+    k.begin(0.0)
+    apron(12, 11)
+    plate(-9, 8, -9.5, 9.5, 0.5, 5.5, "steel", inset=1.0, front=0.3, back=0.8)         # the garage
+    plate(-7.8, 7.2, -8.2, 8.2, 5.5, 6.2, "plate", inset=0.4)
+    k.box(-7.0, 5.6, -1.2, 1.2, 6.2, 6.45, "paint")                                     # team stripe down the roof
+    for s in (1, -1):
+        k.box(7.6, 8.4, s * 4.6 - 3.0, s * 4.6 + 3.0, 0.5, 4.6, "black")                 # the two bays
+        strip(8.3, 8.5, s * 4.6 - 2.8, s * 4.6 + 2.8, 4.7, "glow", 0.25)
+        k.box(-6.5, 5.0, s * 5.4 - 1.5, s * 5.4 + 1.5, 6.2, 6.45, "paint")
+        strip(-8.0, 6.0, s * 8.9 - 0.05, s * 8.9 + 0.05, 3.2, "glow", 0.18)
+    k.box(7.6, 8.8, -0.7, 0.7, 0.5, 5.2, "hazard")                                     # the post between the bays
+    k.drum(-6, -6.5, 0.25, 6.2, 12.0, "dark", 6)                                        # radar mast
+    k.box(-7.2, -4.8, -6.7, -6.3, 11.0, 12.6, "white")
+    k.drum(-6, -6.5, 0.3, 12.0, 12.5, "glow", 6)
+    vents(-8.0, -3.0, 2.0, 6.0, 6.2, 5)
+    k.finish("factory_lighttank", 34.0, UNITS)
+
+
+def factory_mortar():
+    """The mortar works: a compact block with a steeply sloped roof (a team panel on its slope), a test-firing pit
+    out front with a stubby tube standing in it, ready rounds stacked by the door. Tall at the back, open in front."""
+    k.begin(0.0)
+    apron(12, 10)
+    k.upright([(-10, 0.5), (1, 0.5), (1, 6.0), (-10, 11.0)], -7, 7, "steel")           # the block, its roof raked
+    k.upright([(-9.4, 10.7), (0.4, 6.2), (0.4, 6.6), (-9.4, 11.1)], -5.5, 5.5, "paint")  # team panel on the slope
+    for s in (1, -1):
+        strip(-9.6, 0.6, s * 7.0 - 0.05, s * 7.0 + 0.05, 3.0, "glow", 0.2)
+    k.box(0.8, 1.4, -3.5, 3.5, 0.5, 4.8, "black")                                      # the door
+    strip(1.3, 1.5, -3.3, 3.3, 4.9, "glow", 0.25)
+    hexagon(6.5, 0, 4.0, 0.5, 1.2, "dark", r1=3.6)                                      # the test pit's rim
+    hexagon(6.5, 0, 3.0, 1.2, 1.3, "black")
+    tube_between((6.5, 0, 1.3), (8.0, 0, 6.0), 0.8, "mid", 10)                           # a stubby tube in it
+    tube_between((7.6, 0, 4.8), (7.8, 0, 5.4), 0.9, "glow", 10)
+    for i in range(3):                                                                  # ready rounds
+        k.drum(2.6 + i * 1.0, -6.0, 0.4, 0.5, 2.2, "hazard", 6, 0.28)
+    k.finish("factory_mortar", 34.0, UNITS)
+
+
 def factory_artillery():
     """The artillery yard: a raised assembly cradle in the open, four angular pylons, a bridge crane spanning them,
     a barrel being fitted, team colour on the cradle."""
@@ -156,5 +197,5 @@ def deposit():
 
 
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"factory_tank": factory_tank, "factory_artillery": factory_artillery,
+{"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar,
  "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit}[which]()

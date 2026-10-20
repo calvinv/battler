@@ -33,7 +33,7 @@ public partial class Projectiles : Node3D
     /// <summary>Somewhere to puff smoke and dirt (the vehicles' dust).</summary>
     public Dust Dust;
     /// <summary>Called when an artillery shell lands, for the big blast.</summary>
-    public System.Action<Vector3> OnShellLands;
+    public System.Action<Vector3, Kind> OnShellLands;
 
     public override void _Ready()
     {
@@ -92,6 +92,15 @@ public partial class Projectiles : Node3D
                 AddFlash(from, 2.6f, 0.16f, new Color(1f, 0.6f, 0.25f));
                 for (int i = 0; i < 3; i++) Dust?.Add(from, new Vector3(_rng.RandfRange(-1, 1), _rng.RandfRange(0.6f, 1.4f), _rng.RandfRange(-1, 1)), 0.9f, Smoke);
                 break;
+            case Kind.Mortar:   // a small shell lobbed high and short, a lighter burst
+                Add(new Round { From = from, To = to, Flight = flight > 0 ? flight : 0.4f + dist / 30f, Arc = dist * 0.55f, Thick = 0.2f, Length = 0.5f, Col = new Color(0.25f, 0.22f, 0.18f), By = by, Burst = true });
+                AddFlash(from, 1.5f, 0.12f, new Color(1f, 0.6f, 0.25f));
+                Dust?.Add(from, new Vector3(0, 1f, 0), 0.6f, Smoke);
+                break;
+            case Kind.LightTank:   // a quick light round
+                Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
+                AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));
+                break;
             default:   // tanks, towers, outposts, the HQ: one fast shell
                 float thick = by == Kind.Outpost ? 0.1f : 0.16f;
                 Add(new Round { From = from, To = to, Flight = dist / 45f, Thick = thick, Length = 2.2f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
@@ -146,9 +155,10 @@ public partial class Projectiles : Node3D
     {
         if (r.Burst)
         {
-            OnShellLands?.Invoke(r.To);
-            AddFlash(r.To + Vector3.Up, 6f, 0.25f, new Color(1f, 0.55f, 0.2f));
-            for (int i = 0; i < 8; i++)   // dirt thrown up
+            OnShellLands?.Invoke(r.To, r.By);
+            float big = r.By == Kind.Mortar ? 0.6f : 1f;   // a mortar bomb bursts smaller
+            AddFlash(r.To + Vector3.Up * big, 6f * big, 0.25f, new Color(1f, 0.55f, 0.2f));
+            for (int i = 0; i < (r.By == Kind.Mortar ? 4 : 8); i++)   // dirt thrown up
                 Dust?.Add(r.To, new Vector3(_rng.RandfRange(-2.5f, 2.5f), _rng.RandfRange(2f, 4.5f), _rng.RandfRange(-2.5f, 2.5f)), _rng.RandfRange(0.9f, 1.6f), new Color(0.38f, 0.32f, 0.25f));
         }
         else if (r.Sparks)

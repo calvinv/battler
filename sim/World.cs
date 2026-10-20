@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -121,7 +121,9 @@ public sealed class World
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
     /// <summary>What factories can make (scouts come from the HQ).</summary>
-    public static readonly Kind[] FactoryKinds = { Kind.Tank, Kind.Artillery };
+    // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
+    // tank and a combat tank": units stay free, the light ones just come quicker).
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery };
 
     /// <summary>
     /// The metal deposits, the same every match and mirrored left to right: two inside each HQ's build ring, two out
@@ -181,6 +183,12 @@ public sealed class World
         new() { MaxHp = 900, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 5, Reload = 10 },
         // Extractor: mines a deposit. Unarmed, so it needs looking after.
         new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8 },
+        // Light tank: small, quick, fragile; a fast-firing light gun. Built every 10 s.
+        new() { MaxHp = 90, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(38, 100), Range = 7, Aggro = 12, Vision = 9,
+                Damage = 7, Reload = 7, BuildTicks = 10 * TicksPerSecond },
+        // Mortar: a small artillery tank. Shorter range than artillery, a small blast, quick shells; built every 14 s.
+        new() { MaxHp = 55, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(28, 100), Range = 15, MinRange = 4, Aggro = 15, Vision = 8,
+                Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 14 * TicksPerSecond },
     };
 
     public int Tick;

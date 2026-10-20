@@ -96,5 +96,53 @@ def scout():
     k.finish("scout", 24.0, UNITS)
 
 
+def lighttank():
+    """A light tank (the user, 2026-10-20: "a combat tank", cheaper than the tank): small, wide and flat on four wheels
+    in armoured fairings, a blunt chamfered nose, a low round-cornered turret in the middle with one long thin gun
+    reaching out past the nose. Reads as a small tank (a gun, not the scout's dish; a short boxy hull, not its dart)."""
+    k.begin(0.0)
+    for s in (1, -1):
+        for a in (-3.6, 3.2):                                                           # four wheel fairings
+            lo, hi = sorted((s * 2.6, s * 4.2))
+            plate(a - 1.8, a + 1.8, lo, hi, 0.0, 2.3, "plate", inset=0.3, front=0.6, back=0.6)
+            k.box(a - 1.2, a + 1.2, s * 4.2 - 0.05, s * 4.2 + 0.05, 1.0, 1.2, "glow")
+    plate(-5.6, 5.6, -3.4, 3.4, 1.0, 3.0, "steel", inset=0.4, front=1.8, back=0.6)      # the hull, blunt nose
+    for s in (1, -1):
+        lens(5.62 - 1.0, s * 2.0, 2.0, 0.2)
+        strip(-4.6, 2.6, s * 2.4 - 0.25, s * 2.4 + 0.25, 2.98, "paint", 0.1)
+    hexagon(-0.4, 0, 2.3, 3.0, 4.4, "steel", r1=1.8, sides=8, turn=math.pi / 8)        # the turret
+    hexagon(-0.4, 0, 1.5, 4.4, 4.6, "paint", sides=8, turn=math.pi / 8)
+    k.tube(1.4, 9.0, 0, 3.7, 0.24, "mid", 8)                                            # one long thin gun
+    k.tube(8.4, 9.2, 0, 3.7, 0.34, "dark", 8)
+    vents(-5.2, -3.4, -1.8, 1.8, 2.95, 3)
+    k.finish("lighttank", 24.0, UNITS)
+
+
+def mortar():
+    """A mortar carrier (the user, 2026-10-20: "a smaller artillery tank"): a short tracked box, its back an open
+    well holding a stubby fat mortar tube pointing almost straight up; a team band round the tube. Short and squat
+    where the artillery is long with a long barrel."""
+    k.begin(0.0)
+    for s in (1, -1):
+        pod(s, 2.4, 3.9, -5.4, 5.0, 2.6)
+    k.box(-5.0, 4.6, -2.4, 2.4, 0.6, 2.6, "dark")
+    plate(-5.4, 5.6, -3.6, 3.6, 2.4, 4.4, "steel", inset=0.4, front=1.6, back=0.4)      # the box body
+    k.box(-4.4, 0.6, -2.4, 2.4, 4.0, 4.45, "black")                                     # the open well
+    for s in (1, -1):
+        lens(5.62, s * 1.8, 3.2, 0.24)
+        strip(1.2, 4.4, s * 2.6 - 0.25, s * 2.6 + 0.25, 4.35, "paint", 0.1)
+    # the mortar: a fat short tube tilted 70 degrees forward, on a base plate in the well
+    base, tilt = Vector((-1.9, 0.0, 4.1)), math.radians(70)
+    d = Vector((math.cos(tilt), 0.0, math.sin(tilt)))
+    k.drum(-1.9, 0, 1.5, 4.0, 4.6, "mid", 10)
+    tube_between(base, base + d * 6.5, 0.85, "mid", 10, 0.75)
+    tube_between(base + d * 2.2, base + d * 3.4, 1.0, "paint", 10)
+    tube_between(base + d * 6.0, base + d * 6.9, 0.95, "dark", 10)
+    tube_between(base + d * 4.0, base + d * 4.4, 0.95, "glow", 10)
+    for s in (1, -1):                                                                   # ready rounds
+        k.drum(-4.0, s * 1.6, 0.35, 4.0, 5.4, "hazard", 6, 0.25)
+    k.finish("mortar", 24.0, UNITS)
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"tank": tank, "artillery": artillery, "scout": scout}[which]()
+{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar}[which]()

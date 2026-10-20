@@ -12,7 +12,8 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: 1 / 2 place a tank / artillery factory in a base ring with a free slot, 3 an outpost beside a scout, 4 an
+/// Controls: 1-4 place a factory (light tank, tank, mortar, artillery) in a base ring with a free slot, 5 an outpost on
+/// the pad by one of your extractors, 6 an
 /// extractor on a deposit (Esc or right click cancels). Q builds a scout at the HQ; E picks all scouts; click, Shift-click
 /// or drag a box to pick scouts, right-click to send them. A click selects anything else to see its stats, upgrades
 /// and Sell (Esc clears). WASD/arrows pan, wheel zooms,
@@ -161,7 +162,7 @@ public partial class Main : Node3D
 
     // ---- --lineup: the unit models side by side in both teams' colours, to judge their outlines at game distance ----
 
-    static readonly string[] LineupUnits = { "scout", "tank", "artillery" };
+    static readonly string[] LineupUnits = { "scout", "lighttank", "tank", "mortar", "artillery" };
     int _lineupFrame = -1;
 
     void BuildLineup()
@@ -170,27 +171,27 @@ public partial class Main : Node3D
             for (int i = 0; i < LineupUnits.Length; i++)
             {
                 var unit = UnitArt.Make(LineupUnits[i], TeamColor[team]);
-                // Emblems at a spread of levels: scout bronze sword, tank silver sword + gold shield, artillery both gold.
-                int[][] levels = { new[] { 1, 0 }, new[] { 2, 3 }, new[] { 3, 3 } };
+                // Emblems at a spread of levels, none to both gold.
+                int[][] levels = { new[] { 0, 0 }, new[] { 1, 0 }, new[] { 2, 3 }, new[] { 1, 1 }, new[] { 3, 3 } };
                 UnitArt.AddEmblems(unit, LineupUnits[i], levels[i][0], levels[i][1]);
                 AddChild(unit);
-                unit.Position = new Vector3((i - 1) * 7, 0, team == 0 ? -3.5f : 3.5f);
+                unit.Position = new Vector3((i - 2) * 6, 0, team == 0 ? -3.5f : 3.5f);
                 // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
                 unit.Basis = Basis.LookingAt(new Vector3(team == 0 ? 1 : -1, 0, 0.35f).Normalized(), Vector3.Up);
             }
         // An outpost beside them, to judge its model.
         var post = UnitArt.Make("outpost", TeamColor[0]);
         AddChild(post);
-        post.Position = new Vector3(14, 0, 3);
+        post.Position = new Vector3(17, 0, 3);
         post.Basis = Basis.LookingAt(Vector3.Right, Vector3.Up);
         // An extractor, and a deposit nobody mines yet.
         var rig = UnitArt.Make("extractor", TeamColor[1]);
         AddChild(rig);
-        rig.Position = new Vector3(14, 0, -5);
+        rig.Position = new Vector3(17, 0, -5);
         rig.Basis = Basis.LookingAt(Vector3.Left, Vector3.Up);
         var ore = UnitArt.Make("deposit", Neutral);
         AddChild(ore);
-        ore.Position = new Vector3(21, 0, -1);
+        ore.Position = new Vector3(24, 0, -1);
         // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
         for (int i = 0; i < 3; i++)
         {
@@ -504,7 +505,7 @@ public partial class Main : Node3D
         _dust = new Dust();
         AddChild(_dust);
         _proj = new Projectiles { Dust = _dust };
-        _proj.OnShellLands = at => { if (SeenAt(at)) Blast(at, World.StatsFor[(int)Kind.Artillery].Splash.ToFloat()); };
+        _proj.OnShellLands = (at, by) => { if (SeenAt(at)) Blast(at, World.StatsFor[(int)by].Splash.ToFloat()); };
         AddChild(_proj);
         _rallyLine = new ImmediateMesh();
         AddChild(new MeshInstance3D { Mesh = _rallyLine });
@@ -626,6 +627,9 @@ public partial class Main : Node3D
     }
 
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
+
+    /// <summary>A kind as the player reads it.</summary>
+    static string NameOf(Kind k) => k switch { Kind.LightTank => "Light tank", Kind.Hq => "HQ", _ => k.ToString() };
 
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
     Node3D MakeView(Entity e)
@@ -787,13 +791,13 @@ public partial class Main : Node3D
     static float HeightOf(Kind k) => 0f;   // every model stands on its origin
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.35f, Kind.Artillery => 1.6f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.15f, Kind.Artillery => 1.6f, Kind.LightTank => 0.85f, Kind.Mortar => 1.1f, _ => 1f };
 
     /// <summary>How far in front of its centre a gun's muzzle is (units face their target, so it is along that line).</summary>
-    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.9f, Kind.Artillery => 2.2f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, _ => 0f };
+    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.9f, Kind.Artillery => 2.2f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.2f, Kind.Mortar => 0.6f, _ => 0f };
 
     /// <summary>How quickly each kind swings round, in radians a second.</summary>
-    static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, _ => 4f };
+    static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, Kind.LightTank => 7f, Kind.Mortar => 3.5f, _ => 4f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -855,7 +859,7 @@ public partial class Main : Node3D
             var from = at + Vector3.Up * MuzzleOf(s.By) + dir * BarrelOf(s.By);
             var target = W.Find(s.TargetId);
             var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
-            if (s.By == Kind.Artillery) aimAt = to;   // shells burst on the ground
+            if (s.Flight > 0) aimAt = to;   // shells burst on the ground
             _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner], s.Flight / (float)World.TicksPerSecond);   // a shell lands when the sim lands it
         }
         return true;
@@ -966,7 +970,7 @@ public partial class Main : Node3D
     static float TopOf(Kind k) => k switch
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f,   // (a factory's bar clears its cogs)
-        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, _ => 2f,
     };
 
     void DrawBarsAndSelection(float alpha)
@@ -1090,20 +1094,22 @@ public partial class Main : Node3D
         var s = e.Stats;
         var lines = new List<string>
         {
-            $"{e.Kind}  ({(e.Owner == _me ? "yours" : "enemy")})",
+            $"{NameOf(e.Kind)}  ({(e.Owner == _me ? "yours" : "enemy")})",
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
                     ? "Unarmed eyes. Finds deposits: an extractor can go\non a deposit beside it. Right-click to send it."
                     : "Unarmed eyes: it's scouting you.",
                 Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second."
-                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (3)." : ""),
+                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (5)." : ""),
                 Kind.Tank => "Tough all-rounder.",
+                Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
+                Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
                 Kind.Hq => "Lose it and you lose the match.",
                 Kind.Tower => "Guards the base: long range and sight.",
                 Kind.Outpost => "A sub-base: build factories inside its ring.",
-                _ => $"Makes: {e.Makes}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
+                _ => $"Makes: {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
             $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
         };
@@ -1243,14 +1249,15 @@ public partial class Main : Node3D
             if (e.Stats.IsUnit && Shown(e)) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
-        var menu = string.Join("   ", World.FactoryKinds.Select((k, i) => $"[{i + 1}] {k}")) + $" factory {World.FactoryCost}"
-                   + $"   [3] Outpost {World.OutpostCost}   [4] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts"
+        var menu = "Factories " + World.FactoryCost + ": " + string.Join("  ", World.FactoryKinds.Select((k, i) => $"[{i + 1}] {NameOf(k)}"))
+                   + $"   [5] Outpost {World.OutpostCost}   [6] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts"
                    + "\nExpand: send a scout to a deposit, build an extractor on it, then an outpost on the pad beside it";
         var placingWhat = _placing switch
         {
             Kind.Outpost => "an outpost (on the pad beside one of your extractors)",
             Kind.Extractor => "an extractor (on a deposit in a ring or beside a scout)",
-            _ => _placing + " factory",
+            Kind kind => NameOf(kind) + " factory",
+            null => "",
         };
         var building = _placing == null
             ? menu
@@ -1272,7 +1279,7 @@ public partial class Main : Node3D
         else if (!W.Started)
             _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
                 ? "Waiting for the enemy to place their first factory..."
-                : "Place your first factory: press 1 (tank) or 2 (artillery), then click near your HQ\nThe battle starts once both sides have one";
+                : "Place your first factory: press 1-4 (light tank, tank, mortar, artillery), then click near your HQ\nThe battle starts once both sides have one";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
@@ -1421,8 +1428,8 @@ public partial class Main : Node3D
         {
             if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKinds.Length && W.Winner < 0)
                 _placing = World.FactoryKinds[k.Keycode - Key.Key1];
-            else if (k.Keycode == Key.Key3 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
-            else if (k.Keycode == Key.Key4 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
+            else if (k.Keycode == Key.Key5 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
+            else if (k.Keycode == Key.Key6 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
             else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started) _session.Issue(new QueueScout(_me));
             else if (k.Keycode == Key.E)   // pick all my scouts
             {

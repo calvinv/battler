@@ -75,6 +75,8 @@ public static class UnitArt
         ["tank"] = (1.05f, 0.92f),       // the engine deck at the back
         ["artillery"] = (-0.75f, 0.78f), // the front deck, ahead of the turret
         ["scout"] = (-0.3f, 0.64f),      // its back, ahead of the mast
+        ["lighttank"] = (0.75f, 0.55f),  // the rear deck, behind the turret
+        ["mortar"] = (-0.6f, 0.81f),     // the front deck, ahead of the tube
     };
     static readonly Color[] Metal = { new(0.8f, 0.5f, 0.25f), new(0.85f, 0.87f, 0.92f), new(1f, 0.82f, 0.25f) };   // bronze, silver, gold
     static ImageTexture _swordTex, _shieldTex;
