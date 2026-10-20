@@ -122,6 +122,8 @@ public partial class Main : Node3D
                 // 30 s before the shot, my first factory's units are told to rally in front of the base.
                 if (i == (at - 30) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
                     _session.Issue(new SetRally(_me, rf.Id, false, ToFix(new Vector3(-28, 0, 8))));
+                if (args.Contains("--hq") && i == (at - 20) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } rh)
+                    _session.Issue(new SetRally(_me, rh.Id, false, ToFix(new Vector3(-58, 0, -8))));   // a base rally in front of the HQ
                 StepWorld();
                 FadeBlasts((float)TickLength);
                 _proj.Advance((float)TickLength);
@@ -752,7 +754,7 @@ public partial class Main : Node3D
     void DrawRallyLine(Entity selected)
     {
         _rallyLine.ClearSurfaces();
-        if (selected is not { Kind: Kind.Factory, HasRally: true } || selected.Owner != _me) return;
+        if (selected is not { Kind: Kind.Factory or Kind.Hq, HasRally: true } || selected.Owner != _me) return;
         var from = ToV3(selected.Pos);
         var to = ToV3(selected.Rally);
         _rallyLine.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
@@ -927,7 +929,7 @@ public partial class Main : Node3D
             view.Position = pos + Vector3.Up * HeightOf(e.Kind);
             view.Visible = Shown(e);
             if (e.Kind == Kind.Factory) UpdateCogs(e, view, _frameDt);
-            if (e.Kind == Kind.Factory) UpdateRallyFlag(e);
+            if (e.Kind is Kind.Factory or Kind.Hq) UpdateRallyFlag(e);
             if (e.Kind == Kind.Factory) UpdateBuildGhost(e);
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
@@ -1000,7 +1002,7 @@ public partial class Main : Node3D
             : Describe(selected);
         ShowUpgrades(selected);
         ShowScoutButtons(selected);
-        _rallyButton.Visible = selected.Kind == Kind.Factory && selected.Owner == _me && selected.HasRally;
+        _rallyButton.Visible = selected.Kind is Kind.Factory or Kind.Hq && selected.Owner == _me && selected.HasRally;
         ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
         _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
@@ -1098,7 +1100,12 @@ public partial class Main : Node3D
             lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory && e.Owner == _me)
-            lines.Add(e.HasRally ? "New units go to the flag first, then attack" : "Units attack  (right-click the ground to set a rally point)");
+            lines.Add(e.HasRally ? "New units go to its flag first, then attack"
+                : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"
+                : "Units attack  (right-click the ground to set a rally point)");
+        if (e.Kind == Kind.Hq && e.Owner == _me)
+            lines.Add(e.HasRally ? "Base rally: new scouts, and units from factories\nwithout their own flag, gather at the flag"
+                                 : "Right-click the ground to set a base rally point\n(for scouts, and factories without their own)");
         return string.Join("\n", lines);
     }
 
@@ -1284,7 +1291,7 @@ public partial class Main : Node3D
                 if (_placing != null) _placing = null;
                 else if (_scouts.Count > 0 && W.Winner < 0)
                     _session.Issue(new MoveUnits(_me, _scouts.OrderBy(id => id).ToArray(), ToFix(_mouseGround.Value)));
-                else if (W.Find(_selected) is { Kind: Kind.Factory } f && f.Owner == _me && W.Winner < 0)
+                else if (W.Find(_selected) is { Kind: Kind.Factory or Kind.Hq } f && f.Owner == _me && W.Winner < 0)
                     _session.Issue(new SetRally(_me, f.Id, false, ToFix(_mouseGround.Value)));
             }
         }

@@ -18,7 +18,7 @@ public sealed record Resume(int Player) : Command(Player);
 /// <summary>Buys the next level of one of a factory's upgrades.</summary>
 public sealed record UpgradeFactory(int Player, int FactoryId, Upgrade Which) : Command(Player);
 
-/// <summary>Where a factory's units gather and hold (Clear: none, so they attack).</summary>
+/// <summary>Where a factory's units gather before attacking; for the HQ, the whole base's (Clear: none, so they attack).</summary>
 public sealed record SetRally(int Player, int FactoryId, bool Clear, FixVec2 Pos) : Command(Player);
 
 /// <summary>Builds an outpost (a sub-base: factories can be built near it) on the pad beside deposit Deposit, which the player mines.</summary>

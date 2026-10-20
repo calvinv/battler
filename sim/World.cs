@@ -47,7 +47,7 @@ public sealed class Entity
     public int FactoryId;  // a unit: the factory that made it
     public bool HasWaypoint;   // a unit: its factory's rally point when it was made, to reach before attacking
     public FixVec2 Waypoint;
-    public bool HasRally;  // a factory: whether its units gather at Rally instead of attacking
+    public bool HasRally;  // a factory, or the HQ for the whole base: whether new units gather at Rally before attacking
     public FixVec2 Rally;
     public int BaseId;     // a factory: the HQ or outpost whose slot it takes
     public int Deposit = -1;   // an extractor: which of World.Deposits it sits on
@@ -226,8 +226,11 @@ public sealed class World
         {
             from.Levels.CopyTo(e.Levels, 0);
             e.FactoryId = from.Id;
-            e.HasWaypoint = from.HasRally;
-            e.Waypoint = from.Rally;
+            // Its factory's own rally point; failing that the base's (the HQ's: the user, 2026-10-20, "main base
+            // should have a way to rally").
+            var rally = from.HasRally ? from : HqOf(owner) is { HasRally: true } hq ? hq : null;
+            e.HasWaypoint = rally != null;
+            if (rally != null) e.Waypoint = rally.Rally;
         }
         SetStats(e);
         e.Hp = e.MaxHp;
@@ -677,7 +680,7 @@ public sealed class World
                 break;
             case SetRally sr:
                 var rallying = Find(sr.FactoryId);
-                if (rallying == null || rallying.Kind != Kind.Factory || rallying.Owner != sr.Player) break;
+                if (rallying == null || rallying.Kind is not (Kind.Factory or Kind.Hq) || rallying.Owner != sr.Player) break;
                 rallying.HasRally = !sr.Clear;
                 rallying.Rally = new FixVec2(Clamp(sr.Pos.X, MapHalfX - 2), Clamp(sr.Pos.Z, MapHalfZ - 2));
                 break;
@@ -751,7 +754,7 @@ public sealed class World
         var across = new FixVec2(0, Fix.Ratio(Rng.Range(-30, 30), 10));
         var scout = Spawn(Kind.Scout, hq.Owner, hq.Pos + ahead + across);
         scout.HasWaypoint = true;
-        scout.Waypoint = hq.Pos + ahead * 3 + across * 2;
+        scout.Waypoint = hq.HasRally ? hq.Rally + across : hq.Pos + ahead * 3 + across * 2;   // to the base rally, if set
     }
 
     /// <summary>

@@ -31,6 +31,9 @@ int ReplayTest()
         // Player 0 holds its first factory's units near home for a while, then lets them go.
         var first0 = world.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
         if (script && first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
+        // ...and sets a base rally at its HQ for a while (scouts and unrallied factories go there).
+        if (script && world.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0) is { } hq0 && (world.Tick == 400 || world.Tick == 1800))
+            cmds.Add(new SetRally(0, hq0.Id, world.Tick == 1800, new FixVec2(-45, -8)));
         if (script && first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
         // ...and later sells its newest factory or outpost.
         if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 0) is { } sold)
@@ -99,6 +102,8 @@ int LanTest()
                 if (i == 1 && w.Tick == 700) ss.Issue(new Resume(1));
                 var first1 = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 1);
                 if (i == 1 && first1 != null && w.Tick == 300) ss.Issue(new SetRally(1, first1.Id, false, new FixVec2(30, -5)));
+                if (i == 1 && (w.Tick == 400 || w.Tick == 1800) && w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1) is { } hq1)
+                    ss.Issue(new SetRally(1, hq1.Id, w.Tick == 1800, new FixVec2(45, 8)));
                 if (i == 1 && first1 != null && w.Tick == 1500) ss.Issue(new SetRally(1, first1.Id, true, FixVec2.Zero));
                 if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
             }
