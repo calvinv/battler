@@ -155,6 +155,8 @@ public partial class Main : Node3D
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
+            if (args.IndexOf("--look") is int li and >= 0 && li + 3 < args.Count)   // --look x z distance: the camera on a spot, fog lifted
+            { _focus = new Vector3(float.Parse(args[li + 1]), 0, float.Parse(args[li + 2])); _distance = float.Parse(args[li + 3]); _noFog = true; UpdateFog(); _selected = -1; }
             // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
             _shotFrames = args.IndexOf("--frames") is int fi and >= 0 && fi + 1 < args.Count ? int.Parse(args[fi + 1]) : 10;
         }
@@ -417,15 +419,45 @@ public partial class Main : Node3D
 
     void BuildScene()
     {
+        // Lit like a clear, slightly hazy day (the user, 2026-10-20: "higher definition battlefields"): light from a sky
+        // rather than one flat colour, filmic tone mapping, the lit strips blooming, contact shadows in creases (SSAO),
+        // a little haze far off, and smooth edges (MSAA).
         var env = new Godot.Environment
         {
-            BackgroundMode = Godot.Environment.BGMode.Color,
-            BackgroundColor = new Color(0.07f, 0.08f, 0.1f),
-            AmbientLightSource = Godot.Environment.AmbientSource.Color,
-            AmbientLightColor = new Color(0.55f, 0.6f, 0.7f),
-            AmbientLightEnergy = 0.5f,
+            BackgroundMode = Godot.Environment.BGMode.Sky,
+            Sky = new Sky
+            {
+                SkyMaterial = new ProceduralSkyMaterial
+                {
+                    SkyTopColor = new Color(0.32f, 0.45f, 0.62f), SkyHorizonColor = new Color(0.66f, 0.7f, 0.72f),
+                    GroundBottomColor = new Color(0.12f, 0.11f, 0.1f), GroundHorizonColor = new Color(0.55f, 0.55f, 0.52f),
+                    SunAngleMax = 20f,
+                },
+            },
+            AmbientLightSource = Godot.Environment.AmbientSource.Sky,
+            AmbientLightEnergy = 0.55f,
+            ReflectedLightSource = Godot.Environment.ReflectionSource.Sky,
+            TonemapMode = Godot.Environment.ToneMapper.Aces,
+            TonemapExposure = 1.05f,
+            TonemapWhite = 6f,
+            GlowEnabled = true,
+            GlowIntensity = 0.7f,
+            GlowBloom = 0.03f,
+            GlowHdrThreshold = 0.9f,
+            SsaoEnabled = true,
+            SsaoRadius = 1.6f,
+            SsaoIntensity = 2.2f,
+            SsaoPower = 1.4f,
+            FogEnabled = true,
+            FogLightColor = new Color(0.62f, 0.66f, 0.7f),
+            FogDensity = 0.0007f,
+            FogSkyAffect = 0f,
+            AdjustmentEnabled = true,
+            AdjustmentSaturation = 1.08f,
+            AdjustmentContrast = 1.05f,
         };
         AddChild(new WorldEnvironment { Environment = env });
+        GetViewport().Msaa3D = Viewport.Msaa.Msaa4X;
 
         // The house light (ai-tools docs/render_scene.md): sun from the upper left of the screen,
         // a little toward the viewer, 50 degrees up; a cool fill from the right.
@@ -433,8 +465,13 @@ public partial class Main : Node3D
         AddChild(new DirectionalLight3D
         {
             Transform = new Transform3D(Basis.LookingAt(-sunFrom, Vector3.Up), Vector3.Zero),
-            LightEnergy = 1.2f,
+            LightEnergy = 1.6f,
+            LightColor = new Color(1f, 0.95f, 0.86f),   // a warm sun against the cool sky
             ShadowEnabled = true,
+            DirectionalShadowMaxDistance = 220f,        // the whole view at the widest zoom
+            DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel4Splits,
+            LightAngularDistance = 0.6f,                // slightly soft shadow edges
+            ShadowBlur = 1.2f,
         });
         var fillFrom = new Vector3(1, 0.4f, 0.2f).Normalized();
         AddChild(new DirectionalLight3D
