@@ -54,16 +54,61 @@ public sealed class Nav
         return true;
     }
 
+    // ---- buildings (per World): they shut the squares under them, with room round them to drive past -----------
+    // (The user, 2026-10-20: "the pathing is also quite awkward, it doesn't prempt buildings coming up": units drove
+    // straight at buildings and were shoved round them. Now their footprints are shut, and every unit plans its way
+    // again when one goes up or comes down: Version.)
+
+    readonly int[] _blocked = new int[W * H];   // how many buildings shut each square
+    /// <summary>Goes up whenever a building is added or removed: paths found before then are out of date.</summary>
+    public int Version { get; private set; }
+
+    /// <summary>The squares a building shuts: within its radius and a unit's half-width of its middle.</summary>
+    static IEnumerable<int> Footprint(FixVec2 at, Fix radius)
+    {
+        var reach = radius + Fix.Ratio(3, 2);
+        int i0 = (at.X - reach).ToInt() - X0, i1 = (at.X + reach).ToInt() - X0;
+        int j0 = (at.Z - reach).ToInt() - Z0, j1 = (at.Z + reach).ToInt() - Z0;
+        for (int j = System.Math.Max(0, j0 / Cell); j <= System.Math.Min(H - 1, j1 / Cell); j++)
+            for (int i = System.Math.Max(0, i0 / Cell); i <= System.Math.Min(W - 1, i1 / Cell); i++)
+                if ((Centre(j * W + i) - at).LengthSq <= reach * reach) yield return j * W + i;
+    }
+
+    public void AddBuilding(FixVec2 at, Fix radius) { foreach (var c in Footprint(at, radius)) _blocked[c]++; Version++; }
+    public void RemoveBuilding(FixVec2 at, Fix radius) { foreach (var c in Footprint(at, radius)) _blocked[c]--; Version++; }
+
+    /// <summary>Whether a unit can drive through a square: open ground with no building on it.</summary>
+    bool Walk(int cell) => Open[cell] && _blocked[cell] == 0;
+
+    /// <summary>Whether the straight line from a to b is clear of water, cliffs and buildings. Buildings within
+    /// `spare` of b don't count (the one it's driving up to attack), nor those it's already up against at a.</summary>
+    public bool ClearOfAll(FixVec2 a, FixVec2 b, Fix spare)
+    {
+        var d = b - a;
+        int steps = d.Length.ToInt() + 1;
+        var near = Fix.FromInt(3);
+        for (int k = 0; k <= steps; k++)
+        {
+            var p = a + d * Fix.Ratio(k, steps);
+            int c = CellOf(p);
+            if (c < 0 || !Open[c]) return false;
+            if (_blocked[c] == 0) continue;
+            if ((p - b).LengthSq <= spare * spare || (p - a).LengthSq <= near * near) continue;
+            return false;
+        }
+        return true;
+    }
+
     // ---- the search (per World) ----------------------------------------------------------------------------------
 
     readonly int[] _g = new int[W * H], _from = new int[W * H], _seen = new int[W * H], _done = new int[W * H];
     int _stamp;
     readonly List<long> _heap = new();
 
-    /// <summary>The nearest open square to a square (itself if open), searching outward; -1 if none near.</summary>
-    static int NearestOpen(int cell, FixVec2 p)
+    /// <summary>The nearest walkable square to a square (itself if walkable), searching outward; -1 if none near.</summary>
+    int NearestOpen(int cell, FixVec2 p)
     {
-        if (cell >= 0 && Open[cell]) return cell;
+        if (cell >= 0 && Walk(cell)) return cell;
         int ci = (p.X.ToInt() - X0) / Cell, cj = (p.Z.ToInt() - Z0) / Cell;
         for (int r = 1; r < 25; r++)
             for (int dj = -r; dj <= r; dj++)
@@ -71,7 +116,7 @@ public sealed class Nav
                 {
                     if (System.Math.Abs(di) != r && System.Math.Abs(dj) != r) continue;   // the ring only
                     int i = ci + di, j = cj + dj;
-                    if (i >= 0 && j >= 0 && i < W && j < H && Open[j * W + i]) return j * W + i;
+                    if (i >= 0 && j >= 0 && i < W && j < H && Walk(j * W + i)) return j * W + i;
                 }
         return -1;
     }
@@ -89,7 +134,7 @@ public sealed class Nav
         int start = NearestOpen(CellOf(from), from), goal = NearestOpen(CellOf(to), to);
         if (start < 0 || goal < 0) return null;
         int toCell = CellOf(to);
-        var end = toCell >= 0 && Open[toCell] ? to : Centre(goal);   // (into the water or up the cliff: as near as it gets)
+        var end = toCell >= 0 && Walk(toCell) ? to : Centre(goal);   // (into the water, up a cliff, inside a building: as near as it gets)
         if (start == goal) return new List<FixVec2> { end };
         _stamp++;
         _heap.Clear();
@@ -111,8 +156,8 @@ public sealed class Nav
                     int i = ci + di, j = cj + dj;
                     if (i < 0 || j < 0 || i >= W || j >= H) continue;
                     int next = j * W + i;
-                    if (!Open[next] || _done[next] == _stamp) continue;
-                    if (di != 0 && dj != 0 && (!Open[cj * W + i] || !Open[j * W + ci])) continue;   // no cutting corners
+                    if (!Walk(next) || _done[next] == _stamp) continue;
+                    if (di != 0 && dj != 0 && (!Walk(cj * W + i) || !Walk(j * W + ci))) continue;   // no cutting corners
                     int g = _g[cur] + (di != 0 && dj != 0 ? 14 : 10);
                     if (_seen[next] == _stamp && g >= _g[next]) continue;
                     _seen[next] = _stamp; _g[next] = g; _from[next] = cur;
@@ -132,7 +177,7 @@ public sealed class Nav
         {
             int far = k;
             for (int m = cells.Count - 1; m > k; m--)
-                if (Clear(at, cells[m])) { far = m; break; }
+                if (ClearOfAll(at, cells[m], Fix.Zero)) { far = m; break; }
             path.Add(cells[far]);
             at = cells[far];
             k = far + 1;

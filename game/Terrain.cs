@@ -73,6 +73,9 @@ public sealed class Terrain : System.IDisposable
     /// <summary>The ground as drawn: smooth, with its small bumps. Stand things on this.</summary>
     public float HeightAt(float x, float z) => SmoothAt(x, z) + Relief(x, z);
 
+    /// <summary>Where the trees stand, filled by BuildDecor: kind, foot, yaw, size (Forest plants them).</summary>
+    public readonly List<(Forest.Kind Kind, Vector3 Foot, float Yaw, float Size)> TreeSpots = new();
+
     /// <summary>Tread marks lie on the drawn ground (it's fine enough now that its triangles hug HeightAt).</summary>
     public float SurfaceAt(float x, float z) => HeightAt(x, z);
 
@@ -189,8 +192,6 @@ public sealed class Terrain : System.IDisposable
         root.AddChild(new MeshInstance3D { Mesh = sheet, MaterialOverride = water, Position = new Vector3(0, WaterLevel, 0), Rotation = new Vector3(0, Mathf.Pi, 0) });
 
         var rng = new RandomNumberGenerator { Seed = 1234 };
-        var pines = new List<Transform3D>();
-        var dead = new List<Transform3D>();
         var rocks = new List<Transform3D>();
         bool Clear(Vector2 p, float room)
         {
@@ -205,18 +206,20 @@ public sealed class Terrain : System.IDisposable
             var basis = new Basis(Vector3.Up, rng.RandfRange(0, Mathf.Tau)) * new Basis(Vector3.Right, lean);
             return new Transform3D(basis.Scaled(Vector3.One * scale), new Vector3(p.X, HeightAt(p.X, p.Y) - 0.1f, p.Y));
         }
-        // Copses: a few pines or dead trees each, in clumps.
+        // Copses, in clumps: mostly one kind each, now and then another among them (Forest draws them).
+        TreeSpots.Clear();
         for (int c = 0; c < 800; c++)
         {
             var centre = new Vector2(rng.RandfRange(-_halfX - 6, _halfX + 6), rng.RandfRange(-_halfZ - 6, _halfZ + 6));   // mostly on the map
-            bool living = rng.Randf() < 0.45f;
-            int n = rng.RandiRange(3, 9);
+            float roll = rng.Randf();
+            var main = roll < 0.35f ? Forest.Kind.Pine : roll < 0.6f ? Forest.Kind.Fir : roll < 0.82f ? Forest.Kind.Broadleaf : Forest.Kind.Dead;
+            int n = rng.RandiRange(3, 10);
             for (int i = 0; i < n; i++)
             {
-                var p = centre + new Vector2(rng.RandfRange(-4.5f, 4.5f), rng.RandfRange(-4.5f, 4.5f));
+                var p = centre + new Vector2(rng.RandfRange(-5f, 5f), rng.RandfRange(-5f, 5f));
                 if (!Clear(p, 1.5f)) continue;
-                if (living) pines.Add(Stand(p, rng.RandfRange(0.8f, 1.35f)));
-                else dead.Add(Stand(p, rng.RandfRange(0.8f, 1.3f), rng.RandfRange(-0.15f, 0.15f)));
+                var kind = rng.Randf() < 0.8f ? main : (Forest.Kind)rng.RandiRange(0, 3);
+                TreeSpots.Add((kind, new Vector3(p.X, HeightAt(p.X, p.Y) - 0.05f, p.Y), rng.RandfRange(0, Mathf.Tau), rng.RandfRange(0.75f, 1.3f)));
             }
         }
         // Rocks: scattered, and a ring of boulders round each pond.
@@ -233,16 +236,8 @@ public sealed class Terrain : System.IDisposable
                 if (Mathf.Abs(p.Y) > 13) rocks.Add(Stand(p, rng.RandfRange(0.5f, 1.1f)));
             }
 
-        var bark = Flat(new Color(0.28f, 0.22f, 0.17f));
-        var needles = Flat(new Color(0.24f, 0.32f, 0.2f));
-        var greyBark = Flat(new Color(0.36f, 0.33f, 0.3f));
         var rock = Flat(new Color(0.5f, 0.47f, 0.43f));
-        // Pine: a trunk and two stacked cones. Dead tree: a tall bare trunk with a crooked limb. Rock: a lumpy low ball.
-        root.AddChild(Many(new CylinderMesh { TopRadius = 0.08f, BottomRadius = 0.16f, Height = 1.2f, RadialSegments = 5 }, bark, pines, new Vector3(0, 0.6f, 0)));
-        root.AddChild(Many(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.9f, Height = 1.8f, RadialSegments = 7 }, needles, pines, new Vector3(0, 1.6f, 0)));
-        root.AddChild(Many(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.65f, Height = 1.4f, RadialSegments = 7 }, needles, pines, new Vector3(0, 2.4f, 0)));
-        root.AddChild(Many(new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.16f, Height = 2.6f, RadialSegments = 5 }, greyBark, dead, new Vector3(0, 1.3f, 0)));
-        root.AddChild(Many(new CylinderMesh { TopRadius = 0.02f, BottomRadius = 0.07f, Height = 1.1f, RadialSegments = 4 }, greyBark, dead, new Vector3(0.3f, 1.9f, 0), new Vector3(0, 0, -0.9f)));
+        // Rock: a lumpy low ball.
         root.AddChild(Many(new SphereMesh { Radius = 0.7f, Height = 0.9f, RadialSegments = 6, Rings = 3 }, rock, rocks, new Vector3(0, 0.2f, 0), scale: new Vector3(1.3f, 0.8f, 1f)));
         root.AddChild(GrassTufts(rng));
         // Pebbles strewn on the open ground: small, many, a little detail at any zoom.

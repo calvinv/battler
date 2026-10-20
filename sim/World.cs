@@ -56,6 +56,7 @@ public sealed class Entity
     public List<FixVec2> NavPath;      // a unit: corners to drive through to NavGoal (Nav), when there is no straight way
     public FixVec2 NavGoal;
     public int NavTick;                // when that path was found
+    public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
     public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
 
     public int Level(Upgrade u) => Levels[(int)u];
@@ -257,6 +258,7 @@ public sealed class World
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
         e.Height = Ground.HeightAt(pos);
         Entities.Add(e);
+        if (e.Stats.IsBuilding) _nav.AddBuilding(e.Pos, e.Stats.Radius);   // units plan their way round it from now on
         return e;
     }
 
@@ -670,22 +672,27 @@ public sealed class World
     /// <summary>One tick's step for a unit heading for `goal`, at most `most` long (before the ground's slope): straight
     /// if the way is clear, else along a found path, corner by corner. The path is found again when the goal has moved
     /// on or every 5 s.</summary>
-    FixVec2 Drive(Entity e, FixVec2 goal, Fix most)
+    FixVec2 Drive(Entity e, FixVec2 goal, Fix most, Fix goalRadius = default)
     {
         var aim = goal;
-        if (Nav.Clear(e.Pos, goal)) e.NavPath = null;
+        var spare = goalRadius + 2;   // (a building it's driving up to doesn't count as in the way)
+        if (_nav.ClearOfAll(e.Pos, goal, spare)) e.NavPath = null;
         else
         {
-            if (e.NavPath == null || e.NavPath.Count == 0 || (e.NavGoal - goal).LengthSq > Fix.FromInt(16) || Tick - e.NavTick > 50)
+            // Planned again when the goal has moved on, every 5 s, or when a building has gone up or come down since.
+            if (e.NavPath == null || e.NavPath.Count == 0 || (e.NavGoal - goal).LengthSq > Fix.FromInt(16) || Tick - e.NavTick > 50
+                || e.NavVersion != _nav.Version)
             {
                 e.NavPath = _nav.Path(e.Pos, goal);
                 e.NavGoal = goal;
                 e.NavTick = Tick;
+                e.NavVersion = _nav.Version;
             }
             if (e.NavPath != null && e.NavPath.Count > 0)
             {
                 // Past a corner (or one further on is already in view): on to the next.
-                while (e.NavPath.Count > 1 && ((e.NavPath[0] - e.Pos).LengthSq <= Fix.One || Nav.Clear(e.Pos, e.NavPath[1])))
+                while (e.NavPath.Count > 1 && ((e.NavPath[0] - e.Pos).LengthSq <= Fix.One
+                       || _nav.ClearOfAll(e.Pos, e.NavPath[1], e.NavPath.Count == 2 ? spare : Fix.Zero)))
                     e.NavPath.RemoveAt(0);
                 aim = e.NavPath[0];
                 most = Fix.Min(most, Fix.Max((aim - e.Pos).Length, s_minStep));
@@ -914,7 +921,7 @@ public sealed class World
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (s.IsUnit) _moves.Add((e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach))));
+                if (s.IsUnit) _moves.Add((e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero)));
             }
             else if (s.IsUnit)
             {
@@ -1046,6 +1053,9 @@ public sealed class World
             e.Dead = true;
             if (e.Kind == Kind.Hq) Winner = 1 - e.Owner;
         }
+        // Buildings gone (destroyed, or sold earlier this tick) no longer stand in anyone's way.
+        foreach (var e in Entities)
+            if (e.Dead && e.Stats.IsBuilding) _nav.RemoveBuilding(e.Pos, e.Stats.Radius);
         Entities.RemoveAll(e => e.Dead);
     }
 

@@ -192,6 +192,10 @@ static void Report(World world)
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
     // Units in the water (they never should be), and how many are in the middle.
     int shut = world.Entities.Count(e => e.Stats.IsUnit && !Nav.OpenAt(e.Pos));
+    // Units pressed up against a building that isn't their target (bumping into it rather than going round).
+    int bumping = world.Entities.Count(u => u.Stats.IsUnit && world.Entities.Any(b => b.Stats.IsBuilding && b.Owner == u.Owner
+        && (b.Pos - u.Pos).LengthSq < (b.Stats.Radius + u.Stats.Radius + Fix.Ratio(1, 4)) * (b.Stats.Radius + u.Stats.Radius + Fix.Ratio(1, 4))));
+    Console.WriteLine($"         units pressed against their own buildings: {bumping}");
     int crossing = world.Entities.Count(e => e.Stats.IsUnit && Fix.Abs(e.Pos.X) < 14);
     var zs = world.Entities.Where(e => e.Stats.IsUnit && Fix.Abs(e.Pos.X) < 14).Select(e => e.Pos.Z.ToInt()).ToList();
     Console.WriteLine($"         units in water: {shut}   in the middle: {crossing}" + (zs.Count > 0 ? $" (z {zs.Min()}..{zs.Max()})" : ""));

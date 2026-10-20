@@ -68,6 +68,8 @@ public partial class Main : Node3D
     readonly Dictionary<int, (int Target, int Until)> _aim = new();   // per shooter: what it last fired at, and until which tick it keeps facing it
     Projectiles _proj;
     Tracks _tracks;
+    Forest _forest;
+    bool _watchFelled, _felledFocused;
     bool _placeAtCentre;   // --placing: aim at the screen centre, not the mouse
     readonly Dictionary<(Kind, int), Mesh> _meshes = new();
     readonly Dictionary<(Kind, int), Material> _materials = new();
@@ -155,6 +157,7 @@ public partial class Main : Node3D
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
+            _watchFelled = args.Contains("--felled");      // close on the first tree knocked down, once it's down
             if (args.IndexOf("--look") is int li and >= 0 && li + 3 < args.Count)   // --look x z distance: the camera on a spot, fog lifted
             { _focus = new Vector3(float.Parse(args[li + 1]), 0, float.Parse(args[li + 2])); _distance = float.Parse(args[li + 3]); _noFog = true; UpdateFog(); _selected = -1; }
             // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
@@ -275,6 +278,7 @@ public partial class Main : Node3D
         if (_shotFrames < 0 || --_shotFrames > 0) return;
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
         GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{_shotName}.png");
+        GD.Print($"trees knocked down: {_forest?.Knocked}");
         GetTree().Quit();
     }
 
@@ -347,7 +351,7 @@ public partial class Main : Node3D
     {
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear();
-        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear();
+        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset();
         _session = session;
         _me = session.LocalPlayer;
         _acc = 0;
@@ -497,6 +501,9 @@ public partial class Main : Node3D
         waterMat.SetShaderParameter("fog", _fogTexture);
         waterMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
         AddChild(_terrain.BuildDecor(waterMat));
+        _forest = new Forest();
+        AddChild(_forest);
+        if (OS.GetEnvironment("NOTREES") != "1") _forest.Plant(_terrain.TreeSpots);   // (NOTREES=1: none, to measure their cost)
         // The metal deposits: an outcrop of ore on each, hidden while an extractor stands on it.
         for (int i = 0; i < World.Deposits.Length; i++)
         {
@@ -871,6 +878,10 @@ public partial class Main : Node3D
         _frameDt = (float)delta;
         if (!W.Paused && W.Started) _cogTurn += _frameDt;
         Draw((float)(_acc / TickLength));
+        if (_watchFelled && !_felledFocused && _forest.FirstKnocked is { } felled)
+        {
+            _felledFocused = true; _focus = felled; _distance = 26; _noFog = true; UpdateFog(); _selected = -1; _shotFrames = 120;
+        }
         TakeShotWhenReady();
     }
 
@@ -963,6 +974,8 @@ public partial class Main : Node3D
                     // Tread marks under each track (the scout's wheels leave thinner, fainter ones).
                     bool wheels = e.Kind == Kind.Scout;
                     _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
+                    // Trees in the way go over (the scout hovers, so it slips between them).
+                    if (e.Kind != Kind.Scout) _forest.Trample(pos, flat.Normalized(), r);
                 }
                 // Face where it's going; standing still, face what it's shooting at. It swings round, not snaps.
                 var face = _facing.TryGetValue(e.Id, out var f) ? f : TowardEnemy(e.Owner);
