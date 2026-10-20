@@ -6,7 +6,7 @@ namespace Battler.Sim;
 /// </summary>
 public abstract record Command(int Player);
 
-/// <summary>A factory at Pos that makes Makes (one of World.UnitKinds).</summary>
+/// <summary>A factory at Pos that makes Makes (one of World.FactoryKinds).</summary>
 public sealed record PlaceFactory(int Player, FixVec2 Pos, Kind Makes) : Command(Player);
 
 /// <summary>Starts one of the player's tactical pauses.</summary>
@@ -26,3 +26,15 @@ public sealed record PlaceOutpost(int Player, FixVec2 Pos) : Command(Player);
 
 /// <summary>Sells one of the player's factories or outposts for World.SellBackPercent of all it cost, upgrades included.</summary>
 public sealed record Sell(int Player, int BuildingId) : Command(Player);
+
+/// <summary>Builds an extractor on one of World.Deposits.</summary>
+public sealed record PlaceExtractor(int Player, int Deposit) : Command(Player);
+
+/// <summary>Pays for a scout; the HQ builds it.</summary>
+public sealed record QueueScout(int Player) : Command(Player);
+
+/// <summary>Whether the HQ keeps building scouts by itself.</summary>
+public sealed record SetAutoScout(int Player, bool On) : Command(Player);
+
+/// <summary>Sends some of the player's scouts to Pos (they spread out round it).</summary>
+public sealed record MoveUnits(int Player, int[] Ids, FixVec2 Pos) : Command(Player);

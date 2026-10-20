@@ -158,6 +158,51 @@ def outpost():
     k.finish("outpost", 34.0, UNITS)
 
 
+def extractor():
+    """A metal extractor sat on a deposit (the user, 2026-10-20: resources): a lattice drill derrick over the bore, a
+    squat ore hopper with a team-coloured lid, a pump housing with a stack, and pipes between them."""
+    k.begin(0.0)
+    pad(8, 8, 0.5)
+    for i in range(4):                                               # the derrick: four legs leaning in to a crown
+        a = (i % 2 * 2 - 1) * 4.5
+        x = (i // 2 * 2 - 1) * 4.5
+        tube_between((a, x, 0.5), (a * 0.25, x * 0.25, 20), 0.35, "dark", 4)
+    for h, w in ((6, 3.4), (11, 2.5), (16, 1.6)):                     # its cross braces
+        k.box(-w, w, -w, w, h, h + 0.4, "dark")
+    k.box(-1.6, 1.6, -1.6, 1.6, 19.5, 21, "hazard")                  # crown block
+    k.drum(0, 0, 0.5, 0.5, 19.5, "mid", 6)                           # the drill string
+    k.drum(0, 0, 2.2, 0.5, 2.2, "steel", 8)                          # the wellhead
+    k.studs(0, 0, 2.3, 1.6, 2.0, "ember", 8, 0.3)                    # hot ore coming up
+    k.box(3.5, 7.5, -7, -2.5, 0.5, 5.5, "steel")                     # ore hopper
+    k.box(3.7, 7.3, -6.8, -2.7, 5.5, 6.2, "paint")
+    k.box(-7.5, -3.5, 2.5, 7, 0.5, 4.5, "plate")                     # pump house
+    k.box(-7.3, -3.7, 2.7, 6.8, 4.5, 5.0, "paint")
+    stack(-6.5, 5.5, 5.0, 10.5, 0.6)
+    tube_between((0, 0, 1.6), (5.5, -4.5, 3.0), 0.4, "rust", 6)
+    tube_between((0, 0, 1.6), (-5.5, 4.5, 2.5), 0.4, "rust", 6)
+    eye(7.6, -4.7, 4.3, 0.45)
+    k.finish("extractor", 34.0, UNITS)
+
+
+def deposit():
+    """A metal deposit, nobody's: a broken outcrop of dark rock split by glowing ore, scrap half-buried round it.
+    No team paint: it belongs to whoever builds on it."""
+    k.begin(0.0)
+    rocks = [(0, 0, 4.5, 6.5), (6, 4, 3.2, 4.5), (-6, 5, 3.6, 5.5), (5, -6, 3.0, 4.0), (-5, -6, 3.8, 5.0),
+             (10, -1, 2.2, 2.6), (-10, 0, 2.6, 3.4), (1, 10, 2.4, 3.0), (0, -11, 2.2, 2.8)]
+    for i, (a, x, r, h) in enumerate(rocks):
+        k.drum(a, x, r, 0, h, "dark" if i % 2 else "mid", 5 + i % 3, r * 0.35)   # jagged tapering stones
+    for a, x, r, h in ((2.5, 1.5, 1.0, 7.5), (-2.5, 2.5, 0.9, 6.5), (3, -3, 0.8, 5.8), (-3.5, -3, 0.9, 6.2),
+                       (8, 2, 0.6, 4.5), (-8, 3, 0.7, 5.0)):
+        k.drum(a, x, r, 0, h, "ember", 4, 0.15)                     # the ore: glowing shards between the rocks
+    for a, x, rot in ((7, 8, 0), (-9, -7, 1), (11, 5, 2)):           # scrap: girders and a drum, half sunk
+        if rot == 2:
+            k.drum(a, x, 1.4, 0, 2.2, "rust", 8)
+        else:
+            k.box(a - 3, a + 3, x - 0.4, x + 0.4, 0, 0.8, "rust")
+    k.finish("deposit", 34.0, UNITS)
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_scout": factory_scout, "factory_artillery": factory_artillery,
- "hq": hq, "tower": tower, "outpost": outpost}[which]()
+ "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit}[which]()

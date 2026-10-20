@@ -12,9 +12,10 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: 1-3 pick a factory (scout, tank, artillery) and a click places it near your HQ (Esc or right click cancels);
-/// 4 deploys an outpost. Otherwise a click selects a unit or building to see its stats, upgrades and Sell (Esc clears).
-/// WASD/arrows pan, wheel zooms,
+/// Controls: 1 / 2 place a tank / artillery factory in a base ring with a free slot, 3 an outpost beside a scout, 4 an
+/// extractor on a deposit (Esc or right click cancels). Q builds a scout at the HQ; E picks all scouts; click, Shift-click
+/// or drag a box to pick scouts, right-click to send them. A click selects anything else to see its stats, upgrades
+/// and Sell (Esc clears). WASD/arrows pan, wheel zooms,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
@@ -27,6 +28,7 @@ public partial class Main : Node3D
     const double TickLength = 1.0 / World.TicksPerSecond;
 
     static readonly Color[] TeamColor = { new(0.25f, 0.55f, 1f), new(1f, 0.42f, 0.18f) };
+    static readonly Color Neutral = new(0.5f, 0.5f, 0.5f);   // (deposits: their model has no team paint)
 
     ISession _session;
     World W => _session.World;
@@ -49,7 +51,10 @@ public partial class Main : Node3D
     Label _stats;
     MeshInstance3D _selRing;
     readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
-    Button _sellButton;
+    Button _sellButton, _scoutButton, _autoButton;
+    readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
+    Vector2? _dragFrom;                       // where a left-button drag began, on screen
+    readonly List<Node3D> _depositViews = new();
     int _sellArmed = -1;          // the building a first click on Sell asked about
     ulong _sellArmedUntil;
     Button _rallyButton;
@@ -134,6 +139,8 @@ public partial class Main : Node3D
                 if (hot != null) { _focus = ToV3(hot.Pos); _distance = 24; _noFog = true; UpdateFog(); _selected = -1; }
             }
             if (args.Contains("--placing")) { _placing = Kind.Tank; _placeAtCentre = true; }   // a tank factory in hand, under the screen's centre
+            if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
+            { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
             _shotFrames = args.IndexOf("--frames") is int fi and >= 0 && fi + 1 < args.Count ? int.Parse(args[fi + 1]) : 10;
         }
@@ -163,6 +170,14 @@ public partial class Main : Node3D
         AddChild(post);
         post.Position = new Vector3(14, 0, 3);
         post.Basis = Basis.LookingAt(Vector3.Right, Vector3.Up);
+        // An extractor, and a deposit nobody mines yet.
+        var rig = UnitArt.Make("extractor", TeamColor[1]);
+        AddChild(rig);
+        rig.Position = new Vector3(14, 0, -5);
+        rig.Basis = Basis.LookingAt(Vector3.Left, Vector3.Up);
+        var ore = UnitArt.Make("deposit", Neutral);
+        AddChild(ore);
+        ore.Position = new Vector3(21, 0, -1);
         // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
         for (int i = 0; i < 3; i++)
         {
@@ -348,7 +363,30 @@ public partial class Main : Node3D
         }
         Circle(World.HqStart(_me), World.BuildRadius.ToFloat());
         foreach (var e in W.Entities)
-            if (e.Kind == Kind.Outpost && e.Owner == _me) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
+        {
+            if (e.Owner != _me) continue;
+            if (e.Kind == Kind.Outpost) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
+            if (e.Kind != Kind.Scout) continue;
+            // Placing an outpost or extractor: how near each scout it must go.
+            if (_placing is Kind.Outpost or Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
+            // A picked scout: a ring round it, and where it's going.
+            if (_scouts.Contains(e.Id))
+            {
+                Circle(e.Pos, 1.3f);
+                if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
+            }
+        }
+        void Line(FixVec2 from, FixVec2 to)
+        {
+            ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, _ringMat);
+            var a = ToV3(from); var b = ToV3(to);
+            for (int i = 0; i <= 16; i++)
+            {
+                var p = a.Lerp(b, i / 16f);
+                ring.SurfaceAddVertex(new Vector3(p.X, _terrain.HeightAt(p.X, p.Z) + 0.15f, p.Z));
+            }
+            ring.SurfaceEnd();
+        }
     }
 
     StandardMaterial3D _ringMat;
@@ -400,6 +438,15 @@ public partial class Main : Node3D
         waterMat.SetShaderParameter("fog", _fogTexture);
         waterMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
         AddChild(_terrain.BuildDecor(waterMat));
+        // The metal deposits: an outcrop of ore on each, hidden while an extractor stands on it.
+        for (int i = 0; i < World.Deposits.Length; i++)
+        {
+            var ore = UnitArt.Make("deposit", Neutral);
+            ore.Position = ToV3(World.Deposits[i]);
+            ore.Basis = new Basis(Vector3.Up, i * 1.7f).Scaled(Vector3.One * 1.4f);   // (bigger, to read from afar)
+            AddChild(ore);
+            _depositViews.Add(ore);
+        }
 
         _ring = new MeshInstance3D();
         AddChild(_ring);
@@ -474,6 +521,15 @@ public partial class Main : Node3D
             else { _sellArmed = _selected; _sellArmedUntil = Time.GetTicksMsec() + 3000; }
         };
         column.AddChild(_sellButton);
+        // The HQ builds scouts: one at a time on a button (or Q), or on its own with auto on.
+        _scoutButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _scoutButton.AddThemeFontSizeOverride("font_size", 17);
+        _scoutButton.Pressed += () => _session?.Issue(new QueueScout(_me));
+        column.AddChild(_scoutButton);
+        _autoButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, ToggleMode = true };
+        _autoButton.AddThemeFontSizeOverride("font_size", 17);
+        _autoButton.Toggled += on => { if (W.Find(_selected) is { Kind: Kind.Hq } hq && hq.AutoScout != on) _session?.Issue(new SetAutoScout(_me, on)); };
+        column.AddChild(_autoButton);
         _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
@@ -846,6 +902,8 @@ public partial class Main : Node3D
             if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
         }
 
+        for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
+            _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
@@ -855,7 +913,7 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, _ => 2f,
     };
 
@@ -887,14 +945,19 @@ public partial class Main : Node3D
         _overlay.QueueRedraw();
 
         if (selected == null) _selected = -1;   // (it died)
+        _scouts.RemoveWhere(id => W.Find(id) == null);
+        if (selected == null && _scouts.Count > 0) { _selected = _scouts.Min(); selected = W.Find(_selected); }
         _selRing.Visible = selected != null;
         _statsPanel.Visible = selected != null;
         DrawRallyLine(selected);
         if (selected == null) return;
         var ring = selected.Stats.Radius.ToFloat() * (selected.Stats.IsUnit ? 1.25f : 1.15f);
         _selRing.Scale = new Vector3(ring, 1, ring);
-        _stats.Text = Describe(selected);
+        _stats.Text = _scouts.Count > 1
+            ? $"{_scouts.Count} scouts picked\nRight-click the ground to send them\n(Shift-click adds or drops one; Esc lets go)"
+            : Describe(selected);
         ShowUpgrades(selected);
+        ShowScoutButtons(selected);
         _rallyButton.Visible = selected.Kind == Kind.Factory && selected.Owner == _me && selected.HasRally;
         ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
@@ -904,7 +967,7 @@ public partial class Main : Node3D
     static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
     // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
     static readonly string[] OutpostTrack = { "Reach", "Guns", "Armour" };
-    static readonly string[] OutpostEffect = { "+4 build reach and sight", "+25% gun damage", "+25% health" };
+    static readonly string[] OutpostEffect = { "+4 reach and sight, +1 factory slot", "+25% gun damage", "+25% health" };
 
     /// <summary>The Sell button, for my factories and outposts: 75% back of all it cost, upgrades included.</summary>
     void ShowSell(Entity e)
@@ -916,6 +979,20 @@ public partial class Main : Node3D
         _sellButton.Text = armed ? $"Click again to sell for {value}" : $"Sell for {value}  ({World.SellBackPercent}% of {World.SpentOn(e)} spent)";
         _sellButton.Modulate = armed ? new Color(1f, 0.6f, 0.5f) : Colors.White;
         _sellButton.Disabled = !W.Started || W.Winner >= 0;
+    }
+
+    /// <summary>My HQ's scout buttons: build one now, and auto-build.</summary>
+    void ShowScoutButtons(Entity e)
+    {
+        bool hq = e.Kind == Kind.Hq && e.Owner == _me;
+        _scoutButton.Visible = _autoButton.Visible = hq;
+        if (!hq) return;
+        int have = W.ScoutCount(_me);
+        _scoutButton.Text = $"Build a scout for {World.ScoutCost}  [Q]   ({have}/{World.MaxScouts}" + (e.ScoutQueue > 0 ? $", {e.ScoutQueue} coming)" : ")");
+        _scoutButton.Disabled = !W.CanQueueScout(_me, out _) || !W.Started || W.Winner >= 0;
+        _autoButton.SetPressedNoSignal(e.AutoScout);
+        _autoButton.Text = e.AutoScout ? "Auto-build scouts: ON  (keeps you at " + World.MaxScouts + ")" : "Auto-build scouts: off";
+        _autoButton.Disabled = W.Winner >= 0;
     }
 
     /// <summary>The three upgrade buttons, for one of my factories only.</summary>
@@ -947,7 +1024,10 @@ public partial class Main : Node3D
             $"{e.Kind}  ({(e.Owner == _me ? "yours" : "enemy")})",
             e.Kind switch
             {
-                Kind.Scout => "Fast and fragile: first to the fight.",
+                Kind.Scout => e.Owner == _me
+                    ? "Unarmed eyes. Finds deposits and sets up outposts:\nthey go down beside a scout. Right-click to send it."
+                    : "Unarmed eyes: it's scouting you.",
+                Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second.",
                 Kind.Tank => "Tough all-rounder.",
                 Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
                 Kind.Hq => "Lose it and you lose the match.",
@@ -969,6 +1049,10 @@ public partial class Main : Node3D
             lines.Add($"High ground  +{Mathf.Min(e.Height.ToFloat(), 5f):0.#} sight, more range firing down");
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
+        if (World.IsBase(e) && e.Owner == _me)
+            lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}" + (e.Kind == Kind.Outpost ? "  (Reach adds one)" : ""));
+        if (e.Kind == Kind.Hq && e.Owner == _me && e.ScoutQueue > 0)
+            lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory && e.Owner == _me)
             lines.Add(e.HasRally ? "New units go to the flag first, then attack" : "Units attack  (right-click the ground to set a rally point)");
@@ -996,26 +1080,40 @@ public partial class Main : Node3D
         _placeProblem = null;
         if (_ghost.Visible)
         {
-            var ok = _placing == Kind.Outpost
-                ? W.CanPlaceOutpost(_me, ToFix(_mouseGround.Value), out _placeProblem)
-                : W.CanPlaceFactory(_me, ToFix(_mouseGround.Value), _placing.Value, out _placeProblem);
+            var at = _mouseGround.Value;
+            bool ok;
+            if (_placing == Kind.Extractor)
+            {
+                // It snaps onto the deposit under the mouse.
+                _placeDeposit = DepositNear(at);
+                ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
+                if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
+            }
+            else ok = _placing == Kind.Outpost
+                ? W.CanPlaceOutpost(_me, ToFix(at), out _placeProblem)
+                : W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = _placing == Kind.Outpost ? "outpost" : "factory_" + ModelOf(_placing.Value);
+            var name = _placing is Kind.Outpost or Kind.Extractor ? ModelOf(_placing.Value) : "factory_" + ModelOf(_placing.Value);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
                 _placeModel = PlacementModel(name, ok ? new Color(0.3f, 1f, 0.45f) : new Color(1f, 0.25f, 0.2f));
                 _placeModelKey = (name, ok);
             }
-            _placeModel.Position = _mouseGround.Value;
+            _placeModel.Position = at;
         }
         if (_placeModel != null) _placeModel.Visible = _ghost.Visible;
         _ghost.Visible = false;   // (the plain box is only the fallback now)
 
         // Factories and outposts ordered during a pause, waiting for it to end.
-        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceOutpost)
-            .Select(c => c is PlaceFactory pf ? ("factory_" + ModelOf(pf.Makes), pf.Pos) : ("outpost", ((PlaceOutpost)c).Pos)).ToList();
+        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceOutpost or PlaceExtractor)
+            .Select(c => c switch
+            {
+                PlaceFactory pf => ("factory_" + ModelOf(pf.Makes), pf.Pos),
+                PlaceExtractor pe => ("extractor", World.Deposits[pe.Deposit]),
+                _ => ("outpost", ((PlaceOutpost)c).Pos),
+            }).ToList();
         if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
             foreach (var g in _heldGhosts) g.QueueFree();
@@ -1028,6 +1126,20 @@ public partial class Main : Node3D
 
     Node3D _placeModel;
     (string, bool) _placeModelKey;
+    int _placeDeposit = -1;   // placing an extractor: the deposit it would go on
+
+    /// <summary>The deposit nearest a point on the ground, if it's within a few paces; else -1.</summary>
+    static int DepositNear(Vector3 at)
+    {
+        int best = -1;
+        float bestD = 5f;
+        for (int i = 0; i < World.Deposits.Length; i++)
+        {
+            var d = new Vector2(World.Deposits[i].X.ToFloat() - at.X, World.Deposits[i].Z.ToFloat() - at.Z).Length();
+            if (d < bestD) { best = i; bestD = d; }
+        }
+        return best;
+    }
     readonly List<string> _heldGhostNames = new();
 
     /// <summary>A building's model as an unbuilt hologram, facing the enemy like the real thing.</summary>
@@ -1050,13 +1162,19 @@ public partial class Main : Node3D
             if (e.Stats.IsUnit && Shown(e)) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
-        var menu = string.Join("   ", World.UnitKinds.Select((k, i) =>
-            $"[{i + 1}] {k}")) + $"   [4] Outpost {World.OutpostCost}";
+        var menu = string.Join("   ", World.FactoryKinds.Select((k, i) => $"[{i + 1}] {k}")) + $" factory {World.FactoryCost}"
+                   + $"   [3] Outpost {World.OutpostCost}   [4] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts";
+        var placingWhat = _placing switch
+        {
+            Kind.Outpost => "an outpost (beside one of your scouts)",
+            Kind.Extractor => "an extractor (on a deposit in a ring or beside a scout)",
+            _ => _placing + " factory",
+        };
         var building = _placing == null
-            ? $"Build (factory {World.FactoryCost}): {menu}"
-            : $"Placing {(_placing == Kind.Outpost ? "an outpost (anywhere you can see)" : _placing + " factory")}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
+            ? menu
+            : $"Placing {placingWhat}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
-            $"Metal {me.Metal}\n" +
+            $"Metal {me.Metal}   +{W.IncomeOf(_me) * World.TicksPerSecond}/s\n" +
             building + "\n" +
             $"Units {myUnits} vs {theirUnits} seen\n" +
             $"HQ {myHq} vs {theirHq}\n" +
@@ -1072,7 +1190,7 @@ public partial class Main : Node3D
         else if (!W.Started)
             _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
                 ? "Waiting for the enemy to place their first factory..."
-                : "Place your first factory: press 1, 2 or 3, then click near your HQ\nThe battle starts once both sides have one";
+                : "Place your first factory: press 1 (tank) or 2 (artillery), then click near your HQ\nThe battle starts once both sides have one";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
@@ -1095,33 +1213,82 @@ public partial class Main : Node3D
             {
                 if (_placing != null)
                 {
-                    // One factory per build: placing it ends build mode. A bad spot keeps it, to try again.
+                    // One building per build: placing it ends build mode. A bad spot keeps it, to try again.
                     if (_placeProblem == null)
                     {
                         var at = ToFix(_mouseGround.Value);
-                        _session.Issue(_placing == Kind.Outpost ? new PlaceOutpost(_me, at) : new PlaceFactory(_me, at, _placing.Value));
+                        _session.Issue(_placing switch
+                        {
+                            Kind.Outpost => new PlaceOutpost(_me, at),
+                            Kind.Extractor => new PlaceExtractor(_me, _placeDeposit),
+                            _ => new PlaceFactory(_me, at, _placing.Value),
+                        });
                         _placing = null;
                     }
                 }
-                else _selected = EntityAt(_mouseGround.Value)?.Id ?? -1;
+                else _dragFrom = mb.Position;   // a click or a box: decided when the button comes up
             }
-            else if (mb.ButtonIndex == MouseButton.Right)
+            else if (mb.ButtonIndex == MouseButton.Right && _mouseGround.HasValue)
             {
-                // Cancels build mode; otherwise, with one of my factories selected, sets where its units rally.
+                // Cancels build mode; sends the picked scouts; or, with one of my factories selected, sets its rally.
                 if (_placing != null) _placing = null;
+                else if (_scouts.Count > 0 && W.Winner < 0)
+                    _session.Issue(new MoveUnits(_me, _scouts.OrderBy(id => id).ToArray(), ToFix(_mouseGround.Value)));
                 else if (W.Find(_selected) is { Kind: Kind.Factory } f && f.Owner == _me && W.Winner < 0)
                     _session.Issue(new SetRally(_me, f.Id, false, ToFix(_mouseGround.Value)));
             }
         }
+        else if (ev is InputEventMouseButton up && !up.Pressed && up.ButtonIndex == MouseButton.Left && _dragFrom is { } from)
+        {
+            _dragFrom = null;
+            _overlay.Box = null;
+            bool add = up.ShiftPressed;
+            if (from.DistanceTo(up.Position) > 8)
+            {
+                // A box: picks my scouts inside it.
+                var box = new Rect2(from, Vector2.Zero).Expand(up.Position);
+                if (!add) _scouts.Clear();
+                foreach (var e in W.Entities)
+                    if (e.Kind == Kind.Scout && e.Owner == _me && !_camera.IsPositionBehind(ToV3(e.Pos)) && box.HasPoint(_camera.UnprojectPosition(ToV3(e.Pos))))
+                        _scouts.Add(e.Id);
+                _selected = _scouts.Count > 0 ? _scouts.Min() : -1;
+            }
+            else if (_mouseGround.HasValue)
+            {
+                var hit = EntityAt(_mouseGround.Value);
+                if (hit is { Kind: Kind.Scout } s && s.Owner == _me)
+                {
+                    // Shift-click adds or drops a scout; a plain click picks just that one.
+                    if (!add) _scouts.Clear();
+                    if (!_scouts.Remove(s.Id)) _scouts.Add(s.Id);
+                    _selected = _scouts.Count > 0 ? (_scouts.Contains(s.Id) ? s.Id : _scouts.Min()) : -1;
+                }
+                else if (!add)
+                {
+                    _scouts.Clear();
+                    _selected = hit?.Id ?? -1;
+                }
+            }
+        }
+        else if (ev is InputEventMouseMotion motion && _dragFrom is { } start)
+            _overlay.Box = start.DistanceTo(motion.Position) > 8 ? new Rect2(start, Vector2.Zero).Expand(motion.Position) : null;
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.UnitKinds.Length && W.Winner < 0)
-                _placing = World.UnitKinds[k.Keycode - Key.Key1];
-            else if (k.Keycode == Key.Key4 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
+            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKinds.Length && W.Winner < 0)
+                _placing = World.FactoryKinds[k.Keycode - Key.Key1];
+            else if (k.Keycode == Key.Key3 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
+            else if (k.Keycode == Key.Key4 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
+            else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started) _session.Issue(new QueueScout(_me));
+            else if (k.Keycode == Key.E)   // pick all my scouts
+            {
+                _scouts.Clear();
+                foreach (var e in W.Entities) if (e.Kind == Kind.Scout && e.Owner == _me) _scouts.Add(e.Id);
+                _selected = _scouts.Count > 0 ? _scouts.Min() : -1;
+            }
             else if (k.Keycode == Key.Escape)
             {
                 if (_placing != null) _placing = null;
-                else _selected = -1;
+                else { _selected = -1; _scouts.Clear(); }
             }
             else if (k.Keycode == Key.P) _session.Issue(new Pause(_me));
             else if (k.Keycode == Key.Enter) _session.Issue(new Resume(_me));

@@ -124,13 +124,15 @@ static int MaxRank(World w) { int r = 0; foreach (var e in w.Entities) r = Math.
 
 static void Report(World world)
 {
-    int m0 = 0, m1 = 0, f0 = 0, f1 = 0, o0 = 0, o1 = 0;
+    int m0 = 0, m1 = 0, f0 = 0, f1 = 0, o0 = 0, o1 = 0, x0 = 0, x1 = 0, s0 = 0, s1 = 0;
     foreach (var e in world.Entities)
     {
         if (e.Stats.IsUnit) { if (e.Owner == 0) m0++; else m1++; }
         if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
         if (e.Kind == Kind.Outpost) { if (e.Owner == 0) o0++; else o1++; }
+        if (e.Kind == Kind.Extractor) { if (e.Owner == 0) x0++; else x1++; }
+        if (e.Kind == Kind.Scout) { if (e.Owner == 0) s0++; else s1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  outposts {o0}v{o1}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
+    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  outposts {o0}v{o1}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
 }

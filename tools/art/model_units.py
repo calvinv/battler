@@ -104,9 +104,9 @@ def scout():
     k.box(1.4, 3.4, -1.2, 1.2, 3.8, 5.2, "dark")
     k.tube(3.4, 4.0, 0, 4.5, 1.0, "black", 10)
     k.tube(4.0, 4.15, 0, 4.5, 0.78, "ember", 10)
-    # a light machine gun beside it
-    k.box(0.0, 1.2, 1.3, 2.0, 3.8, 4.6, "dark")
-    k.tube(1.2, 4.6, 1.65, 4.25, 0.16, "mid", 6)
+    # a radio set beside it, with a whip aerial: it has no gun (it finds things; others fight)
+    k.box(-0.2, 1.4, 1.2, 2.0, 3.8, 4.8, "dark")
+    k.drum(0.6, 1.6, 0.08, 4.8, 8.0, "black", 4)
     # the tall sensor mast at the back: a pole, a crossbar, a dish and a lamp at the top
     k.box(-4.6, 0.8, -1.8, 1.8, 3.8, 4.1, "paint")                                    # team colour on the roof
     k.box(-4.6, -2.6, -1.6, 1.6, 3.8, 4.4, "plate")

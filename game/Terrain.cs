@@ -94,6 +94,7 @@ public sealed class Terrain : System.IDisposable
             foreach (var b in Bases) if (p.DistanceTo(b) < 31) return false;
             if (Mathf.Abs(p.Y) < 13 && Mathf.Abs(p.X) < _halfX) return false;   // the lane the armies use
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + room) return false;
+            foreach (var d in World.Deposits) if (p.DistanceTo(new Vector2(d.X.ToFloat(), d.Z.ToFloat())) < 5 + room) return false;   // room to mine
             return Mathf.Abs(p.X) < _halfX + Margin - 2 && Mathf.Abs(p.Y) < _halfZ + Margin - 2;
         }
         Transform3D Stand(Vector2 p, float scale, float lean = 0f)

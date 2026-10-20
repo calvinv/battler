@@ -11,6 +11,8 @@ public partial class Overlay : Control
     /// <summary>Upgrade and veterancy marks over a unit or factory: a sword per damage level, a shield per armour
     /// level (shown as pips under each), gold chevrons per veterancy rank.</summary>
     public readonly List<(Vector2 Centre, int Sword, int Shield, int Rank)> Badges = new();
+    /// <summary>The box being dragged to pick scouts, if any.</summary>
+    public Rect2? Box;
 
     static readonly Color Steel = new(0.85f, 0.88f, 0.92f), Gold = new(1f, 0.8f, 0.25f), Ink = new(0f, 0f, 0f, 0.9f);
 
@@ -35,6 +37,11 @@ public partial class Overlay : Control
             DrawBadges(Vector2.Zero, sword, shield, rank);
         }
         DrawSetTransform(Vector2.Zero, 0, Vector2.One);
+        if (Box is { } box)
+        {
+            DrawRect(box, new Color(1, 1, 1, 0.08f));
+            DrawRect(box, new Color(1, 1, 1, 0.8f), false, 1.5f);
+        }
     }
 
     void DrawBadges(Vector2 c, int sword, int shield, int rank)

@@ -64,6 +64,13 @@ public static class Wire
             case SetRally sr: w.Write((byte)5); w.Write((byte)sr.Player); w.Write(sr.FactoryId); w.Write(sr.Clear); w.Write(sr.Pos.X.Raw); w.Write(sr.Pos.Z.Raw); break;
             case PlaceOutpost po: w.Write((byte)6); w.Write((byte)po.Player); w.Write(po.Pos.X.Raw); w.Write(po.Pos.Z.Raw); break;
             case Sell se: w.Write((byte)7); w.Write((byte)se.Player); w.Write(se.BuildingId); break;
+            case PlaceExtractor pe: w.Write((byte)8); w.Write((byte)pe.Player); w.Write(pe.Deposit); break;
+            case QueueScout: w.Write((byte)9); w.Write((byte)c.Player); break;
+            case SetAutoScout sa: w.Write((byte)10); w.Write((byte)sa.Player); w.Write(sa.On); break;
+            case MoveUnits mu:
+                w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
+                w.Write((ushort)mu.Ids.Length); foreach (var id in mu.Ids) w.Write(id);
+                break;
             default: throw new InvalidDataException($"no wire format for {c.GetType().Name}");
         }
     }
@@ -81,7 +88,19 @@ public static class Wire
             5 => new SetRally(player, r.ReadInt32(), r.ReadBoolean(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
             6 => new PlaceOutpost(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
             7 => new Sell(player, r.ReadInt32()),
+            8 => new PlaceExtractor(player, r.ReadInt32()),
+            9 => new QueueScout(player),
+            10 => new SetAutoScout(player, r.ReadBoolean()),
+            11 => ReadMove(player, r),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
+    }
+
+    static MoveUnits ReadMove(int player, BinaryReader r)
+    {
+        var pos = new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()));
+        var ids = new int[r.ReadUInt16()];
+        for (int i = 0; i < ids.Length; i++) ids[i] = r.ReadInt32();
+        return new MoveUnits(player, ids, pos);
     }
 }

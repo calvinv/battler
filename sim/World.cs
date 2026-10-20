@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -49,6 +49,10 @@ public sealed class Entity
     public FixVec2 Waypoint;
     public bool HasRally;  // a factory: whether its units gather at Rally instead of attacking
     public FixVec2 Rally;
+    public int BaseId;     // a factory: the HQ or outpost whose slot it takes
+    public int Deposit = -1;   // an extractor: which of World.Deposits it sits on
+    public int ScoutQueue;     // the HQ: scouts paid for and waiting to be built (Timer counts down the current one)
+    public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -79,9 +83,21 @@ public sealed class World
     public const int PauseTicks = 30 * TicksPerSecond;
     public const int PausesPerPlayer = 3;
     public const int StartMetal = 600;
-    public const int IncomePerTick = 2;
+    // Resources (the user, 2026-10-20): a trickle of metal comes in regardless; the rest is mined from deposits by
+    // extractors, so expanding is how a side gets rich and the middle is worth fighting over.
+    public const int IncomePerTick = 1;
+    public const int ExtractorIncome = 1;   // per extractor, per tick
+    public const int ExtractorCost = 300;
+    public static readonly Fix DepositRadius = 3;   // nothing else can be built this near a deposit's centre
     public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
     public const int OutpostCost = 600;
+    // Building limits (the user, 2026-10-20: "building new factories is so much more powerful than upgrading"):
+    // each base has so many factory slots; more factories means expanding, and upgrades are how a base grows.
+    public const int HqSlots = 3, OutpostSlots = 2;   // an outpost gets one more per Reach level
+    // Scouts (the user, 2026-10-20): built at the HQ, cheap, unarmed, and the one unit a player steers. They find
+    // deposits and set up new bases: outposts go down beside one, and extractors beside one (or in a build ring).
+    public const int ScoutCost = 100, MaxScouts = 6;
+    public static readonly Fix DeployReach = 8;   // how near a scout must be to where an outpost or extractor goes
     static readonly Fix OutpostReach = 15, OutpostReachPerLevel = 4;   // where factories can go round it; its "Production" track is reach
     static readonly Fix KeepClearOfEnemy = 15;   // an outpost can't go this near an enemy building
 
@@ -102,7 +118,24 @@ public sealed class World
     public static readonly Ground Ground = new(90, 50, new[] { HqStart(0), HqStart(1) });
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
-    public static readonly Kind[] UnitKinds = { Kind.Scout, Kind.Tank, Kind.Artillery };
+    /// <summary>What factories can make (scouts come from the HQ).</summary>
+    public static readonly Kind[] FactoryKinds = { Kind.Tank, Kind.Artillery };
+
+    /// <summary>
+    /// The metal deposits, the same every match and mirrored left to right: two inside each HQ's build ring, two out
+    /// on each flank, one forward on each side, and two in the middle for both to fight over. Clear of the ponds.
+    /// </summary>
+    public static readonly FixVec2[] Deposits = MirroredDeposits(
+        new FixVec2[] { new(-66, 17), new(-66, -17), new(-44, 40), new(-50, -38), new(-28, 12) },
+        new FixVec2[] { new(0, 22), new(0, -24) });
+
+    static FixVec2[] MirroredDeposits(FixVec2[] west, FixVec2[] middle)
+    {
+        var all = new List<FixVec2>();
+        foreach (var d in west) { all.Add(d); all.Add(new FixVec2(-d.X, d.Z)); }
+        all.AddRange(middle);
+        return all.ToArray();
+    }
 
     // Roles: the scout is fast and fragile; the tank is tough, the all-rounder; artillery outranges everything and
     // hits an area, but can't fire at anything close, so it's helpless once reached.
@@ -112,9 +145,8 @@ public sealed class World
         new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 15, Reload = 10 },
         // Factory
         new() { MaxHp = 800, Radius = 2, Vision = 8 },
-        // Scout
-        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Range = 6, Aggro = 18, Vision = 24,
-                Damage = 5, Reload = 5, BuildTicks = 6 * TicksPerSecond },
+        // Scout: unarmed (Reload 0), quick, sees far; built at the HQ and moved by its player.
+        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Vision = 24, BuildTicks = 5 * TicksPerSecond },
         // Tank
         new() { MaxHp = 240, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
                 Damage = 24, Reload = 15, BuildTicks = 12 * TicksPerSecond },
@@ -127,6 +159,8 @@ public sealed class World
         // Outpost: a sub-base deployed out in the field (the user, 2026-10-19: "bases you can deploy further out as
         // sub bases, those can be upgraded"): factories can be built near it; a light gun; upgrades reach, guns, armour.
         new() { MaxHp = 1500, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 8, Reload = 10 },
+        // Extractor: mines a deposit. Unarmed, so it needs looking after.
+        new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8 },
     };
 
     public int Tick;
@@ -223,10 +257,10 @@ public sealed class World
 
     public const int SellBackPercent = 75;
 
-    /// <summary>Everything paid for a factory or outpost: the building and every upgrade level bought.</summary>
+    /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind == Kind.Outpost ? OutpostCost : FactoryCost;
+        int spent = b.Kind switch { Kind.Outpost => OutpostCost, Kind.Extractor => ExtractorCost, _ => FactoryCost };
         foreach (var level in b.Levels)
             for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
@@ -238,7 +272,7 @@ public sealed class World
     {
         var b = Find(id);
         why = null;
-        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost) || b.Owner != player) { why = "Not yours to sell"; return false; }
+        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost or Kind.Extractor) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -251,44 +285,94 @@ public sealed class World
     static Fix VisionOf(Entity e) =>
         e.Kind == Kind.Outpost ? e.Stats.Vision + OutpostReachPerLevel * e.Level(Upgrade.Production) : e.Stats.Vision;
 
-    /// <summary>Whether a player may build a factory here: near their HQ, or near one of their outposts.</summary>
+    // ---- bases and their factory slots ---------------------------------------------------------------------
+
+    /// <summary>A base: the HQ or an outpost. Factories go in its ring, up to its slots.</summary>
+    public static bool IsBase(Entity e) => e.Kind is Kind.Hq or Kind.Outpost;
+
+    public static Fix BaseRadius(Entity b) => b.Kind == Kind.Hq ? BuildRadius : OutpostRadius(b);
+
+    /// <summary>How many factories a base holds: the HQ 3, an outpost 2 and one more per Reach level.</summary>
+    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqSlots : OutpostSlots + b.Level(Upgrade.Production);
+
+    /// <summary>How many of a base's slots are taken.</summary>
+    public int SlotsUsed(Entity b)
+    {
+        int n = 0;
+        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Factory && e.BaseId == b.Id) n++;
+        return n;
+    }
+
+    /// <summary>The player's base a factory here would belong to: the first (HQ, then outposts oldest first) whose
+    /// ring holds the spot and which has a slot free. `inRing` says whether any of their rings holds it at all.</summary>
+    public Entity BaseFor(int player, FixVec2 pos, out bool inRing)
+    {
+        inRing = false;
+        foreach (var b in Entities)
+        {
+            if (b.Dead || b.Owner != player || !IsBase(b)) continue;
+            var r = BaseRadius(b);
+            if ((pos - b.Pos).LengthSq > r * r) continue;
+            inRing = true;
+            if (SlotsUsed(b) < SlotsOf(b)) return b;
+        }
+        return null;
+    }
+
+    /// <summary>Whether a player may build here at all: inside one of their bases' rings.</summary>
     public bool InBuildRange(int player, FixVec2 pos)
     {
-        if ((pos - Players[player].HqPos).LengthSq <= BuildRadius * BuildRadius) return true;
+        BaseFor(player, pos, out bool inRing);
+        return inRing;
+    }
+
+    /// <summary>Whether one of the player's scouts is near enough to `pos` to set something up there.</summary>
+    public bool ScoutNear(int player, FixVec2 pos)
+    {
         foreach (var e in Entities)
         {
-            if (e.Dead || e.Kind != Kind.Outpost || e.Owner != player) continue;
-            var r = OutpostRadius(e);
-            if ((pos - e.Pos).LengthSq <= r * r) return true;
+            if (e.Dead || e.Kind != Kind.Scout || e.Owner != player) continue;
+            var r = DeployReach + e.Stats.Radius;
+            if ((e.Pos - pos).LengthSq <= r * r) return true;
         }
         return false;
     }
 
-    /// <summary>An outpost goes anywhere on the map its side can see now, clear of other buildings and not right up
-    /// against the enemy's.</summary>
+    /// <summary>Something new of radius `r` at `pos` overlaps a building, or sits on a deposit.</summary>
+    bool Blocked(FixVec2 pos, Fix r)
+    {
+        foreach (var e in Entities)
+        {
+            if (e.Dead || !e.Stats.IsBuilding) continue;
+            var gap = e.Stats.Radius + r + 1;
+            if ((e.Pos - pos).LengthSq < gap * gap) return true;
+        }
+        foreach (var d in Deposits)
+        {
+            var gap = DepositRadius + r;
+            if ((d - pos).LengthSq < gap * gap) return true;
+        }
+        return false;
+    }
+
+    static bool OffMap(FixVec2 pos, Fix r) => Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r;
+
+    /// <summary>An outpost (a new base) goes down beside one of the player's scouts, clear of other buildings and
+    /// deposits and not right up against the enemy's buildings.</summary>
     public bool CanPlaceOutpost(int player, FixVec2 pos, out string why)
     {
         var r = StatsFor[(int)Kind.Outpost].Radius;
         why = null;
         if (Players[player].Metal < OutpostCost) { why = "Not enough metal"; return false; }
-        if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
-        bool seen = false;
+        if (OffMap(pos, r)) { why = "Off the map"; return false; }
+        if (!ScoutNear(player, pos)) { why = "Needs one of your scouts beside it"; return false; }
+        if (Blocked(pos, r)) { why = "Blocked"; return false; }
         foreach (var e in Entities)
         {
-            if (e.Dead) continue;
-            var d = (e.Pos - pos).LengthSq;
-            if (e.Owner == player)
-            {
-                var sight = VisionOf(e) + HighGround(e) + e.Stats.Radius;
-                if (d <= sight * sight) seen = true;
-            }
-            if (!e.Stats.IsBuilding) continue;
-            var gap = e.Stats.Radius + r + 1;
-            if (d < gap * gap) { why = "Blocked"; return false; }
+            if (e.Dead || !e.Stats.IsBuilding || e.Owner == player) continue;
             var clear = KeepClearOfEnemy + e.Stats.Radius;
-            if (e.Owner != player && d < clear * clear) { why = "Too near the enemy"; return false; }
+            if ((e.Pos - pos).LengthSq < clear * clear) { why = "Too near the enemy"; return false; }
         }
-        if (!seen) { why = "You can't see there"; return false; }
         return true;
     }
 
@@ -297,18 +381,75 @@ public sealed class World
         var p = Players[player];
         var r = StatsFor[(int)Kind.Factory].Radius;
         why = null;
-        if (System.Array.IndexOf(UnitKinds, makes) < 0) { why = "Not a unit"; return false; }
+        if (System.Array.IndexOf(FactoryKinds, makes) < 0) { why = "No factory makes that"; return false; }
         if (p.Metal < FactoryCost) { why = "Not enough metal"; return false; }
-        if (Fix.Abs(pos.X) > MapHalfX - r || Fix.Abs(pos.Z) > MapHalfZ - r) { why = "Off the map"; return false; }
-        if (!InBuildRange(player, pos)) { why = "Too far from your HQ or an outpost"; return false; }
-        foreach (var e in Entities)
+        if (OffMap(pos, r)) { why = "Off the map"; return false; }
+        if (BaseFor(player, pos, out bool inRing) == null)
         {
-            if (e.Dead || !e.Stats.IsBuilding) continue;
-            var gap = e.Stats.Radius + r + 1;
-            if ((e.Pos - pos).LengthSq < gap * gap) { why = "Blocked"; return false; }
+            why = inRing ? "No free factory slot here (upgrade an outpost's Reach, or build another)" : "Too far from your HQ or an outpost";
+            return false;
         }
+        if (Blocked(pos, r)) { why = "Blocked"; return false; }
         return true;
     }
+
+    // ---- resources: extractors on deposits -------------------------------------------------------------------
+
+    /// <summary>The live extractor on a deposit, if any.</summary>
+    public Entity ExtractorOn(int deposit) => Entities.Find(e => !e.Dead && e.Kind == Kind.Extractor && e.Deposit == deposit);
+
+    /// <summary>The deposit at (or nearest within its radius of) `pos`, or -1.</summary>
+    public static int DepositAt(FixVec2 pos)
+    {
+        for (int i = 0; i < Deposits.Length; i++)
+            if ((Deposits[i] - pos).LengthSq <= DepositRadius * DepositRadius) return i;
+        return -1;
+    }
+
+    /// <summary>An extractor goes on a free deposit inside one of the player's build rings, or beside one of their scouts.</summary>
+    public bool CanPlaceExtractor(int player, int deposit, out string why)
+    {
+        why = null;
+        if (deposit < 0 || deposit >= Deposits.Length) { why = "Put it on a metal deposit"; return false; }
+        if (Players[player].Metal < ExtractorCost) { why = "Not enough metal"; return false; }
+        if (ExtractorOn(deposit) != null) { why = "Already mined"; return false; }
+        var at = Deposits[deposit];
+        if (!InBuildRange(player, at) && !ScoutNear(player, at)) { why = "Needs one of your scouts beside it (or a build ring)"; return false; }
+        return true;
+    }
+
+    /// <summary>Metal a player makes each tick: the trickle and their extractors.</summary>
+    public int IncomeOf(int player)
+    {
+        int n = 0;
+        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player) n++;
+        return IncomePerTick + ExtractorIncome * n;
+    }
+
+    // ---- scouts --------------------------------------------------------------------------------------------
+
+    /// <summary>Scouts a player has out, and paid for at the HQ.</summary>
+    public int ScoutCount(int player)
+    {
+        int n = 0;
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Owner != player) continue;
+            if (e.Kind == Kind.Scout) n++;
+            if (e.Kind == Kind.Hq) n += e.ScoutQueue;
+        }
+        return n;
+    }
+
+    public bool CanQueueScout(int player, out string why)
+    {
+        why = null;
+        if (Players[player].Metal < ScoutCost) { why = "Not enough metal"; return false; }
+        if (ScoutCount(player) >= MaxScouts) { why = $"At most {MaxScouts} scouts"; return false; }
+        return true;
+    }
+
+    Entity HqOf(int player) => Entities.Find(e => !e.Dead && e.Kind == Kind.Hq && e.Owner == player);
 
     /// <summary>Advances one tick. <paramref name="commands"/> must be in the same order on every machine.</summary>
     public void Step(IReadOnlyList<Command> commands)
@@ -322,7 +463,7 @@ public sealed class World
             // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
             // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
             foreach (var c in commands)
-                if (c is PlaceFactory or UpgradeFactory or SetRally) Apply(c);
+                if (c is PlaceFactory or UpgradeFactory or SetRally or SetAutoScout) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
             UpdateVision();
             return;
@@ -337,7 +478,9 @@ public sealed class World
             return;
         }
 
-        foreach (var p in Players) p.Metal += IncomePerTick;
+        var income = new int[Players.Length];
+        for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
+        for (int i = 0; i < Players.Length; i++) Players[i].Metal += income[i];
         Produce();
         Fight();
         Separate();
@@ -456,7 +599,32 @@ public sealed class World
                 break;
             case PlaceFactory pf when CanPlaceFactory(pf.Player, pf.Pos, pf.Makes, out _):
                 p.Metal -= FactoryCost;
-                Spawn(Kind.Factory, pf.Player, pf.Pos, pf.Makes);
+                var home = BaseFor(pf.Player, pf.Pos, out _);
+                Spawn(Kind.Factory, pf.Player, pf.Pos, pf.Makes).BaseId = home.Id;
+                break;
+            case PlaceExtractor pe when CanPlaceExtractor(pe.Player, pe.Deposit, out _):
+                p.Metal -= ExtractorCost;
+                Spawn(Kind.Extractor, pe.Player, Deposits[pe.Deposit]).Deposit = pe.Deposit;
+                break;
+            case QueueScout when CanQueueScout(c.Player, out _) && HqOf(c.Player) is { } hq:
+                p.Metal -= ScoutCost;
+                if (hq.ScoutQueue++ == 0) hq.Timer = StatsFor[(int)Kind.Scout].BuildTicks;
+                break;
+            case SetAutoScout sa when HqOf(sa.Player) is { } autoHq:
+                autoHq.AutoScout = sa.On;
+                break;
+            case MoveUnits mu:
+                // Each scout gets its own spot round the point, so a group doesn't jostle for one place.
+                int slot = 0;
+                var given = new HashSet<int>();
+                foreach (var id in mu.Ids)
+                {
+                    var u = Find(id);
+                    if (u == null || u.Kind != Kind.Scout || u.Owner != mu.Player || !given.Add(id)) continue;
+                    var spot = mu.Pos + SpreadOffsets[slot++ % SpreadOffsets.Length];
+                    u.HasWaypoint = true;
+                    u.Waypoint = new FixVec2(Clamp(spot.X, MapHalfX - 1), Clamp(spot.Z, MapHalfZ - 1));
+                }
                 break;
             case UpgradeFactory uf when CanUpgrade(uf.Player, uf.FactoryId, uf.Which, out _):
                 var f = Find(uf.FactoryId);
@@ -487,6 +655,11 @@ public sealed class World
         }
     }
 
+    static readonly FixVec2[] SpreadOffsets =
+    {
+        new(0, 0), new(2, 0), new(-2, 0), new(0, 2), new(0, -2), new(2, 2), new(-2, -2), new(2, -2), new(-2, 2),
+    };
+
     void EndPause()
     {
         PausedBy = -1;
@@ -502,6 +675,7 @@ public sealed class World
         for (int i = 0; i < count; i++)
         {
             var f = Entities[i];
+            if (f.Kind == Kind.Hq && !f.Dead) { BuildScouts(f); continue; }
             if (f.Dead || f.Kind != Kind.Factory || --f.Timer > 0) continue;
             f.Timer = BuildTicksOf(f);
             // Roll out on the side facing the enemy, with a little spread so they don't stack.
@@ -510,6 +684,27 @@ public sealed class World
                         + new FixVec2(0, Fix.Ratio(Rng.Range(-10, 10), 10));
             Spawn(f.Makes, f.Owner, spawn, from: f);
         }
+    }
+
+    /// <summary>The HQ works through its paid-for scouts, one at a time; on auto it pays for the next itself.</summary>
+    void BuildScouts(Entity hq)
+    {
+        var s = StatsFor[(int)Kind.Scout];
+        if (hq.ScoutQueue == 0 && hq.AutoScout && CanQueueScout(hq.Owner, out _))
+        {
+            Players[hq.Owner].Metal -= ScoutCost;
+            hq.ScoutQueue = 1;
+            hq.Timer = s.BuildTicks;
+        }
+        if (hq.ScoutQueue == 0 || --hq.Timer > 0) return;
+        hq.ScoutQueue--;
+        hq.Timer = s.BuildTicks;
+        // Out of the front door, then on a few paces to wait for orders.
+        var ahead = (Players[1 - hq.Owner].HqPos - hq.Pos).WithLength(hq.Stats.Radius + s.Radius + 1);
+        var across = new FixVec2(0, Fix.Ratio(Rng.Range(-30, 30), 10));
+        var scout = Spawn(Kind.Scout, hq.Owner, hq.Pos + ahead + across);
+        scout.HasWaypoint = true;
+        scout.Waypoint = hq.Pos + ahead * 3 + across * 2;
     }
 
     /// <summary>
@@ -525,7 +720,15 @@ public sealed class World
             if (e.Dead || e.Hp <= 0) continue;
             var s = e.Stats;
             if (e.Cooldown > 0) e.Cooldown--;
-            if (s.Reload == 0) continue;
+            if (s.Reload == 0)
+            {
+                // Unarmed (scouts): only go where they're sent, and stop there.
+                if (!s.IsUnit || !e.HasWaypoint) continue;
+                var to = e.Waypoint - e.Pos;
+                if (to.LengthSq <= Fix.Ratio(1, 2) * Fix.Ratio(1, 2)) { e.HasWaypoint = false; continue; }
+                _moves.Add((e, OverGround(e, to.WithLength(Fix.Min(s.Speed, to.Length)))));
+                continue;
+            }
 
             var target = NearestEnemy(e, s.Aggro + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
@@ -661,7 +864,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0);
             foreach (var l in e.Levels) Mix(l);
         }
         return h;
