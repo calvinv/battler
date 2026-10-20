@@ -111,6 +111,12 @@ def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
                             clamp_overlap=True, profile=0.5)
         bm.to_mesh(ob.data)
         bm.free()
+    # The baked shading only looks a short way round each spot: creases and corners darken, but a gun barrel a
+    # metre above the hull no longer lays a long dark stripe on it.
+    import bpy
+    if bpy.context.scene.world is None:
+        bpy.context.scene.world = bpy.data.worlds.new("bake_world")
+    bpy.context.scene.world.light_settings.distance = 0.9
     tris = sum(len(p.vertices) - 2 for ob in k.pieces for p in ob.data.polygons)
     print("%s: %d triangles" % (name, tris))
     k.finish(name, span, folder)
@@ -170,3 +176,169 @@ def pod_detail(side, inner, outer, a0, a1, h):
         a = a0 + (a1 - a0) * i / 4
         x0, x1 = sorted((xo, xo + side * 0.05))
         k.box(a - 0.04, a + 0.04, x0, x1, h * 0.45, h * 0.98, "black")
+
+
+# ---- texture detail (the user, 2026-10-20: "the units should be basic shapes but have detailed textures, boxy is
+# fine"; "games like mechabellum and supreme commander is the look we're after, modern futuristic but grounded") ----
+
+# Tiny stencil digits, 3 wide x 5 high, for the serial numbers on the flanks.
+_DIGITS = {
+    "0": "111101101101111", "1": "010110010010111", "2": "111001111100111", "3": "111001111001111",
+    "4": "101101111001001", "5": "111100111001111", "6": "111100111101111", "7": "111001001010010",
+    "8": "111101111101111", "9": "111101111001111", "-": "000000111000000",
+}
+
+
+def _hash(*v):
+    """A repeatable 0..1 from whole numbers."""
+    h = 2166136261
+    for x in v:
+        h = ((h ^ (int(x) & 0xFFFFFFFF)) * 16777619) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * 1274126177) & 0xFFFFFFFF
+    return (h ^ (h >> 16)) / 4294967295.0
+
+
+def finish_textured(name, span, serial="07", bevel=0.09):
+    """Build the model with softened edges (finish_detailed), then paint detail into its texture: every face gets a
+    grid of armour panels (dark seams, a rivet at each corner, each panel a slightly different shade), the lower hull
+    grime, the whole a little weathered; warning chevrons on a few top panels; a stencilled serial number on each flank.
+    Team paint keeps its mask (the seams show on it through its shade); lit strips are left alone.
+    How: bake where on the model each texture pixel lies (its position and facing), then draw in numpy."""
+    import numpy as np
+    import bpy
+    finish_detailed(name, span, UNITS, bevel=bevel)
+    ship = bpy.data.objects[name]
+    path = "%s/%s.png" % (UNITS, name)
+    skin = bpy.data.images.load(path, check_existing=False)
+    size = skin.size[0]   # (bake the probes at the texture's own size)
+    sc = bpy.context.scene
+
+    def bake_vector(socket):
+        m = bpy.data.materials.new("probe_" + socket)
+        m.use_nodes = True
+        nt = m.node_tree
+        nt.nodes.clear()
+        geo = nt.nodes.new("ShaderNodeNewGeometry")
+        fit = nt.nodes.new("ShaderNodeVectorMath")
+        fit.operation = "MULTIPLY_ADD"     # into 0..1, so nothing's lost: positions (+-50) and facings (+-1)
+        scale, offset = (0.01, 0.5) if socket == "Position" else (0.5, 0.5)
+        fit.inputs[1].default_value = (scale, scale, scale)
+        fit.inputs[2].default_value = (offset, offset, offset)
+        emit = nt.nodes.new("ShaderNodeEmission")
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        nt.links.new(geo.outputs[socket], fit.inputs[0])
+        nt.links.new(fit.outputs[0], emit.inputs["Color"])
+        nt.links.new(emit.outputs[0], out.inputs["Surface"])
+        img = bpy.data.images.new("probe_" + socket, size, size, alpha=False, float_buffer=True)
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        nt.nodes.active = tex
+        ship.data.materials.clear()
+        ship.data.materials.append(m)
+        sc.cycles.samples = 1
+        bpy.ops.object.select_all(action="DESELECT")
+        ship.select_set(True)
+        bpy.context.view_layer.objects.active = ship
+        bpy.ops.object.bake(type="EMIT")
+        a = np.array(img.pixels[:]).reshape(size, size, 4)[:, :, :3]
+        return (a - offset) / scale
+
+    pos = bake_vector("Position")
+    nrm = bake_vector("Normal")
+    px = np.array(skin.pixels[:]).reshape(size, size, 4)
+    rgb, alpha = px[:, :, :3].copy(), px[:, :, 3]
+    covered = np.linalg.norm(nrm, axis=2) > 0.5                       # texels on the model (not the gaps between)
+    bright = rgb.max(axis=2)
+    lit = (bright > 0.55) & ((rgb[:, :, 1] > rgb[:, :, 0] * 1.6) | (rgb[:, :, 2] > rgb[:, :, 0] * 1.6)) & (alpha > 0.5)
+    work = covered & ~lit
+
+    # Which way each texel faces, and its two coordinates across that face (a box projection).
+    ax = np.abs(nrm).argmax(axis=2)
+    u = np.where(ax == 0, pos[:, :, 1], pos[:, :, 0])
+    v = np.where(ax == 2, pos[:, :, 1], pos[:, :, 2])
+    # Panels: 2.4 long by 1.6 high on flanks, 2.0 square on decks, alternate rows staggered like brickwork.
+    pu = np.where(ax == 2, 2.0, 2.4)
+    pv = np.where(ax == 2, 2.0, 1.6)
+    row = np.floor(v / pv)
+    uu = u / pu + np.where(row % 2 == 0, 0.0, 0.5)
+    col = np.floor(uu)
+    fu, fv = uu - col, v / pv - row
+    seam_w = 0.045
+    seam = (np.minimum(fu, 1 - fu) * pu < seam_w) | (np.minimum(fv, 1 - fv) * pv < seam_w)
+    # A rivet near each panel's corners.
+    du = np.minimum(fu, 1 - fu) * pu
+    dv = np.minimum(fv, 1 - fv) * pv
+    rivet = (np.hypot(du - 0.16, dv - 0.16) < 0.055)
+    # Each panel a little lighter or darker than its neighbours.
+    vh = np.vectorize(lambda a, b, c: _hash(a, b, c) - 0.5)
+    shade = 1.0 + 0.07 * vh(col.astype(np.int64), row.astype(np.int64), ax.astype(np.int64))
+    # Grime: darker toward the ground and in soft blotches; a little lighter near the tops of things.
+    z = pos[:, :, 2]
+    grime = 0.78 + 0.22 * np.clip(z / 3.0, 0, 1)
+    blot = np.sin(pos[:, :, 0] * 1.7 + np.sin(pos[:, :, 1] * 2.3)) * np.sin(pos[:, :, 1] * 1.3 + pos[:, :, 2] * 2.1)
+    grime *= 0.95 + 0.05 * blot
+    f = shade * grime
+    f = np.where(seam, 0.55, f)
+    f = np.where(rivet & ~seam, f * 0.72, f)
+    out = rgb.copy()
+    out[work] *= f[work][:, None]
+
+    # Warning chevrons on a few top panels (not on team paint): yellow and black diagonal stripes in a band.
+    top = (ax == 2) & (nrm[:, :, 2] > 0) & (alpha > 0.5) & work & ~seam
+    pick = vh(col.astype(np.int64), row.astype(np.int64), np.full(col.shape, 99)) > 0.38
+    band = (fv > 0.12) & (fv < 0.32) & (fu > 0.15) & (fu < 0.85)
+    stripes = ((u + v) * 2.6 % 1.0) < 0.5
+    chev = top & pick & band
+    out[chev & stripes] = (0.62, 0.48, 0.08)
+    out[chev & ~stripes] = (0.05, 0.05, 0.05)
+
+    # A stencilled serial on each flank: 3x5 pixel digits, 0.12 units a pixel, low on the side near the middle.
+    flank = (ax == 0) & work & (alpha > 0.5)
+    cell = 0.12
+    text = serial
+    width = len(text) * 4 * cell
+    gx = (pos[:, :, 1] * np.sign(nrm[:, :, 0]) + width / 2) / cell   # (read the right way round on either side)
+    gz = (pos[:, :, 2] - 1.3) / cell
+    inside = flank & (gx >= 0) & (gx < len(text) * 4) & (gz >= 0) & (gz < 5)
+    ch = np.clip((gx // 4).astype(int), 0, len(text) - 1)
+    cx = (gx % 4).astype(int)
+    cz = 4 - np.clip(gz.astype(int), 0, 4)
+    on = np.zeros(gx.shape, bool)
+    for i, c in enumerate(text):
+        bits = _DIGITS.get(c, "0" * 15)
+        lut = np.array([b == "1" for b in bits]).reshape(5, 3)
+        sel = inside & (ch == i) & (cx < 3)
+        on[sel] = lut[cz[sel], cx[sel]]
+    out[on] = out[on] * 0.35
+
+    px[:, :, :3] = np.clip(out, 0, 1)
+    skin.pixels = px.ravel()
+    skin.filepath_raw = path
+    skin.file_format = "PNG"
+    skin.save()
+    print("%s: texture detail painted" % name)
+    # The preview views again, with the painted texture on (finish rendered them before it was painted).
+    look = bpy.data.materials.new("look_detail")
+    look.use_nodes = True
+    nt = look.node_tree
+    nt.nodes.clear()
+    pic = nt.nodes.new("ShaderNodeTexImage")
+    shown = skin.copy()
+    shown.alpha_mode = "NONE"
+    pic.image = shown
+    bsdf = nt.nodes.new("ShaderNodeBsdfDiffuse")
+    outn = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(pic.outputs["Color"], bsdf.inputs["Color"])
+    nt.links.new(bsdf.outputs[0], outn.inputs["Surface"])
+    ship.data.materials.clear()
+    ship.data.materials.append(look)
+    cam = bpy.data.objects["cam"]
+    sc.cycles.samples = 24
+    for label, place in (("quarter", (34, -40, 38)), ("close", (20, -24, 22))):
+        place = tuple(c * span / 40.0 for c in place)
+        cam.location = place
+        cam.data.ortho_scale = span if label == "quarter" else span * 0.6
+        cam.rotation_euler = (Vector((0, 0, 0)) - Vector(place)).to_track_quat("-Z", "Y").to_euler()
+        sc.render.filepath = "%s/_%s_textured_%s.png" % (k.WORK, name, label)
+        bpy.ops.render.render(write_still=True)
