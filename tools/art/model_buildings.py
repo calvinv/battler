@@ -78,6 +78,30 @@ def factory_mortar():
     k.finish("factory_mortar", 34.0, UNITS)
 
 
+def factory_spider():
+    """The spider works: a hexagonal assembly floor under a ring of four robotic arms on tall posts, a squat control
+    block at the back with a team roof, lit seams in the floor. Open, not a shed: it builds walkers."""
+    k.begin(0.0)
+    apron(12, 11)
+    hexagon(1.0, 0, 7.5, 0.5, 1.4, "plate", r1=7.1)                                    # the assembly floor
+    hexagon(1.0, 0, 6.0, 1.4, 1.5, "paint")
+    hexagon(1.0, 0, 3.2, 1.5, 1.6, "glow")
+    plate(-11.0, -6.0, -6.0, 6.0, 0.5, 6.0, "steel", inset=0.6)                         # control block
+    plate(-10.4, -6.6, -5.0, 5.0, 6.0, 6.4, "paint", inset=0.3)
+    strip(-6.1, -5.9, -4.5, 4.5, 4.0, "glow", 0.3)
+    for i in range(4):                                                                  # robotic arms on posts
+        ang = math.pi / 4 + i * math.pi / 2
+        pa, px = 1.0 + math.cos(ang) * 8.5, math.sin(ang) * 8.5
+        plate(pa - 0.8, pa + 0.8, px - 0.8, px + 0.8, 0.5, 9.0, "mid", inset=0.2)
+        k.drum(pa, px, 1.0, 9.0, 9.8, "dark", 8)
+        elbow = (pa + (1.0 - pa) * 0.45, px * 0.55, 10.5)
+        tube_between((pa, px, 9.4), elbow, 0.45, "plate", 4)
+        tube_between(elbow, (1.0 + math.cos(ang) * 2.2, math.sin(ang) * 2.2, 5.5), 0.35, "plate", 4)
+        k.drum(1.0 + math.cos(ang) * 2.2, math.sin(ang) * 2.2, 0.3, 4.9, 5.5, "glow", 6)   # welding tips
+    lens(11.0, 0.0, 1.0, 0.45)
+    k.finish("factory_spider", 34.0, UNITS)
+
+
 def factory_artillery():
     """The artillery yard: a raised assembly cradle in the open, four angular pylons, a bridge crane spanning them,
     a barrel being fitted, team colour on the cradle."""
@@ -197,5 +221,5 @@ def deposit():
 
 
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar,
+{"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar, "factory_spider": factory_spider,
  "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit}[which]()

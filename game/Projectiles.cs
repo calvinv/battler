@@ -101,6 +101,14 @@ public partial class Projectiles : Node3D
                 Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));
                 break;
+            case Kind.Spider:   // laser bolts: long, thin, very fast, bright, from alternate barrels
+            {
+                var laser = new Color(0.45f, 1f, 1f).Lerp(team, 0.35f) * 1.8f;   // over 1: it blooms
+                var side = (to - from).Cross(Vector3.Up).Normalized() * (_rng.Randf() < 0.5f ? 0.08f : -0.08f);
+                Add(new Round { From = from + side, To = to, Flight = dist / 120f, Thick = 0.06f, Length = 2.6f, Col = laser, By = by, Sparks = true });
+                AddFlash(from + side, 0.5f, 0.05f, new Color(0.5f, 1f, 1f));
+                break;
+            }
             default:   // tanks, towers, outposts, the HQ: one fast shell
                 float thick = by == Kind.Outpost ? 0.1f : 0.16f;
                 Add(new Round { From = from, To = to, Flight = dist / 45f, Thick = thick, Length = 2.2f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
@@ -163,8 +171,9 @@ public partial class Projectiles : Node3D
         }
         else if (r.Sparks)
         {
-            AddFlash(r.To, r.By == Kind.Scout ? 0.5f : 1.2f, 0.09f, new Color(1f, 0.8f, 0.4f));
-            if (r.By != Kind.Scout) Dust?.Add(r.To, Vector3.Up * 0.8f, 0.5f, Smoke);
+            bool zap = r.By == Kind.Spider;   // a laser leaves a small cyan spark and no smoke
+            AddFlash(r.To, r.By == Kind.Scout || zap ? 0.5f : 1.2f, 0.09f, zap ? new Color(0.5f, 1f, 1f) : new Color(1f, 0.8f, 0.4f));
+            if (r.By != Kind.Scout && !zap) Dust?.Add(r.To, Vector3.Up * 0.8f, 0.5f, Smoke);
         }
     }
 

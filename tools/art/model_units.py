@@ -155,5 +155,42 @@ def mortar():
     finish_textured("mortar", 26.0, serial="44")
 
 
+def spider():
+    """A spider bot (the user, 2026-10-20: "a small spider bot. 4 legs, small tank size, a turret and a laser that
+    shoots rapid weak shots"): a squat boxy body held up on four thick jointed legs, a small turret on top with a
+    twin laser emitter glowing at the tips. Chunky like the rest; reads at a glance as the one thing that walks."""
+    k.begin(0.0)
+    hip_z, knee_z = 3.4, 5.0
+    # the body: a low armoured box, team colour on its back, a lit band round it
+    plate(-3.6, 3.6, -3.0, 3.0, 2.4, 4.8, "steel", inset=0.35, front=0.9, back=0.6)
+    plate(-2.7, 2.5, -2.1, 2.1, 4.8, 5.05, "paint", inset=0.2)
+    k.box(-3.4, 3.4, -3.02, 3.02, 3.25, 3.4, "glow")
+    k.box(-2.2, 2.2, -1.6, 1.6, 2.1, 2.6, "dark")                                       # its belly
+    lens(3.25, 1.2, 3.6, 0.26)
+    lens(3.25, -1.2, 3.6, 0.26)
+    # four legs: a hip block at each corner, a thick thigh up and out to the knee, a shin down to a broad foot
+    for fa in (1, -1):
+        for s in (1, -1):
+            hip = (fa * 2.4, s * 2.3, hip_z)
+            knee = (fa * 4.4, s * 4.4, knee_z)
+            foot = (fa * 5.4, s * 5.6, 0.25)
+            k.box(hip[0] - 0.7, hip[0] + 0.7, hip[1] - 0.7, hip[1] + 0.7, hip_z - 0.6, hip_z + 0.7, "plate")
+            tube_between(hip, knee, 0.72, "mid", 4)                                      # thigh (square: boxy)
+            k.drum(knee[0], knee[1], 0.85, knee_z - 0.7, knee_z + 0.7, "dark", 8)         # knee joint
+            k.drum(knee[0], knee[1], 0.87, knee_z - 0.08, knee_z + 0.08, "glow", 8)
+            tube_between(knee, foot, 0.62, "steel", 4, 0.42)                             # shin, tapering
+            k.box(foot[0] - 0.75, foot[0] + 0.75, foot[1] - 0.75, foot[1] + 0.75, 0.0, 0.45, "dark")   # foot pad
+    # the turret: a squat block that turns, a twin laser emitter, lit tips
+    plate(-1.6, 1.6, -1.5, 1.5, 4.85, 6.2, "steel", inset=0.3, front=0.5)
+    k.box(-1.0, 0.6, -0.9, 0.9, 6.2, 6.4, "paint")
+    for s in (1, -1):
+        k.tube(1.2, 5.6, s * 0.42, 5.55, 0.2, "mid", 8)                                  # the barrels
+        k.tube(3.0, 3.6, s * 0.42, 5.55, 0.28, "dark", 8)                                # cooling collars
+        k.tube(5.6, 6.0, s * 0.42, 5.55, 0.24, "glow", 8)                                # lit emitter tips
+    k.box(-1.5, -0.7, 0.6, 1.2, 6.2, 6.7, "dark")                                       # sensor block
+    lens(-0.4, 0.9, 6.45, 0.17)
+    finish_textured("spider", 26.0, serial="58")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar}[which]()
+{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar, "spider": spider}[which]()

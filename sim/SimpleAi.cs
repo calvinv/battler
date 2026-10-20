@@ -54,8 +54,8 @@ public sealed class SimpleAi
         if (freeBase != null)
         {
             if (p.Metal < World.FactoryCost) return;   // saving for it
-            var roll = _rng.Next(20);   // tanks 35%, light tanks 25%, artillery 20%, mortars 20%
-            var makes = roll < 7 ? Kind.Tank : roll < 12 ? Kind.LightTank : roll < 16 ? Kind.Artillery : Kind.Mortar;
+            var roll = _rng.Next(20);   // tanks 30%, light tanks 20%, spiders 15%, artillery 20%, mortars 15%
+            var makes = roll < 6 ? Kind.Tank : roll < 10 ? Kind.LightTank : roll < 13 ? Kind.Spider : roll < 17 ? Kind.Artillery : Kind.Mortar;
             var r = World.BaseRadius(freeBase);
             for (int attempt = 0; attempt < 12; attempt++)
             {
