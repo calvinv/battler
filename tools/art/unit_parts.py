@@ -151,3 +151,22 @@ def road_wheel(a, x, z, r, side):
     tube_between((a, xo, z), (a, xo + side * 0.45, z), r, "black", 12)
     tube_between((a, xo + side * 0.45, z), (a, xo + side * 0.5, z), r * 0.75, "mid", 10)
     tube_between((a, xo + side * 0.5, z), (a, xo + side * 0.62, z), r * 0.3, "dark", 8)
+
+
+def pod_detail(side, inner, outer, a0, a1, h):
+    """Detail on a track pod (see pod): a drive sprocket at the front and an idler at the back showing below the
+    housing, road wheels between them, a bolt row along the housing, and seams down its skirt plates."""
+    xo = side * outer
+    x_in = side * (inner + 0.2)
+    for a, r, mat in ((a1 - 0.9, h * 0.26, "mid"), (a0 + 0.9, h * 0.24, "mid")):   # sprocket and idler
+        tube_between((a, x_in, h * 0.32), (a, xo + side * 0.05, h * 0.32), r, mat, 10)
+        tube_between((a, xo + side * 0.05, h * 0.32), (a, xo + side * 0.15, h * 0.32), r * 0.4, "dark", 8)
+    n = max(3, int((a1 - a0 - 2.6) / 1.5))
+    for i in range(n):                                                                  # road wheels, low down
+        a = a0 + 1.7 + i * (a1 - a0 - 3.4) / max(n - 1, 1)
+        tube_between((a, xo - side * 0.3, h * 0.24), (a, xo + side * 0.02, h * 0.24), h * 0.2, "dark", 8)
+    bolts(a0 + 1.0, a1 - 1.0, xo, h * 0.88, int(a1 - a0), side=side, size=0.06)
+    for i in range(1, 4):                                                               # skirt plate seams
+        a = a0 + (a1 - a0) * i / 4
+        x0, x1 = sorted((xo, xo + side * 0.05))
+        k.box(a - 0.04, a + 0.04, x0, x1, h * 0.45, h * 0.98, "black")

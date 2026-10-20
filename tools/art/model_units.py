@@ -38,7 +38,39 @@ def tank():
     k.box(-3.0, -1.8, -1.6, -0.6, 7.2, 7.9, "dark")                                     # sensor block
     k.drum(-2.6, 1.6, 0.06, 7.2, 11.0, "black", 4)                                      # whip aerial
     k.drum(-2.6, 1.6, 0.14, 11.0, 11.3, "glow", 4)                                      # its tip light
-    k.finish("tank", 30.0, UNITS)
+    # --- the detailed pass (2026-10-20): tracks, hull, turret and gun detail; the outline is unchanged
+    for s in (1, -1):
+        pod_detail(s, 2.9, 5.0, -8.0, 7.8, 3.4)
+        k.box(8.3, 9.0, s * 1.6 - 0.15, s * 1.6 + 0.15, 2.4, 2.8, "dark")               # tow hooks
+        k.box(-8.4, -7.8, s * 2.0 - 0.15, s * 2.0 + 0.15, 3.4, 3.8, "dark")
+        stowage(-7.2, -4.6, *sorted((s * 3.0, s * 3.9)), 5.0, 5.55)                       # stowage on the rear deck
+        for i in range(3):                                                              # smoke dischargers on the turret
+            tube_between((1.0 + i * 0.4, s * 2.6, 6.2), (1.5 + i * 0.4, s * 3.1, 6.6), 0.15, "dark", 6)
+        bolts(-2.8, 0.8, s * 2.95, 5.6, 6, side=s)                                       # bolts on the turret cheeks
+    seam(-4.1, -4.0, -3.9, 3.9, 5.0)                                                    # deck seams
+    seam(3.0, 3.1, -3.6, 3.6, 5.0)
+    hatch(4.1, -1.6, 4.7, 0.55)                                                         # driver's hatch on the glacis
+    k.box(4.5, 5.0, 0.4, 1.8, 4.6, 4.8, "black")                                        # driver's vision block
+    k.box(-8.0, -7.85, -2.4, 2.4, 3.6, 4.6, "black")                                    # exhaust louvres
+    for i in range(5):
+        k.box(-8.1, -7.95, -2.2 + i * 0.95, -1.6 + i * 0.95, 3.75, 4.45, "dark")
+    # turret: a seam round it, two hatches and a commander's cupola, a bustle rack at the back
+    plate(-3.25, 2.65, -2.95, 2.95, 6.1, 6.18, "black", inset=0.05)
+    hatch(-1.4, 1.1, 7.5, 0.6)
+    k.drum(-0.6, -1.2, 0.65, 7.5, 8.1, "mid", 10)                                       # cupola
+    for i in range(6):
+        ang = i * math.tau / 6
+        k.box(-0.6 + math.cos(ang) * 0.6 - 0.08, -0.6 + math.cos(ang) * 0.6 + 0.08,
+              -1.2 + math.sin(ang) * 0.6 - 0.08, -1.2 + math.sin(ang) * 0.6 + 0.08, 7.75, 7.95, "glow")   # its vision blocks
+    plate(-4.9, -3.3, -2.6, 2.6, 5.4, 6.6, "dark", inset=0.1)                           # bustle rack
+    for i in range(4):
+        k.box(-4.95, -3.25, -2.5 + i * 1.6, -2.3 + i * 1.6, 6.6, 6.75, "mid")
+    # gun: a coaxial barrel beside it, bolts on the mantlet, ports in the muzzle brake
+    k.tube(3.8, 5.6, 0.75, 6.0, 0.1, "black", 6)
+    bolts(1.8, 3.8, 0.92, 6.5, 4, side=1, size=0.06)
+    bolts(1.8, 3.8, -0.92, 6.5, 4, side=-1, size=0.06)
+    k.box(11.8, 12.4, -0.56, 0.56, 6.05, 6.35, "black")
+    finish_detailed("tank", 30.0, UNITS)
 
 
 def artillery():
@@ -73,7 +105,26 @@ def artillery():
         tube_between(c - d * 0.4, c + d * 0.4, 0.75, "glow" if i % 2 == 0 else "dark", 8)
     tube_between(pivot + d * (length - 0.6), pivot + d * (length + 0.6), 0.8, "dark", 8)   # muzzle collar
     lens(-0.5, -2.4, 7.0, 0.32)
-    k.finish("artillery", 38.0, UNITS)
+    # --- the detailed pass (2026-10-20): tracks, deck, turret and gun detail; the outline is unchanged
+    for s in (1, -1):
+        pod_detail(s, 3.0, 4.8, -8.4, 7.0, 3.0)
+        stowage(-0.2, 2.0, *sorted((s * 3.0, s * 3.9)), 4.15, 4.75)                      # stowage beside the turret
+        k.box(7.2, 7.9, s * 1.4 - 0.15, s * 1.4 + 0.15, 2.2, 2.6, "dark")               # tow hooks
+        bolts(-6.6, -1.0, s * 3.2, 5.4, 6, side=s)                                       # bolts on the turret sides
+        # recoil cylinders either side of the breech
+        off = Vector((0.0, s * 1.05, -0.2))
+        tube_between(pivot + off - d * 1.6, pivot + off + d * 3.5, 0.28, "mid", 8)
+        k.box(-12.4, -11.0, s * 4.4 - 0.7, s * 4.4 + 0.7, 0.6, 0.75, "dark")             # treads on the leg pads
+    hatch(4.2, -1.4, 4.2, 0.55)                                                         # driver's hatch up front
+    k.box(5.4, 5.9, -1.6, 1.6, 4.0, 4.2, "black")                                       # vision slit
+    seam(-0.5, -0.4, -4.0, 4.0, 4.2)                                                    # deck seams
+    seam(3.2, 3.3, -3.8, 3.8, 4.2)
+    plate(-6.85, -0.75, -3.05, 3.05, 5.35, 5.43, "black", inset=0.04)                   # seam round the turret
+    hatch(-5.4, 1.2, 6.9, 0.5)
+    for i in range(3):                                                                  # shell racks on the turret's back
+        k.drum(-7.15, -1.2 + i * 1.2, 0.4, 4.6, 6.2, "hazard", 8, 0.3)
+    k.box(-7.4, -7.0, -2.0, 2.0, 4.4, 4.6, "dark")
+    finish_detailed("artillery", 38.0, UNITS)
 
 
 def scout():
@@ -93,7 +144,20 @@ def scout():
     k.drum(-2.2, 0, 1.4, lift + 5.6, lift + 5.9, "white", 12, 1.0)                     # the dish
     k.drum(-2.2, 0, 0.3, lift + 5.9, lift + 6.3, "glow", 6)                             # its feed
     k.box(-4.6, -3.8, -1.6, 1.6, lift + 1.2, lift + 1.8, "glow")                        # thruster glow at the tail
-    k.finish("scout", 24.0, UNITS)
+    # --- the detailed pass (2026-10-20): seams, intakes, fins, a sensor ball; the outline is unchanged
+    for s in (1, -1):
+        for i in range(4):                                                              # intake grilles on the nacelles
+            k.box(-3.0 + i * 0.9, -2.6 + i * 0.9, *sorted((s * 2.1, s * 2.9)), lift + 1.5, lift + 1.58, "black")
+        upright_fin = [(-4.6, lift + 2.0), (-3.2, lift + 2.0), (-4.2, lift + 3.4), (-4.8, lift + 3.4)]
+        k.upright(upright_fin, s * 1.0 - 0.07, s * 1.0 + 0.07, "plate")                # tail fins
+        k.box(-4.75, -4.2, s * 1.0 - 0.09, s * 1.0 + 0.09, lift + 3.1, lift + 3.3, "glow")
+        k.box(0.0, 3.2, s * 1.5 - 0.04, s * 1.5 + 0.04, lift + 2.0, lift + 2.06, "black")   # seams on the dart
+        bolts(-4.2, 2.2, s * (2.0 + 0.9 + 0.6 if s > 0 else 2.0 + 0.9), lift + 0.8, 6, side=s, size=0.06)
+    k.box(-0.8, -0.7, -1.9, 1.9, lift + 2.0, lift + 2.06, "black")
+    k.drum(4.4, 0, 0.45, lift + 0.2, lift + 0.6, "dark", 10)                           # sensor ball under the nose
+    lens(4.85, 0, lift + 0.4, 0.22)
+    k.drum(-3.8, 0.6, 0.05, lift + 3.2, lift + 5.0, "black", 4)                        # a whip aerial by the mast
+    finish_detailed("scout", 24.0, UNITS)
 
 
 def lighttank():
@@ -181,7 +245,23 @@ def mortar():
     tube_between(base + d * 4.0, base + d * 4.4, 0.95, "glow", 10)
     for s in (1, -1):                                                                   # ready rounds
         k.drum(-4.0, s * 1.6, 0.35, 4.0, 5.4, "hazard", 6, 0.25)
-    k.finish("mortar", 24.0, UNITS)
+    # --- the detailed pass (2026-10-20): tracks, body and tube detail; the outline is unchanged
+    for s in (1, -1):
+        pod_detail(s, 2.4, 3.9, -5.4, 5.0, 2.6)
+        stowage(1.4, 4.0, *sorted((s * 2.7, s * 3.35)), 4.4, 4.9)                        # stowage up front
+        k.box(5.5, 6.1, s * 1.0 - 0.12, s * 1.0 + 0.12, 1.8, 2.1, "dark")               # tow hooks
+        bolts(-4.8, 4.6, s * 3.6, 3.1, 8, side=s)
+        k.box(-4.5, 0.7, *sorted((s * 2.4, s * 2.55)), 4.4, 4.75, "dark")                # the well's rim
+        # clamps holding the tube to its base, and its elevating screw
+        tube_between(base + Vector((0, s * 0.95, 0.15)), base + d * 1.6 + Vector((0, s * 0.95, 0)), 0.16, "dark", 6)
+    hatch(2.4, 0.0, 4.4, 0.5)
+    k.box(4.8, 5.3, -1.4, 1.4, 3.85, 4.05, "black")                                     # vision slit
+    seam(0.9, 1.0, -3.2, 3.2, 4.4)
+    tube_between(base + d * 1.2, base + d * 1.3, 0.92, "dark", 10)                      # bands round the tube
+    tube_between(base + d * 5.1, base + d * 5.2, 0.85, "dark", 10)
+    k.drum(-4.4, 0, 0.05, 4.4, 7.2, "black", 4)                                         # aerial
+    k.drum(-4.4, 0, 0.12, 7.2, 7.4, "glow", 4)
+    finish_detailed("mortar", 24.0, UNITS)
 
 
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
