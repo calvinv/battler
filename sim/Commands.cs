@@ -38,3 +38,6 @@ public sealed record SetAutoScout(int Player, bool On) : Command(Player);
 
 /// <summary>Sends some of the player's scouts to Pos (they spread out round it).</summary>
 public sealed record MoveUnits(int Player, int[] Ids, FixVec2 Pos) : Command(Player);
+
+/// <summary>Drops all the upgrades queued at one of the player's buildings.</summary>
+public sealed record CancelUpgrades(int Player, int BuildingId) : Command(Player);

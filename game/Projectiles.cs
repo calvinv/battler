@@ -73,7 +73,7 @@ public partial class Projectiles : Node3D
     }
 
     /// <summary>A shot from a muzzle at `from` to `to`, fired by a `by`, in team colour `team`.</summary>
-    public void Fire(Vector3 from, Vector3 to, Kind by, Color team)
+    public void Fire(Vector3 from, Vector3 to, Kind by, Color team, float flight = 0f)
     {
         float dist = from.DistanceTo(to);
         var hot = new Color(1f, 0.85f, 0.45f);
@@ -88,7 +88,7 @@ public partial class Projectiles : Node3D
                 }
                 break;
             case Kind.Artillery:   // a slow lobbed shell that trails smoke and bursts
-                Add(new Round { From = from, To = to, Flight = 0.55f + dist / 30f, Arc = dist * 0.4f, Thick = 0.3f, Length = 0.8f, Col = new Color(0.25f, 0.22f, 0.18f), By = by, Burst = true });
+                Add(new Round { From = from, To = to, Flight = flight > 0 ? flight : 0.55f + dist / 30f, Arc = dist * 0.4f, Thick = 0.3f, Length = 0.8f, Col = new Color(0.25f, 0.22f, 0.18f), By = by, Burst = true });
                 AddFlash(from, 2.6f, 0.16f, new Color(1f, 0.6f, 0.25f));
                 for (int i = 0; i < 3; i++) Dust?.Add(from, new Vector3(_rng.RandfRange(-1, 1), _rng.RandfRange(0.6f, 1.4f), _rng.RandfRange(-1, 1)), 0.9f, Smoke);
                 break;

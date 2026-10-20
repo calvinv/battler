@@ -52,6 +52,7 @@ public sealed class Entity
     public int BaseId;     // a factory: the HQ or outpost whose slot it takes
     public int Deposit = -1;   // an extractor: which of World.Deposits it sits on
     public int ScoutQueue;     // the HQ: scouts paid for and waiting to be built (Timer counts down the current one)
+    public readonly List<int> UpgradeQueue = new();   // a factory or outpost: upgrades (by Upgrade) to buy, in order, once affordable
     public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
 
     public int Level(Upgrade u) => Levels[(int)u];
@@ -70,7 +71,8 @@ public sealed class Player
 }
 
 /// <summary>A shot fired this tick, kept for drawing tracers.</summary>
-public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner, Kind By, int ShooterId, int TargetId);
+/// <remarks>Flight: ticks a shell is in the air (0 for direct fire, which hits at once).</remarks>
+public readonly record struct Shot(FixVec2 From, FixVec2 To, int Owner, Kind By, int ShooterId, int TargetId, int Flight);
 
 /// <summary>
 /// The whole battle. Deterministic: given the same seed and the same commands on the same ticks,
@@ -170,7 +172,7 @@ public sealed class World
                 Damage = 16, Reload = 15, BuildTicks = 24 * TicksPerSecond },
         // Artillery
         new() { MaxHp = 60, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
-                Splash = Fix.Ratio(25, 10), Damage = 27, Reload = 40, BuildTicks = 32 * TicksPerSecond },
+                Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 32 * TicksPerSecond },   // (30, up from 27: its shells now miss moving targets)
         // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
         // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
         new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10 },
@@ -266,12 +268,58 @@ public sealed class World
 
     public bool CanUpgrade(int player, int factoryId, Upgrade which, out string why)
     {
+        if (!CanQueueUpgrade(player, factoryId, which, out why)) return false;
+        var f = Find(factoryId);
+        if (f.UpgradeQueue.Count > 0) { why = "Others are queued first"; return false; }
+        if (Players[player].Metal < UpgradeCost(f.Level(which) + 1)) { why = "Not enough metal"; return false; }
+        return true;
+    }
+
+    /// <summary>Whether an upgrade can be ordered at all, bought now or queued (the user, 2026-10-20: "you should also
+    /// be able to queue updates"): the player's factory or outpost, and that track not already full with what's queued.</summary>
+    public bool CanQueueUpgrade(int player, int factoryId, Upgrade which, out string why)
+    {
         var f = Find(factoryId);
         why = null;
         if (f == null || f.Kind is not (Kind.Factory or Kind.Outpost) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
-        if (f.Level(which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
-        if (Players[player].Metal < UpgradeCost(f.Level(which) + 1)) { why = "Not enough metal"; return false; }
+        if (f.Level(which) + Queued(f, which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
         return true;
+    }
+
+    /// <summary>How many of a track's levels are waiting in a building's queue.</summary>
+    public static int Queued(Entity f, Upgrade which)
+    {
+        int n = 0;
+        foreach (var q in f.UpgradeQueue) if (q == (int)which) n++;
+        return n;
+    }
+
+    void BuyUpgrade(Entity f, Upgrade which)
+    {
+        Players[f.Owner].Metal -= UpgradeCost(f.Level(which) + 1);
+        f.Levels[(int)which]++;
+        if (f.Kind == Kind.Outpost)   // an outpost's own guns and armour improve at once
+        {
+            int before = f.MaxHp;
+            SetStats(f);
+            f.Hp += f.MaxHp - before;
+        }
+    }
+
+    /// <summary>Queued upgrades buy themselves, in order, once there's the metal (buildings oldest first).</summary>
+    void BuyQueuedUpgrades()
+    {
+        foreach (var f in Entities)
+        {
+            if (f.Dead) continue;
+            while (f.UpgradeQueue.Count > 0)
+            {
+                var which = (Upgrade)f.UpgradeQueue[0];
+                if (Players[f.Owner].Metal < UpgradeCost(f.Level(which) + 1)) break;
+                f.UpgradeQueue.RemoveAt(0);
+                BuyUpgrade(f, which);
+            }
+        }
     }
 
     // ---- selling (the user, 2026-10-19: "sell for 75% of purchase cost incl upgrades") -------------------------
@@ -495,7 +543,7 @@ public sealed class World
             // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
             // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
             foreach (var c in commands)
-                if (c is PlaceFactory or UpgradeFactory or SetRally or SetAutoScout) Apply(c);
+                if (c is PlaceFactory or UpgradeFactory or CancelUpgrades or SetRally or SetAutoScout) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
             UpdateVision();
             return;
@@ -513,6 +561,7 @@ public sealed class World
         var income = new int[Players.Length];
         for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
         for (int i = 0; i < Players.Length; i++) Players[i].Metal += income[i];
+        BuyQueuedUpgrades();
         Produce();
         Fight();
         Separate();
@@ -658,16 +707,14 @@ public sealed class World
                     u.Waypoint = new FixVec2(Clamp(spot.X, MapHalfX - 1), Clamp(spot.Z, MapHalfZ - 1));
                 }
                 break;
-            case UpgradeFactory uf when CanUpgrade(uf.Player, uf.FactoryId, uf.Which, out _):
+            case UpgradeFactory uf when CanQueueUpgrade(uf.Player, uf.FactoryId, uf.Which, out _):
+                // Bought at once if it can be (nothing queued ahead, the metal there); otherwise queued.
                 var f = Find(uf.FactoryId);
-                p.Metal -= UpgradeCost(f.Level(uf.Which) + 1);
-                f.Levels[(int)uf.Which]++;
-                if (f.Kind == Kind.Outpost)   // an outpost's own guns and armour improve at once
-                {
-                    int before = f.MaxHp;
-                    SetStats(f);
-                    f.Hp += f.MaxHp - before;
-                }
+                if (CanUpgrade(uf.Player, uf.FactoryId, uf.Which, out _)) BuyUpgrade(f, uf.Which);
+                else if (f.UpgradeQueue.Count < MaxUpgradeLevel * 3) f.UpgradeQueue.Add((int)uf.Which);
+                break;
+            case CancelUpgrades cu when Find(cu.BuildingId) is { } queued && queued.Owner == cu.Player:
+                queued.UpgradeQueue.Clear();   // (nothing was paid for them)
                 break;
             case PlaceOutpost po when CanPlaceOutpost(po.Player, po.Deposit, out _):
                 p.Metal -= OutpostCost;
@@ -771,6 +818,7 @@ public sealed class World
     void Fight()
     {
         _moves.Clear();
+        LandShells();   // shells fired earlier come down now, with everyone where they stood at the start of the tick
         foreach (var e in Entities)
         {
             if (e.Dead || e.Hp <= 0) continue;
@@ -831,14 +879,41 @@ public sealed class World
     {
         var s = e.Stats;
         e.Cooldown = s.Reload;
-        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id));
-        if (s.Splash.Raw == 0) { _hits.Add((target, e.Damage, e)); return; }
-        foreach (var o in Entities)
+        if (s.Splash.Raw == 0)
         {
-            if (o.Dead || o.Owner == e.Owner) continue;
-            var reach = s.Splash + o.Stats.Radius;
-            if ((o.Pos - target.Pos).LengthSq <= reach * reach) _hits.Add((o, e.Damage, e));
+            Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, 0));
+            _hits.Add((target, e.Damage, e));
+            return;
         }
+        // A shell: it's lobbed at the ground where the target stands and lands a while later, hurting whoever is
+        // there then. Something moving gets out from under it (the user, 2026-10-20: "artillery should be able to
+        // miss, it attacks ground where a unit is but if it's moving it misses").
+        int flight = ShellFlightTicks(e.Pos, target.Pos);
+        Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, flight));
+        _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = e.Damage, Splash = s.Splash, By = e, TicksLeft = flight });
+    }
+
+    /// <summary>How long a shell is in the air: 0.6 s, and 0.1 s for every 3 units it goes.</summary>
+    public static int ShellFlightTicks(FixVec2 from, FixVec2 to) => 6 + (to - from).Length.ToInt() / 3;
+
+    sealed class Shell { public FixVec2 At; public int Owner, Damage, TicksLeft; public Fix Splash; public Entity By; }
+    readonly List<Shell> _shells = new();
+
+    /// <summary>Shells that come down this tick: their damage joins this tick's hits.</summary>
+    void LandShells()
+    {
+        for (int i = 0; i < _shells.Count; i++)
+        {
+            var sh = _shells[i];
+            if (--sh.TicksLeft > 0) continue;
+            foreach (var o in Entities)
+            {
+                if (o.Dead || o.Owner == sh.Owner || o.Hp <= 0) continue;
+                var reach = sh.Splash + o.Stats.Radius;
+                if ((o.Pos - sh.At).LengthSq <= reach * reach) _hits.Add((o, sh.Damage, sh.By));
+            }
+        }
+        _shells.RemoveAll(sh => sh.TicksLeft <= 0);
     }
 
     readonly List<(Entity Target, int Damage, Entity By)> _hits = new();
@@ -922,6 +997,11 @@ public sealed class World
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
             Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0);
             foreach (var l in e.Levels) Mix(l);
+            Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
+        }
+        foreach (var sh in _shells)
+        {
+            Mix(sh.At.X.Raw); Mix(sh.At.Z.Raw); Mix(sh.Owner); Mix(sh.Damage); Mix(sh.TicksLeft); Mix(sh.By.Id);
         }
         return h;
     }

@@ -10,7 +10,7 @@ using Battler.Sim;
 ulong Seed = args.Length > 0 && ulong.TryParse(args[0], out var s) ? s : 12345;
 const int MaxTicks = 20 * 60 * World.TicksPerSecond;   // 20 minutes
 
-if (!SlotTest()) return 1;
+if (!SlotTest() || !QueueTest()) return 1;
 return args.Contains("lan") ? LanTest() : ReplayTest();
 
 // An outpost with both its factory slots full dies and is rebuilt: the factories still standing must fill the new one
@@ -68,6 +68,10 @@ int ReplayTest()
             cmds.Add(new SetRally(0, hq0.Id, world.Tick == 1800, new FixVec2(-45, -8)));
         if (script && first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
         // ...and later sells its newest factory or outpost.
+        // It queues upgrades on its first factory (more than it can pay for), drops them, then queues some again.
+        if (script && first0 != null && (world.Tick == 1000 || world.Tick == 1100))
+            foreach (var u in new[] { Upgrade.Damage, Upgrade.Damage, Upgrade.Armour, Upgrade.Production }) cmds.Add(new UpgradeFactory(0, first0.Id, u));
+        if (script && first0 != null && world.Tick == 1050) cmds.Add(new CancelUpgrades(0, first0.Id));
         if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 0) is { } sold)
         {
             Console.WriteLine($"  t={world.Tick}: player 0 sells {sold.Kind} {sold.Id} for {World.SellValue(sold)} (metal {world.Players[0].Metal})");
@@ -137,6 +141,9 @@ int LanTest()
                 if (i == 1 && (w.Tick == 400 || w.Tick == 1800) && w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1) is { } hq1)
                     ss.Issue(new SetRally(1, hq1.Id, w.Tick == 1800, new FixVec2(45, 8)));
                 if (i == 1 && first1 != null && w.Tick == 1500) ss.Issue(new SetRally(1, first1.Id, true, FixVec2.Zero));
+                if (i == 1 && first1 != null && (w.Tick == 1000 || w.Tick == 1100))
+                    foreach (var u in new[] { Upgrade.Armour, Upgrade.Damage, Upgrade.Production }) ss.Issue(new UpgradeFactory(1, first1.Id, u));
+                if (i == 1 && first1 != null && w.Tick == 1050) ss.Issue(new CancelUpgrades(1, first1.Id));
                 if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
             }
             if (ss.TryStep()) { any = true; if (w.Paused) pausedTicks[i]++; if (i == 0 && w.Tick % 1200 == 0) Report(w); }
@@ -174,4 +181,20 @@ static void Report(World world)
     Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  outposts {o0}v{o1}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
     string Front(int p) { var xs = world.Entities.FindAll(e => e.Owner == p && World.IsArmy(e.Kind)).ConvertAll(e => e.Pos.X.ToInt()); xs.Sort(); return xs.Count == 0 ? "-" : $"{xs[0]}..{xs[xs.Count / 2]}..{xs[^1]}"; }
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
+}
+
+// Upgrades ordered without the metal wait in the queue and buy themselves, in order, as metal comes in.
+bool QueueTest()
+{
+    var w = new World(2);
+    w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(10, 0), Kind.Tank), new PlaceFactory(1, World.HqStart(1) - new FixVec2(10, 0), Kind.Tank) });
+    var f = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
+    w.Players[0].Metal = 0;
+    w.Step(new Command[] { new UpgradeFactory(0, f.Id, Upgrade.Damage), new UpgradeFactory(0, f.Id, Upgrade.Damage), new UpgradeFactory(0, f.Id, Upgrade.Armour) });
+    int queued = f.UpgradeQueue.Count;
+    int ticks = 0;
+    while (f.UpgradeQueue.Count > 0 && ticks++ < 2000) w.Step(Array.Empty<Command>());
+    bool ok = queued == 3 && f.Level(Upgrade.Damage) == 2 && f.Level(Upgrade.Armour) == 1;
+    Console.WriteLine($"Queue test: {queued} queued with no metal, bought within {ticks / World.TicksPerSecond} s: damage {f.Level(Upgrade.Damage)}, armour {f.Level(Upgrade.Armour)}: {(ok ? "OK" : "FAILED")}");
+    return ok;
 }

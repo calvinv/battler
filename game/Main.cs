@@ -52,7 +52,7 @@ public partial class Main : Node3D
     Label _stats;
     MeshInstance3D _selRing;
     readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
-    Button _sellButton, _scoutButton, _autoButton;
+    Button _sellButton, _scoutButton, _autoButton, _cancelQueueButton;
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
     readonly List<Node3D> _depositViews = new();
@@ -549,6 +549,10 @@ public partial class Main : Node3D
             column.AddChild(b);
             _upgradeButtons[i] = b;
         }
+        _cancelQueueButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _cancelQueueButton.AddThemeFontSizeOverride("font_size", 17);
+        _cancelQueueButton.Pressed += () => _session?.Issue(new CancelUpgrades(_me, _selected));
+        column.AddChild(_cancelQueueButton);
         _rallyButton = new Button { Text = "Clear rally point", FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
         _rallyButton.AddThemeFontSizeOverride("font_size", 17);
         _rallyButton.Pressed += () => _session?.Issue(new SetRally(_me, _selected, true, FixVec2.Zero));
@@ -852,7 +856,7 @@ public partial class Main : Node3D
             var target = W.Find(s.TargetId);
             var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
             if (s.By == Kind.Artillery) aimAt = to;   // shells burst on the ground
-            _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner]);
+            _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner], s.Flight / (float)World.TicksPerSecond);   // a shell lands when the sim lands it
         }
         return true;
     }
@@ -1068,11 +1072,17 @@ public partial class Main : Node3D
             bool post = e.Kind == Kind.Outpost;
             var name = post ? OutpostTrack[i] : which.ToString();
             var effect = post ? OutpostEffect[i] : UpgradeEffect[i];
-            b.Text = level >= World.MaxUpgradeLevel
-                ? $"{name}  {level}/{World.MaxUpgradeLevel}   (max)"
-                : $"{name}  {level}/{World.MaxUpgradeLevel}   buy for {World.UpgradeCost(level + 1)}:  {effect}";
-            b.Disabled = !W.CanUpgrade(_me, e.Id, which, out _) || W.Winner >= 0;
+            // Clicking buys it now, or queues it if the metal isn't there (or others are queued first).
+            int queued = World.Queued(e, which), next = level + queued;
+            var waiting = queued > 0 ? $"   (+{queued} queued)" : "";
+            b.Text = next >= World.MaxUpgradeLevel
+                ? $"{name}  {level}/{World.MaxUpgradeLevel}{waiting}" + (queued == 0 ? "   (max)" : "")
+                : $"{name}  {level}/{World.MaxUpgradeLevel}{waiting}   "
+                  + (W.CanUpgrade(_me, e.Id, which, out _) ? "buy" : "queue") + $" for {World.UpgradeCost(next + 1)}:  {effect}";
+            b.Disabled = !W.CanQueueUpgrade(_me, e.Id, which, out _) || W.Winner >= 0;
         }
+        _cancelQueueButton.Visible = mine && e.UpgradeQueue.Count > 0;
+        if (_cancelQueueButton.Visible) _cancelQueueButton.Text = $"Cancel {e.UpgradeQueue.Count} queued upgrade" + (e.UpgradeQueue.Count > 1 ? "s" : "");
     }
 
     string Describe(Entity e)
@@ -1089,7 +1099,7 @@ public partial class Main : Node3D
                 Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second."
                     + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (3)." : ""),
                 Kind.Tank => "Tough all-rounder.",
-                Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
+                Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
                 Kind.Hq => "Lose it and you lose the match.",
                 Kind.Tower => "Guards the base: long range and sight.",
                 Kind.Outpost => "A sub-base: build factories inside its ring.",

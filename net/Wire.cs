@@ -67,6 +67,7 @@ public static class Wire
             case PlaceExtractor pe: w.Write((byte)8); w.Write((byte)pe.Player); w.Write(pe.Deposit); break;
             case QueueScout: w.Write((byte)9); w.Write((byte)c.Player); break;
             case SetAutoScout sa: w.Write((byte)10); w.Write((byte)sa.Player); w.Write(sa.On); break;
+            case CancelUpgrades cu: w.Write((byte)12); w.Write((byte)cu.Player); w.Write(cu.BuildingId); break;
             case MoveUnits mu:
                 w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
                 w.Write((ushort)mu.Ids.Length); foreach (var id in mu.Ids) w.Write(id);
@@ -92,6 +93,7 @@ public static class Wire
             9 => new QueueScout(player),
             10 => new SetAutoScout(player, r.ReadBoolean()),
             11 => ReadMove(player, r),
+            12 => new CancelUpgrades(player, r.ReadInt32()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
     }
