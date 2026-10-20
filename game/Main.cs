@@ -12,9 +12,10 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: 1-4 place a factory (light tank, tank, mortar, artillery) in a base ring with a free slot, 5 an outpost on
-/// the pad by one of your extractors, 6 an
-/// extractor on a deposit (Esc or right click cancels). Q builds a scout at the HQ; E picks all scouts; click, Shift-click
+/// Controls: B opens the build menu, then a letter: L light tank / T tank / M mortar / A artillery factory, X extractor
+/// on a deposit, O outpost on the pad by one of your extractors, C a scout from the HQ (B or Esc closes it; while
+/// placing, Esc or right click cancels). The old keys still work: 1-4 factories, 5 outpost, 6 extractor, Q scout.
+/// E picks all scouts; click, Shift-click
 /// or drag a box to pick scouts, right-click to send them. A click selects anything else to see its stats, upgrades
 /// and Sell (Esc clears). WASD/arrows pan, wheel zooms,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
@@ -157,6 +158,7 @@ public partial class Main : Node3D
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
+            if (args.Contains("--build")) SetBuildMenu(true);   // the build menu open
             _watchFelled = args.Contains("--felled");      // close on the first tree knocked down, once it's down
             if (args.IndexOf("--look") is int li and >= 0 && li + 3 < args.Count)   // --look x z distance: the camera on a spot, fog lifted
             { _focus = new Vector3(float.Parse(args[li + 1]), 0, float.Parse(args[li + 2])); _distance = float.Parse(args[li + 3]); _noFog = true; UpdateFog(); _selected = -1; }
@@ -638,6 +640,7 @@ public partial class Main : Node3D
         _banner.AddThemeFontSizeOverride("font_size", 32);
         ui.AddChild(_banner);
         BuildMenu(ui);
+        BuildBuildMenu(ui);
     }
 
     static StandardMaterial3D Unshaded(Color c) => new()
@@ -1157,7 +1160,7 @@ public partial class Main : Node3D
                     ? "Unarmed eyes. Finds deposits: an extractor can go\non a deposit beside it. Right-click to send it."
                     : "Unarmed eyes: it's scouting you.",
                 Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second."
-                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (5)." : ""),
+                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (B then O)." : ""),
                 Kind.Tank => "Tough all-rounder.",
                 Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
@@ -1305,9 +1308,8 @@ public partial class Main : Node3D
             if (e.Stats.IsUnit && Shown(e)) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
-        var menu = "Factories " + World.FactoryCost + ": " + string.Join("  ", World.FactoryKinds.Select((k, i) => $"[{i + 1}] {NameOf(k)}"))
-                   + $"   [5] Outpost {World.OutpostCost}   [6] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts"
-                   + "\nExpand: send a scout to a deposit, build an extractor on it, then an outpost on the pad beside it";
+        UpdateBuildMenu();
+        var menu = "[B] Build   [E] Pick scouts   [P] Pause   [Esc] Menu";
         var placingWhat = _placing switch
         {
             Kind.Outpost => "an outpost (on the pad beside one of your extractors)",
@@ -1335,7 +1337,7 @@ public partial class Main : Node3D
         else if (!W.Started)
             _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
                 ? "Waiting for the enemy to place their first factory..."
-                : "Place your first factory: press 1-4 (light tank, tank, mortar, artillery), then click near your HQ\nThe battle starts once both sides have one";
+                : "Place your first factory: press B, pick one, then click near your HQ\nThe battle starts once both sides have one";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
@@ -1343,6 +1345,104 @@ public partial class Main : Node3D
             _banner.Text = $"PAUSED by {who}  {secs}s\nOrders apply when play resumes" + (W.PausedBy == _me ? "  -  Enter to resume" : "");
         }
         else _banner.Text = "";
+    }
+
+    // ---- the build menu (the user, 2026-10-20: "b to pop open build and then you can hotkey each options and have a
+    // little menu in the middle show these options") ------------------------------------------------------------
+
+    /// <summary>One line of the build menu: its key, what it's called, what it costs, and what picking it does
+    /// (a building to place, or Place null for a scout from the HQ).</summary>
+    sealed record BuildOption(Key Key, string Name, int Cost, Kind? Place);
+
+    static readonly BuildOption[] BuildOptions =
+    {
+        new(Key.L, "Light tank factory", World.FactoryCost, Kind.LightTank),
+        new(Key.T, "Tank factory", World.FactoryCost, Kind.Tank),
+        new(Key.M, "Mortar factory", World.FactoryCost, Kind.Mortar),
+        new(Key.A, "Artillery factory", World.FactoryCost, Kind.Artillery),
+        new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
+        new(Key.O, "Outpost (on the pad by an extractor)", World.OutpostCost, Kind.Outpost),
+        new(Key.C, "Scout (built at the HQ)", World.ScoutCost, null),
+    };
+
+    Control _buildMenu;
+    readonly List<Button> _buildButtons = new();
+    bool _buildOpen;
+
+    void BuildBuildMenu(CanvasLayer ui)
+    {
+        _buildMenu = new CenterContainer { AnchorRight = 1, AnchorBottom = 1, Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        var panel = new PanelContainer();
+        panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.07f, 0.08f, 0.1f, 0.9f), BorderColor = new Color(0.45f, 0.75f, 0.9f),
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
+            ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 12, ContentMarginBottom = 12,
+        });
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 4);
+        var title = new Label { Text = "Build", HorizontalAlignment = HorizontalAlignment.Center };
+        title.AddThemeFontSizeOverride("font_size", 22);
+        column.AddChild(title);
+        foreach (var option in BuildOptions)
+        {
+            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, CustomMinimumSize = new Vector2(420, 36) };
+            b.AddThemeFontSizeOverride("font_size", 18);
+            b.Pressed += () => PickBuild(option);
+            column.AddChild(b);
+            _buildButtons.Add(b);
+        }
+        var hint = new Label
+        {
+            Text = "Press a letter (or click).  B or Esc closes.\nExpand: scout a deposit, put an extractor on it, then an outpost on its pad.",
+            HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.7f),
+        };
+        hint.AddThemeFontSizeOverride("font_size", 14);
+        column.AddChild(hint);
+        panel.AddChild(column);
+        _buildMenu.AddChild(panel);
+        ui.AddChild(_buildMenu);
+    }
+
+    void SetBuildMenu(bool open)
+    {
+        _buildOpen = open && W.Winner < 0;
+        _buildMenu.Visible = _buildOpen;
+        if (_buildOpen) _placing = null;
+    }
+
+    /// <summary>Why an option can't be had right now, or null if it can.</summary>
+    string BuildBlocked(BuildOption o)
+    {
+        if (W.Players[_me].Metal < o.Cost) return "not enough metal";
+        if (o.Place is Kind.Outpost or Kind.Extractor || o.Place == null)
+            if (!W.Started) return "once the battle starts";
+        if (o.Place == null && !W.CanQueueScout(_me, out var why)) return why.ToLowerInvariant();
+        return null;
+    }
+
+    /// <summary>The buttons' text, each frame the menu is open: key, name, cost, and why not if it can't be had.</summary>
+    void UpdateBuildMenu()
+    {
+        if (!_buildOpen) return;
+        for (int i = 0; i < BuildOptions.Length; i++)
+        {
+            var o = BuildOptions[i];
+            var blocked = BuildBlocked(o);
+            _buildButtons[i].Text = $"[{o.Key}]   {o.Name}   {o.Cost}" + (blocked != null ? $"   ({blocked})" : "");
+            _buildButtons[i].Modulate = blocked == null ? Colors.White : new Color(1, 1, 1, 0.45f);
+        }
+    }
+
+    /// <summary>A building to place (the menu closes and the hologram follows the mouse), or a scout ordered at once.</summary>
+    void PickBuild(BuildOption o)
+    {
+        if (o.Place is Kind.Outpost or Kind.Extractor || o.Place == null)
+            if (!W.Started) return;
+        SetBuildMenu(false);
+        if (o.Place is { } kind) _placing = kind;
+        else _session.Issue(new QueueScout(_me));
     }
 
     // ---- the Escape menu (the user, 2026-10-20: "we need escape to pause") -----------------------------------------
@@ -1480,6 +1580,14 @@ public partial class Main : Node3D
         }
         else if (ev is InputEventMouseMotion motion && _dragFrom is { } start)
             _overlay.Box = start.DistanceTo(motion.Position) > 8 ? new Rect2(start, Vector2.Zero).Expand(motion.Position) : null;
+        else if (ev is InputEventKey bk && bk.Pressed && !bk.Echo && _buildOpen)
+        {
+            // The build menu has the keys while it's open: an option's letter picks it; B or Esc closes it.
+            if (bk.Keycode is Key.B or Key.Escape) SetBuildMenu(false);
+            else if (System.Array.Find(BuildOptions, o => o.Key == bk.Keycode) is { } option) PickBuild(option);
+            else if (bk.Keycode == Key.P) _session.Issue(new Pause(_me));
+        }
+        else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) SetBuildMenu(true);
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
             if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKinds.Length && W.Winner < 0)
@@ -1511,10 +1619,11 @@ public partial class Main : Node3D
     void MoveCamera(float dt)
     {
         var pan = Vector3.Zero;
-        if (Input.IsKeyPressed(Key.W) || Input.IsKeyPressed(Key.Up)) pan.Z -= 1;
-        if (Input.IsKeyPressed(Key.S) || Input.IsKeyPressed(Key.Down)) pan.Z += 1;
-        if (Input.IsKeyPressed(Key.A) || Input.IsKeyPressed(Key.Left)) pan.X -= 1;
-        if (Input.IsKeyPressed(Key.D) || Input.IsKeyPressed(Key.Right)) pan.X += 1;
+        bool letters = !_buildOpen;   // (while the build menu is open, A is artillery, not left)
+        if ((letters && Input.IsKeyPressed(Key.W)) || Input.IsKeyPressed(Key.Up)) pan.Z -= 1;
+        if ((letters && Input.IsKeyPressed(Key.S)) || Input.IsKeyPressed(Key.Down)) pan.Z += 1;
+        if ((letters && Input.IsKeyPressed(Key.A)) || Input.IsKeyPressed(Key.Left)) pan.X -= 1;
+        if ((letters && Input.IsKeyPressed(Key.D)) || Input.IsKeyPressed(Key.Right)) pan.X += 1;
         _focus += pan * _distance * 0.8f * dt;
         _focus.X = Mathf.Clamp(_focus.X, -World.MapHalfX.ToFloat(), World.MapHalfX.ToFloat());
         _focus.Z = Mathf.Clamp(_focus.Z, -World.MapHalfZ.ToFloat(), World.MapHalfZ.ToFloat());
