@@ -97,25 +97,65 @@ def scout():
 
 
 def lighttank():
-    """A light tank (the user, 2026-10-20: "a combat tank", cheaper than the tank): small, wide and flat on four wheels
-    in armoured fairings, a blunt chamfered nose, a low round-cornered turret in the middle with one long thin gun
-    reaching out past the nose. Reads as a small tank (a gun, not the scout's dish; a short boxy hull, not its dart)."""
+    """A light tank (the user, 2026-10-20: "a combat tank", cheaper than the tank): small, wide and flat on four big
+    wheels under armoured mudguards, a blunt chamfered nose, a low eight-sided turret in the middle with one long thin
+    gun reaching out past the nose. Reads as a small tank (a gun, not the scout's dish; a short boxy hull, not its
+    dart). The detailed pass (2026-10-20, "more detailed models"): bevelled edges, panel seams, hatches, stowage,
+    tow hooks, a sensor cupola, smoke dischargers, a mantlet and muzzle brake, real wheels with hubs."""
     k.begin(0.0)
+    # --- running gear: four wheels, each under an armoured mudguard with a lit strip
     for s in (1, -1):
-        for a in (-3.6, 3.2):                                                           # four wheel fairings
-            lo, hi = sorted((s * 2.6, s * 4.2))
-            plate(a - 1.8, a + 1.8, lo, hi, 0.0, 2.3, "plate", inset=0.3, front=0.6, back=0.6)
-            k.box(a - 1.2, a + 1.2, s * 4.2 - 0.05, s * 4.2 + 0.05, 1.0, 1.2, "glow")
-    plate(-5.6, 5.6, -3.4, 3.4, 1.0, 3.0, "steel", inset=0.4, front=1.8, back=0.6)      # the hull, blunt nose
+        for a in (-3.6, 3.2):
+            road_wheel(a, s * 2.95, 1.05, 1.05, s)
+            lo, hi = sorted((s * 2.55, s * 4.15))
+            plate(a - 0.95, a + 0.95, lo, hi, 1.75, 2.45, "plate", inset=0.18, front=0.35, back=0.35)   # mudguard, the tyre showing fore and aft
+            k.box(a - 0.6, a + 0.6, s * 4.15 - 0.05 if s > 0 else s * 4.15 - 0.03, s * 4.15 + 0.03 if s > 0 else s * 4.15 + 0.05,
+                  1.95, 2.1, "glow")
+        # suspension arms from the hull down to each wheel hub
+        for a in (-3.6, 3.2):
+            k.box(a - 0.25, a + 0.25, *sorted((s * 2.3, s * 2.75)), 0.7, 1.2, "dark")
+    k.box(-5.0, 5.0, -2.5, 2.5, 0.55, 1.2, "dark")                                      # belly
+    # --- hull: a raked nose, armour plates in seams, a team stripe each side
+    plate(-5.6, 5.6, -3.4, 3.4, 1.0, 3.0, "steel", inset=0.4, front=1.8, back=0.6)
+    plate(-5.3, -1.4, -2.9, 2.9, 3.0, 3.18, "plate", inset=0.15)                        # engine deck plate
+    plate(2.0, 3.9, -2.4, 2.4, 3.0, 3.12, "plate", inset=0.1)                           # driver's plate
+    seam(-1.3, -1.2, -2.9, 2.9, 3.0)                                                    # seams across the deck
+    seam(1.85, 1.95, -2.9, 2.9, 3.0)
     for s in (1, -1):
-        lens(5.62 - 1.0, s * 2.0, 2.0, 0.2)
-        strip(-4.6, 2.6, s * 2.4 - 0.25, s * 2.4 + 0.25, 2.98, "paint", 0.1)
-    hexagon(-0.4, 0, 2.3, 3.0, 4.4, "steel", r1=1.8, sides=8, turn=math.pi / 8)        # the turret
-    hexagon(-0.4, 0, 1.5, 4.4, 4.6, "paint", sides=8, turn=math.pi / 8)
-    k.tube(1.4, 9.0, 0, 3.7, 0.24, "mid", 8)                                            # one long thin gun
-    k.tube(8.4, 9.2, 0, 3.7, 0.34, "dark", 8)
-    vents(-5.2, -3.4, -1.8, 1.8, 2.95, 3)
-    k.finish("lighttank", 24.0, UNITS)
+        strip(-4.6, 1.6, s * 2.6 - 0.22, s * 2.6 + 0.22, 3.0, "paint", 0.1)
+        lens(5.62 - 1.0, s * 2.0, 2.05, 0.2)                                             # headlamp sensors
+        k.box(4.25, 4.6, s * 1.55 - 0.25, s * 1.55 + 0.25, 1.75, 2.25, "dark")           # lamp guards
+        # tow hooks on the nose, and on the tail
+        k.box(5.3, 5.85, s * 1.2 - 0.12, s * 1.2 + 0.12, 1.05, 1.35, "dark")
+        k.box(-5.95, -5.5, s * 1.4 - 0.12, s * 1.4 + 0.12, 1.25, 1.55, "dark")
+        # stowage boxes on the fenders behind the turret
+        stowage(-4.9, -2.6, *sorted((s * 3.0, s * 3.45)), 2.45, 3.05)
+        bolts(-5.0, 4.6, s * 3.4, 1.4, 9, side=s)                                         # a bolt row along the lower hull
+    hatch(3.0, -1.2, 3.12, 0.55)                                                        # driver's hatch
+    k.box(3.1, 3.6, 0.6, 1.6, 3.12, 3.32, "black")                                      # driver's vision slit
+    vents(-5.2, -3.3, -1.8, 1.8, 3.18, 4)                                               # engine grille
+    k.box(-5.75, -5.6, -2.0, 2.0, 2.1, 2.75, "black")                                   # exhaust louvres at the back
+    for i in range(4):
+        k.box(-5.82, -5.7, -1.8 + i * 1.05, -1.0 + i * 1.05, 2.2, 2.65, "dark")
+    # --- turret: eight-sided, a seam round it, a team roof, hatch, cupola, smoke dischargers
+    hexagon(-0.4, 0, 2.3, 3.0, 4.3, "steel", r1=1.85, sides=8, turn=math.pi / 8)
+    hexagon(-0.4, 0, 2.2, 3.55, 3.62, "black", r1=2.15, sides=8, turn=math.pi / 8)   # the seam round its middle
+    hexagon(-0.4, 0, 1.6, 4.3, 4.48, "paint", r1=1.5, sides=8, turn=math.pi / 8)
+    hatch(-1.0, 0.7, 4.48, 0.42)
+    k.drum(-0.2, -0.9, 0.38, 4.48, 4.95, "mid", 8)                                      # sensor cupola
+    lens(0.2, -0.9, 4.75, 0.17)
+    k.drum(-1.4, -1.0, 0.05, 4.48, 7.4, "black", 4)                                     # aerial
+    k.drum(-1.4, -1.0, 0.13, 7.4, 7.6, "glow", 4)
+    for s in (1, -1):                                                                   # smoke dischargers, three a side
+        for i in range(3):
+            tube_between((0.7 + i * 0.35, s * 1.9, 3.85), (1.15 + i * 0.35, s * 2.25, 4.15), 0.12, "dark", 6)
+    # --- the gun: a mantlet, the barrel with a sleeve, a muzzle brake
+    plate(1.3, 2.35, -0.75, 0.75, 3.15, 4.2, "plate", inset=0.12, front=0.25)           # mantlet
+    k.tube(2.3, 9.0, 0, 3.7, 0.22, "mid", 10)
+    k.tube(3.2, 5.0, 0, 3.7, 0.3, "dark", 10)                                           # thermal sleeve
+    k.tube(8.3, 9.35, 0, 3.7, 0.33, "dark", 10)                                         # muzzle brake
+    k.box(8.55, 9.1, -0.42, 0.42, 3.62, 3.78, "black")                                  # its side ports
+    finish_detailed("lighttank", 24.0, UNITS)
 
 
 def mortar():

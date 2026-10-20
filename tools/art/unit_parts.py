@@ -93,3 +93,61 @@ def apron(half_a, half_x, h=0.5, lines=True):
             for c in (1, -1):
                 k.box(c * half_a - (0.9 if c > 0 else -0.1) - 0.4, c * half_a - (0.9 if c > 0 else -0.1) + 0.4,
                       s * (half_x - 1.2) - 0.4, s * (half_x - 1.2) + 0.4, h, h + 0.08, "glow")
+
+
+# ---- detail (the user, 2026-10-20: "can we make more detailed models of the units and buildings") ------------------
+
+def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
+    """k.finish, but first every piece's sharp edges are bevelled: a narrow chamfer on each edge sharper than `angle`
+    degrees, so edges catch the light instead of every box meeting at a knife line. Thin pieces are left alone where
+    the chamfer would eat them (clamped). Prints the triangle count, to keep an eye on the cost."""
+    import bmesh
+    for ob in k.pieces:
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        sharp = [e for e in bm.edges if e.is_manifold and e.calc_face_angle(0.0) > math.radians(angle)]
+        if sharp:
+            bmesh.ops.bevel(bm, geom=sharp, offset=bevel, offset_type="OFFSET", segments=1, affect="EDGES",
+                            clamp_overlap=True, profile=0.5)
+        bm.to_mesh(ob.data)
+        bm.free()
+    tris = sum(len(p.vertices) - 2 for ob in k.pieces for p in ob.data.polygons)
+    print("%s: %d triangles" % (name, tris))
+    k.finish(name, span, folder)
+
+
+def seam(a0, a1, x0, x1, z, t=0.06):
+    """A dark panel line lying on a surface at height z (a slot between armour plates)."""
+    k.box(a0, a1, x0, x1, z - 0.02, z + t, "black")
+
+
+def hatch(a, x, z, r, mat="plate"):
+    """A round hatch on a deck: a ring, a lid, a handle."""
+    k.drum(a, x, r, z, z + 0.12, "dark", 10)
+    k.drum(a, x, r * 0.85, z + 0.12, z + 0.22, mat, 10)
+    k.box(a - r * 0.4, a + r * 0.4, x - 0.05, x + 0.05, z + 0.22, z + 0.32, "dark")
+
+
+def stowage(a0, a1, x0, x1, z0, z1, mat="plate"):
+    """A stowage box: a lid seam round its top and two clasps on its outer face."""
+    plate(a0, a1, x0, x1, z0, z1, mat, inset=0.08)
+    seam(a0 + 0.1, a1 - 0.1, x0 + 0.1, x1 - 0.1, z1 - 0.25, 0.04)
+    for a in (a0 + (a1 - a0) * 0.3, a0 + (a1 - a0) * 0.7):
+        k.box(a - 0.08, a + 0.08, x0 - 0.04, x1 + 0.04, z1 - 0.45, z1 - 0.2, "dark")
+
+
+def bolts(a0, a1, x, z, count, side=1, size=0.07):
+    """A row of bolt heads on an upright face at `x`, standing out to `side` (+1 or -1)."""
+    for i in range(count):
+        a = a0 + (a1 - a0) * (i + 0.5) / count
+        x0, x1 = sorted((x, x + side * size))
+        k.box(a - size, a + size, x0, x1, z - size, z + size, "dark")
+
+
+def road_wheel(a, x, z, r, side):
+    """A road wheel facing out to `side`: a tyre, a dished hub, a cap."""
+    from mathutils import Vector
+    xo = x + side * 0.0
+    tube_between((a, xo, z), (a, xo + side * 0.45, z), r, "black", 12)
+    tube_between((a, xo + side * 0.45, z), (a, xo + side * 0.5, z), r * 0.75, "mid", 10)
+    tube_between((a, xo + side * 0.5, z), (a, xo + side * 0.62, z), r * 0.3, "dark", 8)

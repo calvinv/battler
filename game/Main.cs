@@ -180,6 +180,15 @@ public partial class Main : Node3D
 
     void BuildLineup()
     {
+        int before = GetChildCount();
+        BuildLineupModels();
+        // Stood on the ground (the middle of the map is a hill now).
+        for (int i = before; i < GetChildCount(); i++)
+            if (GetChild(i) is Node3D n) n.Position += Vector3.Up * _terrain.HeightAt(n.Position.X, n.Position.Z);
+    }
+
+    void BuildLineupModels()
+    {
         for (int team = 0; team < 2; team++)
             for (int i = 0; i < LineupUnits.Length; i++)
             {
@@ -224,11 +233,18 @@ public partial class Main : Node3D
     {
         MoveCamera(0);
         _lineupFrame++;
-        string name = _lineupFrame == 10 ? "lineup_far" : _lineupFrame == 20 ? "lineup_near" : null;
+        string name = _lineupFrame switch { 10 => "lineup_far", 20 => "lineup_near", 30 => "lineup_close", _ => null };
         if (name == null) return;
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath("res://screenshots"));
         GetViewport().GetTexture().GetImage().SavePng($"res://screenshots/{name}.png");
         if (_lineupFrame == 10) { _distance = 40; _focus = new Vector3(3, 0, 3); }
+        // Then right up close on one unit (LINEUP_CLOSE: its index in LineupUnits, the light tank by default).
+        else if (_lineupFrame == 20)
+        {
+            int i = int.TryParse(OS.GetEnvironment("LINEUP_CLOSE"), out var n) ? n : 1;
+            _focus = new Vector3((i - 2) * 6, 0, -3.5f);
+            _distance = 11;
+        }
         else GetTree().Quit();
     }
 
