@@ -199,6 +199,8 @@ public sealed class Terrain : System.IDisposable
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + room) return false;
             if (WaterDepth(p.X, p.Y) > -2f - room) return false;                                     // not in the water
             foreach (var d in World.Deposits) if (p.DistanceTo(new Vector2(d.X.ToFloat(), d.Z.ToFloat())) < 5 + room) return false;   // room to mine
+            for (int i = 0; i < World.Pads.Length; i++)                                               // nor on an outpost pad
+                if (World.HasPad[i] && p.DistanceTo(new Vector2(World.Pads[i].X.ToFloat(), World.Pads[i].Z.ToFloat())) < 6 + room) return false;
             return Mathf.Abs(p.X) < _halfX + Margin - 2 && Mathf.Abs(p.Y) < _halfZ + Margin - 2;
         }
         Transform3D Stand(Vector2 p, float scale, float lean = 0f)

@@ -17,7 +17,7 @@ namespace Battler.Game;
 /// placing, Esc or right click cancels). The old keys still work: 1-4 factories, 5 outpost, 6 extractor, Q scout.
 /// E picks all scouts; click, Shift-click
 /// or drag a box to pick scouts, right-click to send them. A click selects anything else to see its stats, upgrades
-/// and Sell (Esc clears). WASD/arrows pan, wheel zooms,
+/// and Sell (Esc clears). WASD/arrows pan, wheel zooms, middle-drag turns and tilts the view, V resets it,
 /// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
@@ -159,6 +159,12 @@ public partial class Main : Node3D
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
             if (args.Contains("--build")) SetBuildMenu(true);   // the build menu open
+            if (args.IndexOf("--view") is int vi and >= 0 && vi + 2 < args.Count)   // --view yawDegrees pitchDegrees: a turned view
+            {
+                _yaw = Mathf.DegToRad(float.Parse(args[vi + 1]));
+                _pitch = float.Parse(args[vi + 2]);
+                _viewHintUntil = Time.GetTicksMsec() + 20000;
+            }
             _watchFelled = args.Contains("--felled");      // close on the first tree knocked down, once it's down
             if (args.IndexOf("--look") is int li and >= 0 && li + 3 < args.Count)   // --look x z distance: the camera on a spot, fog lifted
             { _focus = new Vector3(float.Parse(args[li + 1]), 0, float.Parse(args[li + 2])); _distance = float.Parse(args[li + 3]); _noFog = true; UpdateFog(); _selected = -1; }
@@ -436,7 +442,7 @@ public partial class Main : Node3D
                 SkyMaterial = new ProceduralSkyMaterial
                 {
                     SkyTopColor = new Color(0.32f, 0.45f, 0.62f), SkyHorizonColor = new Color(0.66f, 0.7f, 0.72f),
-                    GroundBottomColor = new Color(0.12f, 0.11f, 0.1f), GroundHorizonColor = new Color(0.55f, 0.55f, 0.52f),
+                    GroundBottomColor = new Color(0.5f, 0.52f, 0.52f), GroundHorizonColor = new Color(0.62f, 0.65f, 0.67f),   // (haze past the map's edge)
                     SunAngleMax = 20f,
                 },
             },
@@ -639,6 +645,15 @@ public partial class Main : Node3D
         };
         _banner.AddThemeFontSizeOverride("font_size", 32);
         ui.AddChild(_banner);
+        _viewHint = new Label
+        {
+            Text = "[V] Reset the view", AnchorLeft = 0, AnchorRight = 1, AnchorTop = 1, AnchorBottom = 1, OffsetTop = -44,
+            HorizontalAlignment = HorizontalAlignment.Center, Visible = false, Modulate = new Color(1, 1, 1, 0.85f),
+        };
+        _viewHint.AddThemeFontSizeOverride("font_size", 20);
+        _viewHint.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _viewHint.AddThemeConstantOverride("outline_size", 6);
+        ui.AddChild(_viewHint);
         BuildMenu(ui);
         BuildBuildMenu(ui);
     }
@@ -1513,6 +1528,16 @@ public partial class Main : Node3D
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) SetMenu(false);
             return;
         }
+        // Middle-drag turns the view round (across) and tilts it (up and down); V puts it back.
+        if (ev is InputEventMouseButton { ButtonIndex: MouseButton.Middle } middle) { _orbiting = middle.Pressed; return; }
+        if (ev is InputEventMouseMotion turn && _orbiting)
+        {
+            _yaw -= turn.Relative.X * 0.006f;
+            _pitch = Mathf.Clamp(_pitch + turn.Relative.Y * 0.25f, 25f, 85f);
+            _viewHintUntil = Time.GetTicksMsec() + 20000;
+            return;
+        }
+        if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.V } && !_buildOpen) { ResetView(); return; }
         if (ev is InputEventMouseButton mb && mb.Pressed)
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
@@ -1624,14 +1649,36 @@ public partial class Main : Node3D
         if ((letters && Input.IsKeyPressed(Key.S)) || Input.IsKeyPressed(Key.Down)) pan.Z += 1;
         if ((letters && Input.IsKeyPressed(Key.A)) || Input.IsKeyPressed(Key.Left)) pan.X -= 1;
         if ((letters && Input.IsKeyPressed(Key.D)) || Input.IsKeyPressed(Key.Right)) pan.X += 1;
-        _focus += pan * _distance * 0.8f * dt;
+        // Panning goes the way the camera faces (it may have been turned round).
+        _focus += pan.Rotated(Vector3.Up, _yaw) * _distance * 0.8f * dt;
         _focus.X = Mathf.Clamp(_focus.X, -World.MapHalfX.ToFloat(), World.MapHalfX.ToFloat());
         _focus.Z = Mathf.Clamp(_focus.Z, -World.MapHalfZ.ToFloat(), World.MapHalfZ.ToFloat());
 
-        // Looks down at 53 degrees, like the house render camera.
-        var pitch = Mathf.DegToRad(53);
-        var offset = new Vector3(0, Mathf.Sin(pitch), Mathf.Cos(pitch)) * _distance;
-        _camera.Transform = new Transform3D(Basis.LookingAt(-offset, Vector3.Up), _focus + offset);
+        // Normally looks down at 53 degrees from the south, like the house render camera; middle-drag turns and tilts it.
+        var pitch = Mathf.DegToRad(_pitch);
+        var offset = new Vector3(0, Mathf.Sin(pitch), Mathf.Cos(pitch)).Rotated(Vector3.Up, _yaw) * _distance;
+        // Aimed at the ground under the focus (on a hill, low angles would otherwise look into the hillside).
+        var look = _focus + Vector3.Up * (_terrain?.HeightAt(_focus.X, _focus.Z) ?? 0f);
+        _camera.Transform = new Transform3D(Basis.LookingAt(-offset, Vector3.Up), look + offset);
+
+        // "V resets the view" shows for 20 s after the view was last turned.
+        if (_viewHint != null) _viewHint.Visible = Time.GetTicksMsec() < _viewHintUntil;
+    }
+
+    // ---- turning the camera (the user, 2026-10-20: "middle clicking to change the camera to look around ... and some
+    // key to reset the view, that is shown on screen when you change the perspective for 20s") -------------------
+    float _yaw;                  // radians the view is turned round from looking north
+    float _pitch = DefaultPitch; // degrees down from level
+    const float DefaultPitch = 53f;
+    bool _orbiting;              // the middle button is held
+    ulong _viewHintUntil;
+    Label _viewHint;
+
+    void ResetView()
+    {
+        _yaw = 0;
+        _pitch = DefaultPitch;
+        _viewHintUntil = 0;
     }
 
     Vector3? GroundUnderMouse()

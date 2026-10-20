@@ -301,6 +301,7 @@ void vertex() {
 }
 void fragment() {
 	ALBEDO = tint;
+	BACKLIGHT = tint * 0.6;   // light through the foliage: the side away from the sun isn't black
 	if (!FRONT_FACING) NORMAL = -NORMAL;
 	ROUGHNESS = 0.9;
 	SPECULAR = 0.2;
