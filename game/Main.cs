@@ -55,6 +55,7 @@ public partial class Main : Node3D
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
     readonly List<Node3D> _depositViews = new();
+    readonly Dictionary<int, Node3D> _padViews = new();   // per deposit with one: its outpost pad
     int _sellArmed = -1;          // the building a first click on Sell asked about
     ulong _sellArmedUntil;
     Button _rallyButton;
@@ -138,7 +139,15 @@ public partial class Main : Node3D
                     .FirstOrDefault();
                 if (hot != null) { _focus = ToV3(hot.Pos); _distance = 24; _noFog = true; UpdateFog(); _selected = -1; }
             }
-            if (args.Contains("--placing")) { _placing = Kind.Tank; _placeAtCentre = true; }   // a tank factory in hand, under the screen's centre
+            if (args.IndexOf("--placing") is int pi and >= 0)   // something in hand under the screen's centre: a tank factory, or "outpost"
+            {
+                _placeAtCentre = true;
+                _placing = pi + 1 < args.Count && args[pi + 1] == "outpost" ? Kind.Outpost : Kind.Tank;
+                if (_placing == Kind.Outpost)   // look at the pad by my first extractor that has one
+                    for (int d = 0; d < World.Deposits.Length; d++)
+                        if (World.HasPad[d] && W.ExtractorOn(d) is { } rig && rig.Owner == _me)
+                        { _focus = ToV3(World.Pads[d]); _distance = 40; _selected = -1; break; }
+            }
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             // --frames N: play on N frames first (shells in flight, tread marks laid), then take it.
@@ -367,14 +376,22 @@ public partial class Main : Node3D
             if (e.Owner != _me) continue;
             if (e.Kind == Kind.Outpost) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
             if (e.Kind != Kind.Scout) continue;
-            // Placing an outpost or extractor: how near each scout it must go.
-            if (_placing is Kind.Outpost or Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
+            // Placing an extractor: how near each scout it must go.
+            if (_placing == Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
             // A picked scout: a ring round it, and where it's going.
             if (_scouts.Contains(e.Id))
             {
                 Circle(e.Pos, 1.3f);
                 if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
             }
+        }
+        // Pads by my extractors with nothing on them yet: ringed and tied to their extractor, "an outpost goes here".
+        for (int d = 0; d < World.Deposits.Length; d++)
+        {
+            if (!World.HasPad[d] || W.ExtractorOn(d) is not { } rig || rig.Owner != _me) continue;
+            if (W.Entities.Exists(o => o.Kind == Kind.Outpost && !o.Dead && (o.Pos - World.Pads[d]).LengthSq < Fix.FromInt(4))) continue;
+            Circle(World.Pads[d], 3.4f);
+            Line(World.Deposits[d] + (World.Pads[d] - World.Deposits[d]).WithLength(Fix.FromInt(2)), World.Pads[d] - (World.Pads[d] - World.Deposits[d]).WithLength(Fix.FromInt(3)));
         }
         void Line(FixVec2 from, FixVec2 to)
         {
@@ -446,6 +463,31 @@ public partial class Main : Node3D
             ore.Basis = new Basis(Vector3.Up, i * 1.7f).Scaled(Vector3.One * 1.4f);   // (bigger, to read from afar)
             AddChild(ore);
             _depositViews.Add(ore);
+            if (!World.HasPad[i]) continue;
+            // Its outpost pad: a hexagon of concrete with a lit rim, so it reads as "build here".
+            var pad = new MeshInstance3D
+            {
+                Mesh = new CylinderMesh { TopRadius = 2.7f, BottomRadius = 2.9f, Height = 0.5f, RadialSegments = 6, Rings = 1 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.43f, 0.45f), Roughness = 0.9f },
+                Position = ToV3(World.Pads[i]),
+            };
+            pad.AddChild(new MeshInstance3D
+            {
+                Mesh = new CylinderMesh { TopRadius = 2.75f, BottomRadius = 2.75f, Height = 0.06f, RadialSegments = 6, Rings = 1 },
+                MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.1f, 0.1f, 0.1f), EmissionEnabled = true, Emission = new Color(0.55f, 0.85f, 1f), EmissionEnergyMultiplier = 0.6f,
+                },
+                Position = new Vector3(0, 0.26f, 0), Scale = new Vector3(1, 1, 1),
+            });
+            pad.AddChild(new MeshInstance3D
+            {
+                Mesh = new CylinderMesh { TopRadius = 2.45f, BottomRadius = 2.45f, Height = 0.08f, RadialSegments = 6, Rings = 1 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.37f, 0.39f), Roughness = 0.9f },
+                Position = new Vector3(0, 0.27f, 0),
+            });
+            AddChild(pad);
+            _padViews[i] = pad;
         }
 
         _ring = new MeshInstance3D();
@@ -967,7 +1009,7 @@ public partial class Main : Node3D
     static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
     // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
     static readonly string[] OutpostTrack = { "Reach", "Guns", "Armour" };
-    static readonly string[] OutpostEffect = { "+4 reach and sight, +1 factory slot", "+25% gun damage", "+25% health" };
+    static readonly string[] OutpostEffect = { "+4 build reach and sight", "+25% gun damage", "+25% health" };
 
     /// <summary>The Sell button, for my factories and outposts: 75% back of all it cost, upgrades included.</summary>
     void ShowSell(Entity e)
@@ -1025,9 +1067,10 @@ public partial class Main : Node3D
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
-                    ? "Unarmed eyes. Finds deposits and sets up outposts:\nthey go down beside a scout. Right-click to send it."
+                    ? "Unarmed eyes. Finds deposits: an extractor can go\non a deposit beside it. Right-click to send it."
                     : "Unarmed eyes: it's scouting you.",
-                Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second.",
+                Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second."
+                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (3)." : ""),
                 Kind.Tank => "Tough all-rounder.",
                 Kind.Artillery => "Outranges everything and hits an area,\nbut can't fire at anything close.",
                 Kind.Hq => "Lose it and you lose the match.",
@@ -1050,7 +1093,7 @@ public partial class Main : Node3D
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (World.IsBase(e) && e.Owner == _me)
-            lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}" + (e.Kind == Kind.Outpost ? "  (Reach adds one)" : ""));
+            lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
         if (e.Kind == Kind.Hq && e.Owner == _me && e.ScoutQueue > 0)
             lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
@@ -1085,13 +1128,18 @@ public partial class Main : Node3D
             if (_placing == Kind.Extractor)
             {
                 // It snaps onto the deposit under the mouse.
-                _placeDeposit = DepositNear(at);
+                _placeDeposit = NearestOf(World.Deposits, at);
                 ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
                 if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
             }
-            else ok = _placing == Kind.Outpost
-                ? W.CanPlaceOutpost(_me, ToFix(at), out _placeProblem)
-                : W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
+            else if (_placing == Kind.Outpost)
+            {
+                // It snaps onto the pad under the mouse (the pad beside a deposit).
+                _placeDeposit = NearestOf(World.Pads, at, World.HasPad);
+                ok = W.CanPlaceOutpost(_me, _placeDeposit, out _placeProblem);
+                if (_placeDeposit >= 0) at = ToV3(World.Pads[_placeDeposit]);
+            }
+            else ok = W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
             var name = _placing is Kind.Outpost or Kind.Extractor ? ModelOf(_placing.Value) : "factory_" + ModelOf(_placing.Value);
@@ -1112,7 +1160,7 @@ public partial class Main : Node3D
             {
                 PlaceFactory pf => ("factory_" + ModelOf(pf.Makes), pf.Pos),
                 PlaceExtractor pe => ("extractor", World.Deposits[pe.Deposit]),
-                _ => ("outpost", ((PlaceOutpost)c).Pos),
+                _ => ("outpost", World.Pads[((PlaceOutpost)c).Deposit]),
             }).ToList();
         if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
@@ -1126,16 +1174,17 @@ public partial class Main : Node3D
 
     Node3D _placeModel;
     (string, bool) _placeModelKey;
-    int _placeDeposit = -1;   // placing an extractor: the deposit it would go on
+    int _placeDeposit = -1;   // placing an extractor or outpost: the deposit it would go on (or by)
 
-    /// <summary>The deposit nearest a point on the ground, if it's within a few paces; else -1.</summary>
-    static int DepositNear(Vector3 at)
+    /// <summary>The index of the spot (a deposit, or a pad) nearest a point on the ground, if within a few paces; else -1.</summary>
+    static int NearestOf(FixVec2[] spots, Vector3 at, bool[] only = null)
     {
         int best = -1;
-        float bestD = 5f;
-        for (int i = 0; i < World.Deposits.Length; i++)
+        float bestD = 6f;
+        for (int i = 0; i < spots.Length; i++)
         {
-            var d = new Vector2(World.Deposits[i].X.ToFloat() - at.X, World.Deposits[i].Z.ToFloat() - at.Z).Length();
+            if (only != null && !only[i]) continue;
+            var d = new Vector2(spots[i].X.ToFloat() - at.X, spots[i].Z.ToFloat() - at.Z).Length();
             if (d < bestD) { best = i; bestD = d; }
         }
         return best;
@@ -1163,10 +1212,11 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         var menu = string.Join("   ", World.FactoryKinds.Select((k, i) => $"[{i + 1}] {k}")) + $" factory {World.FactoryCost}"
-                   + $"   [3] Outpost {World.OutpostCost}   [4] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts";
+                   + $"   [3] Outpost {World.OutpostCost}   [4] Extractor {World.ExtractorCost}   [Q] Scout {World.ScoutCost}   [E] Pick scouts"
+                   + "\nExpand: send a scout to a deposit, build an extractor on it, then an outpost on the pad beside it";
         var placingWhat = _placing switch
         {
-            Kind.Outpost => "an outpost (beside one of your scouts)",
+            Kind.Outpost => "an outpost (on the pad beside one of your extractors)",
             Kind.Extractor => "an extractor (on a deposit in a ring or beside a scout)",
             _ => _placing + " factory",
         };
@@ -1176,7 +1226,7 @@ public partial class Main : Node3D
         _hud.Text =
             $"Metal {me.Metal}   +{W.IncomeOf(_me) * World.TicksPerSecond}/s\n" +
             building + "\n" +
-            $"Units {myUnits} vs {theirUnits} seen\n" +
+            $"Army {W.ArmyCount(_me)}/{World.MaxArmy}   units seen {myUnits} vs {theirUnits}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
@@ -1219,7 +1269,7 @@ public partial class Main : Node3D
                         var at = ToFix(_mouseGround.Value);
                         _session.Issue(_placing switch
                         {
-                            Kind.Outpost => new PlaceOutpost(_me, at),
+                            Kind.Outpost => new PlaceOutpost(_me, _placeDeposit),
                             Kind.Extractor => new PlaceExtractor(_me, _placeDeposit),
                             _ => new PlaceFactory(_me, at, _placing.Value),
                         });

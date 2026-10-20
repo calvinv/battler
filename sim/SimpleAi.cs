@@ -8,8 +8,8 @@ namespace Battler.Sim;
 /// human player, so it needs no special handling in a networked match.
 ///
 /// What it does, most urgent first: keeps a couple of scouts; mines every deposit it can reach; sends idle scouts to
-/// the nearest unmined deposit; fills its free factory slots; with every slot full, sets up an outpost beside a scout
-/// out in the field; and spends what's left on upgrades.
+/// the nearest unmined deposit; fills its free factory slots; with every slot full, builds an outpost on the pad by
+/// one of its extractors; and spends what's left on upgrades.
 /// </summary>
 public sealed class SimpleAi
 {
@@ -64,18 +64,14 @@ public sealed class SimpleAi
         }
         if (!w.Started) return;
 
-        // Every slot full: a new base beside a scout that's out by a deposit (or, half the time, upgrade instead).
+        // Every slot full: an outpost on the pad by one of its extractors (or, half the time, upgrade instead).
         if (freeBase == null && outposts.Count < MaxOutposts && _rng.Next(2) == 0)
         {
-            if (p.Metal < World.OutpostCost) return;   // saving for it
-            foreach (var s in scouts)
+            for (int d = 0; d < World.Deposits.Length; d++)
             {
-                if (s.HasWaypoint || Dist(s.Pos, p.HqPos) < 30) continue;   // not one still on its way, nor one at home
-                for (int attempt = 0; attempt < 8; attempt++)
-                {
-                    var pos = s.Pos + new FixVec2(_rng.Range(-7, 7), _rng.Range(-7, 7));
-                    if (w.CanPlaceOutpost(_player, pos, out _)) { issue(new PlaceOutpost(_player, pos)); return; }
-                }
+                if (!World.HasPad[d] || w.ExtractorOn(d) is not { } rig || rig.Owner != _player) continue;
+                if (w.CanPlaceOutpost(_player, d, out _)) { issue(new PlaceOutpost(_player, d)); return; }
+                if (p.Metal < World.OutpostCost) return;   // a pad is free: saving for it
             }
         }
         MaybeUpgrade(w, mine, issue, p.Metal > 800 ? 1 : 2);   // (with metal piling up, every time)
