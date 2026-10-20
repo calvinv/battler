@@ -875,10 +875,10 @@ public partial class Main : Node3D
     static float HeightOf(Kind k) => 0f;   // every model stands on its origin
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.15f, Kind.Artillery => 1.6f, Kind.LightTank => 0.85f, Kind.Mortar => 1.1f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.45f, Kind.Artillery => 1.9f, Kind.LightTank => 0.9f, Kind.Mortar => 2.1f, _ => 1f };
 
     /// <summary>How far in front of its centre a gun's muzzle is (units face their target, so it is along that line).</summary>
-    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.9f, Kind.Artillery => 2.2f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.2f, Kind.Mortar => 0.6f, _ => 0f };
+    static float BarrelOf(Kind k) => k switch { Kind.Tank => 2.3f, Kind.Artillery => 2.2f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.25f, Kind.Mortar => 0.1f, _ => 0f };
 
     /// <summary>How quickly each kind swings round, in radians a second.</summary>
     static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, Kind.LightTank => 7f, Kind.Mortar => 3.5f, _ => 4f };
