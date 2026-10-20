@@ -16,6 +16,15 @@ public sealed class Terrain : System.IDisposable
     static readonly Vector2[] Bases = { V(World.HqStart(0)), V(World.HqStart(1)) };
     static Vector2 V(FixVec2 p) => new(p.X.ToFloat(), p.Z.ToFloat());
     static readonly (Vector2 At, float R)[] Ponds = System.Array.ConvertAll(Ground.Ponds, p => (V(p.At), p.R.ToFloat()));
+    static readonly (Vector2 At, float Rx, float Rz)[] Lakes = System.Array.ConvertAll(Ground.Lakes, l => (V(l.At), l.Rx.ToFloat(), l.Rz.ToFloat()));
+
+    /// <summary>How far into a lake: under 1 inside, 1 on the shore (as Ground.LakeReach, in floats for drawing).</summary>
+    static float LakeReach(float x, float z)
+    {
+        float best = 100f;
+        foreach (var (at, rx, rz) in Lakes) best = Mathf.Min(best, new Vector2((x - at.X) / rx, (z - at.Y) / rz).Length());
+        return best;
+    }
     public const float WaterLevel = -0.75f;
 
     readonly FastNoiseLite _noise = new()
@@ -116,6 +125,7 @@ public sealed class Terrain : System.IDisposable
     {
         float wet = 0;
         foreach (var (at, r) in Ponds) wet = Mathf.Max(wet, 1f - Mathf.Clamp((new Vector2(x, z).DistanceTo(at) - r) / 3f, 0f, 1f));
+        wet = Mathf.Max(wet, 1f - Mathf.Clamp((LakeReach(x, z) - 1f) * 12f, 0f, 1f));   // (about three units of shore)
         return wet;
     }
 
@@ -177,6 +187,13 @@ public sealed class Terrain : System.IDisposable
         var root = new Node3D { Name = "Decor" };
         foreach (var (at, r) in Ponds)
             root.AddChild(new MeshInstance3D { Mesh = Disc(r + 0.9f, 48), MaterialOverride = water, Position = new Vector3(at.X, WaterLevel, at.Y) });
+        // The lakes: one big disc each, stretched to the lake's shape; the banks rise through its rim.
+        foreach (var (at, rx, rz) in Lakes)
+            root.AddChild(new MeshInstance3D
+            {
+                Mesh = Disc(1f, 128, 12), MaterialOverride = water,
+                Position = new Vector3(at.X, WaterLevel, at.Y), Scale = new Vector3(rx * 1.12f, 1, rz * 1.12f),
+            });
 
         var rng = new RandomNumberGenerator { Seed = 1234 };
         var pines = new List<Transform3D>();
@@ -187,6 +204,8 @@ public sealed class Terrain : System.IDisposable
             foreach (var b in Bases) if (p.DistanceTo(b) < 31) return false;
             if (Mathf.Abs(p.Y) < 13 && Mathf.Abs(p.X) < _halfX) return false;   // the lane the armies use
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + room) return false;
+            if (LakeReach(p.X, p.Y) < 1.06f + room * 0.01f) return false;                       // not in the lakes
+            if (Mathf.Abs(p.X) < 16 && Mathf.Abs(p.Y) < 15) return false;                        // the pass kept open
             foreach (var d in World.Deposits) if (p.DistanceTo(new Vector2(d.X.ToFloat(), d.Z.ToFloat())) < 5 + room) return false;   // room to mine
             return Mathf.Abs(p.X) < _halfX + Margin - 2 && Mathf.Abs(p.Y) < _halfZ + Margin - 2;
         }
@@ -297,6 +316,7 @@ public sealed class Terrain : System.IDisposable
             bool nearBase = false;
             foreach (var b in Bases) if (p.DistanceTo(b) < 26) nearBase = true;
             foreach (var (at, r) in Ponds) if (p.DistanceTo(at) < r + 0.6f) nearBase = true;   // (nor in the water)
+            if (LakeReach(p.X, p.Y) < 1.03f) nearBase = true;
             if (nearBase) continue;
             float size = rng.RandfRange(0.35f, 0.8f) * (0.6f + 0.6f * g);
             var basis = new Basis(Vector3.Up, rng.RandfRange(0, Mathf.Tau)).Scaled(new Vector3(size * 1.3f, size, size * 1.3f));

@@ -53,6 +53,9 @@ public sealed class Entity
     public int Deposit = -1;   // an extractor: which of World.Deposits it sits on
     public int ScoutQueue;     // the HQ: scouts paid for and waiting to be built (Timer counts down the current one)
     public readonly List<int> UpgradeQueue = new();   // a factory or outpost: upgrades (by Upgrade) to buy, in order, once affordable
+    public List<FixVec2> NavPath;      // a unit: corners to drive through to NavGoal (Nav), when there is no straight way
+    public FixVec2 NavGoal;
+    public int NavTick;                // when that path was found
     public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
 
     public int Level(Upgrade u) => Levels[(int)u];
@@ -117,7 +120,7 @@ public sealed class World
     public static readonly Fix BuildRadius = 25;
     // (The user, 2026-10-19: "the maps should also be further apart": the HQs 144 apart, was 90.)
     // (The user, 2026-10-20: "make more expansive maps with less resources on them": 280 by 170, the HQs 230 apart,
-    // eight deposits where there were twelve.)
+    // seven deposits where there were twelve.)
     public static readonly Fix MapHalfX = 140, MapHalfZ = 85;
     public static readonly Ground Ground = new(140, 85, new[] { HqStart(0), HqStart(1) });
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
@@ -129,7 +132,7 @@ public sealed class World
 
     /// <summary>
     /// The metal deposits, the same every match and mirrored left to right: few for the size of the map. One inside
-    /// each HQ's build ring, two out in the field on each side, and two in the middle for both to fight over.
+    /// each HQ's build ring, two out in the field on each side by the lakes, and one in the pass through the ridge.
     /// Every deposit outside the home rings has an outpost pad beside it (<see cref="Pads"/>): mine the deposit, then
     /// an outpost can go on its pad (the user, 2026-10-20: "it needs to be more clear that you build next to resource
     /// extractors for outposts").
@@ -145,9 +148,10 @@ public sealed class World
         var west = new (FixVec2 At, FixVec2? Pad)[]
         {
             (new(-108, 16), null),                                                   // home, inside the HQ ring
-            (new(-78, 52), new FixVec2(-78, 44)), (new(-52, -40), new FixVec2(-52, -32)),   // two out in the field
+            (new(-62, 42), new FixVec2(-62, 34)), (new(-64, -44), new FixVec2(-64, -36)),   // two out in the field, by the lakes
         };
-        var middle = new (FixVec2 At, FixVec2? Pad)[] { (new(0, 45), new FixVec2(0, 37)), (new(0, -42), new FixVec2(0, -34)) };
+        // One in the pass through the ridge, its pad beside it: hold it and you hold the way across.
+        var middle = new (FixVec2 At, FixVec2? Pad)[] { (new(0, -5), new FixVec2(0, 6)) };
         var all = new List<(FixVec2 At, FixVec2? Pad)>();
         foreach (var d in west)
         {
@@ -421,6 +425,10 @@ public sealed class World
     /// <summary>Something new of radius `r` at `pos` overlaps a building, or sits on a deposit.</summary>
     bool Blocked(FixVec2 pos, Fix r)
     {
+        // Not on water or the ridge: its middle and its edge all round must be ground units can reach.
+        if (!Nav.OpenAt(pos)) return true;
+        foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+            if (!Ground.Passable(pos + new FixVec2(dx, dz) * r)) return true;
         foreach (var e in Entities)
         {
             if (e.Dead || !e.Stats.IsBuilding) continue;
@@ -651,6 +659,52 @@ public sealed class World
         return step * factor;
     }
 
+    // ---- getting round the water and the ridge (Nav) ---------------------------------------------------------
+
+    readonly Nav _nav = new();
+
+    /// <summary>One tick's step for a unit heading for `goal`, at most `most` long (before the ground's slope): straight
+    /// if the way is clear, else along a found path, corner by corner. The path is found again when the goal has moved
+    /// on or every 5 s.</summary>
+    FixVec2 Drive(Entity e, FixVec2 goal, Fix most)
+    {
+        var aim = goal;
+        if (Nav.Clear(e.Pos, goal)) e.NavPath = null;
+        else
+        {
+            if (e.NavPath == null || e.NavPath.Count == 0 || (e.NavGoal - goal).LengthSq > Fix.FromInt(16) || Tick - e.NavTick > 50)
+            {
+                e.NavPath = _nav.Path(e.Pos, goal);
+                e.NavGoal = goal;
+                e.NavTick = Tick;
+            }
+            if (e.NavPath != null && e.NavPath.Count > 0)
+            {
+                // Past a corner (or one further on is already in view): on to the next.
+                while (e.NavPath.Count > 1 && ((e.NavPath[0] - e.Pos).LengthSq <= Fix.One || Nav.Clear(e.Pos, e.NavPath[1])))
+                    e.NavPath.RemoveAt(0);
+                aim = e.NavPath[0];
+                most = Fix.Min(most, Fix.Max((aim - e.Pos).Length, s_minStep));
+            }
+        }
+        var to = aim - e.Pos;
+        if (to.LengthSq.Raw == 0) return FixVec2.Zero;
+        return OverGround(e, to.WithLength(Fix.Min(most, to.Length)));
+    }
+
+    static readonly Fix s_minStep = Fix.Ratio(1, 10);
+
+    /// <summary>A move that would end in water or up a cliff slides along it instead (or stops).</summary>
+    static FixVec2 Slide(FixVec2 from, FixVec2 step)
+    {
+        var to = from + step;
+        if (Nav.OpenAt(to) || !Nav.OpenAt(from)) return to;   // (already somewhere shut: let it out)
+        var alongX = from + new FixVec2(step.X, Fix.Zero);
+        if (Nav.OpenAt(alongX)) return alongX;
+        var alongZ = from + new FixVec2(Fix.Zero, step.Z);
+        return Nav.OpenAt(alongZ) ? alongZ : from;
+    }
+
     /// <summary>Everyone's height, after they've moved.</summary>
     void Settle()
     {
@@ -840,7 +894,7 @@ public sealed class World
                 if (!s.IsUnit || !e.HasWaypoint) continue;
                 var to = e.Waypoint - e.Pos;
                 if (to.LengthSq <= Fix.Ratio(1, 2) * Fix.Ratio(1, 2)) { e.HasWaypoint = false; continue; }
-                _moves.Add((e, OverGround(e, to.WithLength(Fix.Min(s.Speed, to.Length)))));
+                _moves.Add((e, Drive(e, e.Waypoint, s.Speed)));
                 continue;
             }
 
@@ -856,7 +910,7 @@ public sealed class World
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (s.IsUnit) _moves.Add((e, OverGround(e, (target.Pos - e.Pos).WithLength(Fix.Min(s.Speed, gap - reach)))));
+                if (s.IsUnit) _moves.Add((e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach))));
             }
             else if (s.IsUnit)
             {
@@ -867,10 +921,10 @@ public sealed class World
                 if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
                 var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos);
                 var away = goal - e.Pos;
-                _moves.Add((e, OverGround(e, away.WithLength(Fix.Min(s.Speed, away.Length)))));
+                _moves.Add((e, Drive(e, goal, s.Speed)));
             }
         }
-        foreach (var (e, step) in _moves) e.Pos += step;
+        foreach (var (e, step) in _moves) e.Pos = Slide(e.Pos, step);
         foreach (var (target, damage, by) in _hits)
         {
             bool alive = target.Hp > 0;
@@ -977,7 +1031,7 @@ public sealed class World
             }
             if (total.X.Raw != 0 || total.Z.Raw != 0) _moves.Add((a, total));
         }
-        foreach (var (e, step) in _moves) e.Pos += step;
+        foreach (var (e, step) in _moves) e.Pos = Slide(e.Pos, step);
     }
 
     void Reap()

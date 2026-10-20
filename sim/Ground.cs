@@ -6,6 +6,10 @@ namespace Battler.Sim;
 /// The battlefield's shape: a fixed heightmap, the same every match and on every machine (fixed-point, built from an
 /// integer hash, no floats). Height matters (the user, 2026-10-19: "hills should matter"): see World's HighGround.
 /// Rolling hills, flat where the bases build, gentle down the middle lane where the armies meet, dips for ponds.
+/// Across the middle (the user, 2026-10-20: "two bodies of water, north and south that are quite large, a ridge in the
+/// middle that acts as a bottle neck"): a big lake north and another south, running off the map's edges, and between
+/// them a steep ridge with one pass through its middle. Water and the ridge's cliffs can't be crossed (Passable;
+/// units find their way round: Nav), so the pass is the only way across.
 /// The game draws the same heights (<see cref="HeightAtF"/>), out past the map's edge by <see cref="Margin"/>.
 /// </summary>
 public sealed class Ground
@@ -14,10 +18,41 @@ public sealed class Ground
     public static readonly (FixVec2 At, Fix R)[] Ponds =
     {
         // Mirrored left to right like the rest of the ground, so neither side has the better map.
-        (new FixVec2(28, 62), 6), (new FixVec2(-28, 62), 6), (new FixVec2(60, -66), 5), (new FixVec2(-60, -66), 5),
         (new FixVec2(95, -42), 5), (new FixVec2(-95, -42), 5), (new FixVec2(105, 62), Fix.Ratio(9, 2)), (new FixVec2(-105, 62), Fix.Ratio(9, 2)),
-        (new FixVec2(48, 24), 4), (new FixVec2(-48, 24), 4), (new FixVec2(20, -60), 5), (new FixVec2(-20, -60), 5),
     };
+
+    /// <summary>The two lakes: ellipses centred on the middle line, north and south, reaching past the map's edges.</summary>
+    public static readonly (FixVec2 At, Fix Rx, Fix Rz)[] Lakes = { (new FixVec2(0, 70), 50, 37), (new FixVec2(0, -70), 50, 37) };
+
+    /// <summary>The ridge runs north-south along x = 0: its crest RidgeCrest either side, its foot RidgeFoot; the pass
+    /// through it is open where |z| is under PassHalf, ramping up to full height by PassHalf + PassRamp.</summary>
+    public static readonly Fix RidgeCrest = 6, RidgeFoot = 14, RidgeHigh = 9, PassHalf = 12, PassRamp = 6;
+
+    /// <summary>How far into a lake a point is: under 1 inside (0 at its middle), 1 on its shore.</summary>
+    public static Fix LakeReach(FixVec2 p)
+    {
+        var best = Fix.FromInt(100);
+        foreach (var (at, rx, rz) in Lakes)
+        {
+            var dx = (p.X - at.X) / rx;
+            var dz = (p.Z - at.Z) / rz;
+            best = Fix.Min(best, Fix.Sqrt(dx * dx + dz * dz));
+        }
+        return best;
+    }
+
+    /// <summary>How much of the ridge stands here, 0 to 1 (0 off it and in the pass).</summary>
+    public static Fix RidgeAt(FixVec2 p) =>
+        SmoothStep(RidgeFoot, RidgeCrest, Fix.Abs(p.X)) * SmoothStep(PassHalf, PassHalf + PassRamp, Fix.Abs(p.Z));
+
+    /// <summary>Whether ground units can be here: not in water, not up the ridge's cliffs.</summary>
+    public static bool Passable(FixVec2 p)
+    {
+        if (LakeReach(p) < Fix.Ratio(98, 100)) return false;
+        foreach (var (at, r) in Ponds)
+            if ((p - at).LengthSq < (r - 1) * (r - 1)) return false;
+        return RidgeAt(p) < Fix.Ratio(35, 100);
+    }
 
     readonly int _x0, _z0, _w, _h;   // the grid: one height per world unit, from (_x0, _z0)
     readonly Fix[] _heights;
@@ -49,6 +84,11 @@ public sealed class Ground
             var d = (p - at).Length;
             if (d < r + 5) h = Lerp(Fix.Ratio(-17, 10), h, SmoothStep(r - Fix.Ratio(3, 2), r + 5, d));
         }
+        // The ridge rises over everything, a little rough along its crest; the lakes then cut it off at their shores.
+        var ridge = RidgeAt(p);
+        if (ridge.Raw > 0) h += ridge * (RidgeHigh + Value(mx, z, 6, 3) * Fix.Ratio(3, 2));
+        var reach = LakeReach(p);
+        if (reach < Fix.Ratio(13, 10)) h = Lerp(Fix.FromInt(-4), h, SmoothStep(Fix.Ratio(8, 10), Fix.Ratio(13, 10), reach));
         return h;
     }
 
