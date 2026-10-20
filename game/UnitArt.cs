@@ -72,9 +72,9 @@ public static class UnitArt
     // Where the emblems lie on each model, in its root's space (forward is -Z): a clear patch of deck, its height.
     static readonly Dictionary<string, (float Z, float Y)> Deck = new()
     {
-        ["tank"] = (0.85f, 1.15f),       // the engine deck at the back
-        ["artillery"] = (-0.85f, 0.76f), // the front deck, under the barrel
-        ["scout"] = (0.2f, 0.76f),       // the roof, ahead of the mast
+        ["tank"] = (1.05f, 0.92f),       // the engine deck at the back
+        ["artillery"] = (-0.75f, 0.78f), // the front deck, ahead of the turret
+        ["scout"] = (-0.3f, 0.64f),      // its back, ahead of the mast
     };
     static readonly Color[] Metal = { new(0.8f, 0.5f, 0.25f), new(0.85f, 0.87f, 0.92f), new(1f, 0.82f, 0.25f) };   // bronze, silver, gold
     static ImageTexture _swordTex, _shieldTex;
