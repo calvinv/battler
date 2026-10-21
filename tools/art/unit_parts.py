@@ -342,3 +342,221 @@ def finish_textured(name, span, serial="07", bevel=0.09):
         cam.rotation_euler = (Vector((0, 0, 0)) - Vector(place)).to_track_quat("-Z", "Y").to_euler()
         sc.render.filepath = "%s/_%s_textured_%s.png" % (k.WORK, name, label)
         bpy.ops.render.render(write_still=True)
+
+
+# ---- realistic weathering (the user, 2026-10-21: "Can you texture these models so they look realistic") ------------
+
+def _vnoise3(p, scale, seed=0):
+    """Smooth value noise in 3D, 0..1, at each of the points p (H x W x 3), `scale` features per unit."""
+    import numpy as np
+    q = p * scale + seed * 17.13
+    i = np.floor(q)
+    f = q - i
+    f = f * f * (3 - 2 * f)
+
+    def h(dx, dy, dz):
+        v = (i[..., 0] + dx) * 127.1 + (i[..., 1] + dy) * 311.7 + (i[..., 2] + dz) * 74.7
+        return (np.sin(v) * 43758.5453) % 1.0
+
+    def lerp(a, b, t):
+        return a + (b - a) * t
+
+    x0 = lerp(lerp(h(0, 0, 0), h(1, 0, 0), f[..., 0]), lerp(h(0, 1, 0), h(1, 1, 0), f[..., 0]), f[..., 1])
+    x1 = lerp(lerp(h(0, 0, 1), h(1, 0, 1), f[..., 0]), lerp(h(0, 1, 1), h(1, 1, 1), f[..., 0]), f[..., 1])
+    return lerp(x0, x1, f[..., 2])
+
+
+def _fbm3(p, scale, seed=0, octaves=4):
+    s, a, total = 0.0, 0.5, 0.0
+    for o in range(octaves):
+        s = s + a * _vnoise3(p, scale * (2 ** o), seed + o)
+        total += a
+        a *= 0.5
+    return s / total
+
+
+def finish_realistic(name, span, style="coalition", serial="07", folder=None, bevel=0.06, grit=1.7):
+    """Build the model (softened edges, baked shading), then weather its texture so it looks like real worn
+    machinery. Baked probes give each texel its place on the model, its facing, and how sharp a corner it is on
+    (Cycles pointiness), and from those:
+      both:      panel seams and rivets, each panel a touch different; large blotchy colour variation; grime toward
+                 the ground; dust settled on the tops; dirt streaks running down the sides; edges worn to bright bare
+                 metal (and the paint chipped there, so team colour wears off the corners); creases darkened.
+      coalition: warning chevrons on a few deck panels and a stencilled serial on each flank.
+      lattice:   rust patches (heavier low down), oil stains, rust streaks.
+    Lit strips and eyes are left alone."""
+    import numpy as np
+    import bpy
+    folder = folder or UNITS
+    if bpy.context.scene.world is None:
+        bpy.context.scene.world = bpy.data.worlds.new("bake_world")
+    bpy.context.scene.world.light_settings.distance = 0.9
+    finish_detailed(name, span, folder, bevel=bevel)
+    ship = bpy.data.objects[name]
+    path = "%s/%s.png" % (folder, name)
+    skin = bpy.data.images.load(path, check_existing=False)
+    size = skin.size[0]
+    sc = bpy.context.scene
+
+    def bake_probe(socket, scale, offset):
+        m = bpy.data.materials.new("probe_" + socket)
+        m.use_nodes = True
+        nt = m.node_tree
+        nt.nodes.clear()
+        geo = nt.nodes.new("ShaderNodeNewGeometry")
+        fit = nt.nodes.new("ShaderNodeVectorMath")
+        fit.operation = "MULTIPLY_ADD"
+        fit.inputs[1].default_value = (scale, scale, scale)
+        fit.inputs[2].default_value = (offset, offset, offset)
+        emit = nt.nodes.new("ShaderNodeEmission")
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        src = geo.outputs[socket]
+        if socket == "Pointiness":
+            comb = nt.nodes.new("ShaderNodeCombineXYZ")
+            nt.links.new(src, comb.inputs[0])
+            src = comb.outputs[0]
+        nt.links.new(src, fit.inputs[0])
+        nt.links.new(fit.outputs[0], emit.inputs["Color"])
+        nt.links.new(emit.outputs[0], out.inputs["Surface"])
+        img = bpy.data.images.new("probe_" + socket, size, size, alpha=False, float_buffer=True)
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        nt.nodes.active = tex
+        ship.data.materials.clear()
+        ship.data.materials.append(m)
+        sc.cycles.samples = 1
+        bpy.ops.object.select_all(action="DESELECT")
+        ship.select_set(True)
+        bpy.context.view_layer.objects.active = ship
+        bpy.ops.object.bake(type="EMIT")
+        a = np.array(img.pixels[:]).reshape(size, size, 4)[:, :, :3]
+        return (a - offset) / scale
+
+    pos = bake_probe("Position", 0.01, 0.5)
+    nrm = bake_probe("Normal", 0.5, 0.5)
+    sharp = bake_probe("Pointiness", 1.0, 0.0)[:, :, 0]       # 0.5 flat, more on outer corners, less in creases
+
+    px = np.array(skin.pixels[:]).reshape(size, size, 4)
+    rgb, alpha = px[:, :, :3].copy(), px[:, :, 3].copy()
+    covered = np.linalg.norm(nrm, axis=2) > 0.5
+    bright = rgb.max(axis=2)
+    lit = (alpha > 0.5) & (((bright > 0.55) & ((rgb[:, :, 1] > rgb[:, :, 0] * 1.6) | (rgb[:, :, 2] > rgb[:, :, 0] * 1.6)))
+                           | ((rgb[:, :, 0] > 0.95) & (rgb[:, :, 1] < 0.75) & (rgb[:, :, 2] < 0.3)))
+    work = covered & ~lit
+    painted = alpha < 0.5
+    z = pos[:, :, 2]
+    up = nrm[:, :, 2]
+    lattice = style == "lattice"
+
+    # Panels: a staggered grid on each face (box projection), seams and rivets, each panel its own shade.
+    ax = np.abs(nrm).argmax(axis=2)
+    u = np.where(ax == 0, pos[:, :, 1], pos[:, :, 0])
+    v = np.where(ax == 2, pos[:, :, 1], pos[:, :, 2])
+    grow = 1.3 if lattice else 1.0
+    pu = np.where(ax == 2, 2.2, 2.6) * grow
+    pv = np.where(ax == 2, 2.2, 1.7) * grow
+    row = np.floor(v / pv)
+    uu = u / pu + np.where(row % 2 == 0, 0.0, 0.5)
+    col = np.floor(uu)
+    fu, fv = uu - col, v / pv - row
+    seam = (np.minimum(fu, 1 - fu) * pu < 0.04) | (np.minimum(fv, 1 - fv) * pv < 0.04)
+    du, dv = np.minimum(fu, 1 - fu) * pu, np.minimum(fv, 1 - fv) * pv
+    rivet = np.hypot(du - 0.14, dv - 0.14) < 0.045
+    panel_shade = 1.0 + 0.06 * (((np.sin(col * 12.9898 + row * 78.233 + ax * 37.719) * 43758.5453) % 1.0) - 0.5)
+
+    big = _fbm3(pos, 0.35, 1)
+    mid = _fbm3(pos, 1.6, 2)
+    fine = _vnoise3(pos, 9.0, 3)
+    out = rgb * (panel_shade * (0.92 + 0.16 * big) * (0.95 + 0.1 * fine))[:, :, None]
+    # Gritty (the user, 2026-10-22: "gritty look"): the whole surface a little dirtier and uneven, rust specks and
+    # oil stains even on the Coalition.
+    out *= (1.0 - 0.12 * (grit - 1.0) * (1.0 - mid))[:, :, None]
+    speck = np.clip((_vnoise3(pos, 7.0, 8) - (0.93 - 0.03 * grit)) * 10.0, 0, 1) * np.clip((big - 0.5) * 4.0, 0, 1)   # rust in patches
+    out = out * (1 - speck[:, :, None] * 0.7) + np.array([0.33, 0.17, 0.08]) * speck[:, :, None] * 0.7
+    stain = np.clip((_fbm3(pos, 0.8, 9) - (0.7 - 0.05 * grit)) * 5, 0, 1) * 0.45
+    out *= (1 - stain)[:, :, None]
+
+    if lattice:
+        rust_amt = np.clip((mid * 0.7 + big * 0.5 - 0.55) * 3.0 + np.clip(1.5 - z, 0, 1.5) * 0.25, 0, 1)
+        rust = np.array([0.40, 0.20, 0.10]) * (0.75 + 0.5 * _vnoise3(pos, 5.0, 4))[:, :, None]
+        out = out * (1 - rust_amt[:, :, None] * 0.85) + rust * rust_amt[:, :, None] * 0.85
+        oil = np.clip((_fbm3(pos, 0.9, 5) - 0.62) * 5, 0, 1) * 0.6
+        out *= (1 - oil)[:, :, None]
+
+    grime = np.clip(1.0 - z / (2.2 * grit), 0, 1) * (0.5 + 0.5 * mid) * min(1.0, 0.65 * grit)
+    dirt = np.array([0.24, 0.21, 0.17])
+    out = out * (1 - grime[:, :, None] * 0.55) + dirt * grime[:, :, None] * 0.55
+    dust = np.clip((up - 0.6) * 2.5, 0, 1) * np.clip((mid - 0.3) * 2.0, 0, 1) * 0.3 * grit
+    out = out * (1 - dust[:, :, None]) + np.array([0.62, 0.57, 0.48]) * dust[:, :, None]
+    side = np.abs(up) < 0.4
+    across = np.where(np.abs(nrm[:, :, 0]) > np.abs(nrm[:, :, 1]), pos[:, :, 1], pos[:, :, 0])
+    streak_n = _vnoise3(np.stack([across * 9.0, z * 0.6, across * 0.0], axis=2), 1.0, 6)
+    streak = side * np.clip((streak_n - 0.62 + 0.06 * grit) * 3.0, 0, 1) * min(0.7, 0.28 * grit) * np.clip((mid - 0.35) * 3.0, 0, 1)
+    streak_col = np.array([0.30, 0.16, 0.08]) if lattice else np.array([0.18, 0.17, 0.15])
+    out = out * (1 - streak[:, :, None]) + streak_col * streak[:, :, None]
+
+    crease = np.clip((0.5 - sharp) * 4.0, 0, 1) * min(0.7, 0.4 * grit)
+    out *= (1 - crease)[:, :, None]
+    wear = np.clip((sharp - 0.58) * 6.0, 0, 1) * np.clip((mid - 0.55 + 0.05 * grit) * 4.0, 0, 1) * 0.8   # (real corners only, in patches)
+    metal = np.array([0.6, 0.6, 0.61]) * (0.95 + 0.1 * mid)[:, :, None]
+    out = out * (1 - wear[:, :, None]) + metal * wear[:, :, None]
+    chipped = painted & (wear > 0.5)
+    alpha = np.where(chipped, 1.0, alpha)
+
+    out = np.where(seam[:, :, None], out * 0.6, out)
+    out = np.where((rivet & ~seam)[:, :, None], out * 0.75, out)
+
+    if not lattice:
+        top = (ax == 2) & (up > 0) & ~painted & work & ~seam
+        pick = ((np.sin(col * 3.1 + row * 7.7 + 99) * 43758.5453) % 1.0) > 0.7
+        band = (fv > 0.15) & (fv < 0.33) & (fu > 0.2) & (fu < 0.8)
+        stripes = ((u + v) * 2.6 % 1.0) < 0.5
+        chev = top & pick & band
+        out[chev & stripes] = np.array([0.62, 0.48, 0.08]) * (0.85 + 0.25 * fine[chev & stripes])[:, None]
+        out[chev & ~stripes] = 0.06
+        flank = (ax == 0) & work & ~painted
+        cell = 0.12
+        width = len(serial) * 4 * cell
+        gx = (pos[:, :, 1] * np.sign(nrm[:, :, 0]) + width / 2) / cell
+        gz = (pos[:, :, 2] - 1.2) / cell
+        inside = flank & (gx >= 0) & (gx < len(serial) * 4) & (gz >= 0) & (gz < 5)
+        ch = np.clip((gx // 4).astype(int), 0, len(serial) - 1)
+        cx = (gx % 4).astype(int)
+        cz = 4 - np.clip(gz.astype(int), 0, 4)
+        on = np.zeros(gx.shape, bool)
+        for i, c in enumerate(serial):
+            lut = np.array([b == "1" for b in _DIGITS.get(c, "0" * 15)]).reshape(5, 3)
+            sel = inside & (ch == i) & (cx < 3)
+            on[sel] = lut[cz[sel], cx[sel]]
+        out[on] = out[on] * 0.3
+
+    px[:, :, :3] = np.where(work[:, :, None], np.clip(out, 0, 1), rgb)
+    px[:, :, 3] = np.where(work, alpha, px[:, :, 3])
+    skin.pixels = px.ravel()
+    skin.filepath_raw = path
+    skin.file_format = "PNG"
+    skin.save()
+    print("%s: weathered (%s)" % (name, style))
+    look = bpy.data.materials.new("look_weathered")
+    look.use_nodes = True
+    nt = look.node_tree
+    nt.nodes.clear()
+    pic = nt.nodes.new("ShaderNodeTexImage")
+    shown = skin.copy()
+    shown.alpha_mode = "NONE"
+    pic.image = shown
+    bsdf = nt.nodes.new("ShaderNodeBsdfDiffuse")
+    outn = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(pic.outputs["Color"], bsdf.inputs["Color"])
+    nt.links.new(bsdf.outputs[0], outn.inputs["Surface"])
+    ship.data.materials.clear()
+    ship.data.materials.append(look)
+    cam = bpy.data.objects["cam"]
+    sc.cycles.samples = 24
+    for label, place, zoom in (("quarter", (34, -40, 38), 1.0), ("close", (20, -24, 22), 0.6)):
+        place = tuple(c * span / 40.0 for c in place)
+        cam.location = place
+        cam.data.ortho_scale = span * zoom
+        cam.rotation_euler = (Vector((0, 0, 0)) - Vector(place)).to_track_quat("-Z", "Y").to_euler()
+        sc.render.filepath = "%s/_%s_real_%s.png" % (k.WORK, name, label)
+        bpy.ops.render.render(write_still=True)

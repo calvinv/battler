@@ -195,4 +195,4 @@ def l_extractor():
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()
-k.finish(which, 34.0 if which.startswith(("l_", "factory_")) else 22.0, UNITS)
+finish_realistic(which, 34.0 if which.startswith(("l_", "factory_")) else 22.0, style="lattice")

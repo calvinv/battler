@@ -34,7 +34,7 @@ def factory_tank():
         k.box(8.6, 10.2, s * 5.5 - 0.5 * (1 if s > 0 else -1) - 0.4, s * 5.5 + 0.4, 0.5, 7.0, "hazard")   # door posts
     vents(-10.0, -4.0, -3.0, 3.0, 9.0, 6)
     lens(9.7, -7.0, 6.0, 0.4)
-    k.finish("factory_tank", 34.0, UNITS)
+    finish_realistic("factory_tank", 34.0, serial="0" + str(len("factory_tank")))
 
 
 def factory_lighttank():
@@ -55,7 +55,7 @@ def factory_lighttank():
     k.box(-7.2, -4.8, -6.7, -6.3, 11.0, 12.6, "white")
     k.drum(-6, -6.5, 0.3, 12.0, 12.5, "glow", 6)
     vents(-8.0, -3.0, 2.0, 6.0, 6.2, 5)
-    k.finish("factory_lighttank", 34.0, UNITS)
+    finish_realistic("factory_lighttank", 34.0, serial="0" + str(len("factory_lighttank")))
 
 
 def factory_mortar():
@@ -75,7 +75,7 @@ def factory_mortar():
     tube_between((7.6, 0, 4.8), (7.8, 0, 5.4), 0.9, "glow", 10)
     for i in range(3):                                                                  # ready rounds
         k.drum(2.6 + i * 1.0, -6.0, 0.4, 0.5, 2.2, "hazard", 6, 0.28)
-    k.finish("factory_mortar", 34.0, UNITS)
+    finish_realistic("factory_mortar", 34.0, serial="0" + str(len("factory_mortar")))
 
 
 def factory_spider():
@@ -99,7 +99,7 @@ def factory_spider():
         tube_between(elbow, (1.0 + math.cos(ang) * 2.2, math.sin(ang) * 2.2, 5.5), 0.35, "plate", 4)
         k.drum(1.0 + math.cos(ang) * 2.2, math.sin(ang) * 2.2, 0.3, 4.9, 5.5, "glow", 6)   # welding tips
     lens(11.0, 0.0, 1.0, 0.45)
-    k.finish("factory_spider", 34.0, UNITS)
+    finish_realistic("factory_spider", 34.0, serial="0" + str(len("factory_spider")))
 
 
 def factory_artillery():
@@ -123,7 +123,7 @@ def factory_artillery():
         tube_between((a - 0.4, 0, 3.0), (a + 0.4, 0, 3.0), 0.9, "glow", 8)
     for i in range(3):                                                                  # crates of shells
         plate(-10.6, -8.6, -3 + i * 2.2, -1.4 + i * 2.2, 0.5, 2.0, "dark", inset=0.15)
-    k.finish("factory_artillery", 34.0, UNITS)
+    finish_realistic("factory_artillery", 34.0, serial="0" + str(len("factory_artillery")))
 
 
 def hq():
@@ -148,7 +148,7 @@ def hq():
     for s in (1, -1):
         lens(15.6, s * 8.0, 3.6, 0.7)
         k.box(-4, 4, s * 12.6 - 0.3, s * 12.6 + 0.3, 7.0, 10.0, "dark")                 # side hatches
-    k.finish("hq", 46.0, UNITS)
+    finish_realistic("hq", 46.0, serial="0" + str(len("hq")))
 
 
 def tower():
@@ -167,7 +167,7 @@ def tower():
     lens(2.4, 1.6, 22.2, 0.4)
     k.drum(-1.8, -1.2, 0.1, 22.8, 26.5, "dark", 4)
     k.drum(-1.8, -1.2, 0.2, 26.5, 26.9, "glow", 4)
-    k.finish("tower", 34.0, UNITS)
+    finish_realistic("tower", 34.0, serial="0" + str(len("tower")))
 
 
 def outpost():
@@ -184,7 +184,7 @@ def outpost():
     plate(1.0, 5.0, -2.0, 2.0, 5.2, 7.2, "steel", inset=0.4, front=0.9)                  # turret
     k.tube(4.6, 10.0, 0, 6.4, 0.3, "mid", 6)
     lens(11.0, 0.0, 2.0, 0.5)
-    k.finish("outpost", 34.0, UNITS)
+    finish_realistic("outpost", 34.0, serial="0" + str(len("outpost")))
 
 
 def extractor():
@@ -202,7 +202,7 @@ def extractor():
         tube_between((ca * 5.0, sa * 5.0, 4.6), (ca * 3.6, sa * 3.6, 8.2), 1.0, "mid", 6)
         k.box(ca * 5.6 - 1.2, ca * 5.6 + 1.2, sa * 5.6 - 1.2, sa * 5.6 + 1.2, 5.0, 5.3, "paint")
     hexagon(0, 0, 7.0, 3.0, 3.4, "glow", r1=6.6, sides=8, turn=math.pi / 8)
-    k.finish("extractor", 34.0, UNITS)
+    finish_realistic("extractor", 34.0, serial="0" + str(len("extractor")))
 
 
 def deposit():
@@ -217,7 +217,7 @@ def deposit():
                        (8, 2, 0.7, 4.2), (-8, 3, 0.8, 4.6), (0, 6.5, 0.8, 4.0), (1, -8, 0.7, 3.8)):
         k.drum(a, x, r, 0, h, "green", 6, 0.12)                                         # the ore: glowing shards
     hexagon(0, 0, 3.0, 0.0, 0.3, "green", sides=6)                                      # a glow pooled at its heart
-    k.finish("deposit", 34.0, UNITS)
+    finish_realistic("deposit", 34.0, serial="0" + str(len("deposit")))
 
 
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
