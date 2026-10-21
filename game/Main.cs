@@ -374,7 +374,7 @@ public partial class Main : Node3D
     void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
-        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear();
+        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
         _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset();
         _session = session;
         _me = session.LocalPlayer;
@@ -728,10 +728,14 @@ public partial class Main : Node3D
         // Buildings (tools/art/model_buildings.py): each factory kind its own building; all face the enemy's side,
         // so units roll out of the door.
         var name = e.Kind == Kind.Factory ? "factory_" + ModelOf(e.Makes) : ModelOf(e.Kind);
-        var building = UnitArt.Make(name, TeamColor[e.Owner]);
+        bool rising = e.Building > 0;
+        var building = rising ? UnitArt.MakeBuilding(name, TeamColor[e.Owner]) : UnitArt.Make(name, TeamColor[e.Owner]);
+        if (rising) _rising.Add(e.Id);
         building.Basis = Basis.LookingAt(TowardEnemy(e.Owner), Vector3.Up);
         return building;
     }
+
+    readonly HashSet<int> _rising = new();   // buildings drawn as a hologram while they go up
 
     // ---- production cogs: one brass cog over a factory per production upgrade, spinning ------------------------
 
@@ -986,12 +990,21 @@ public partial class Main : Node3D
         foreach (var e in W.Entities)
         {
             alive.Add(e.Id);
+            // A building going up is a hologram rising with its progress; once finished it's swapped for the real thing.
+            if (_views.TryGetValue(e.Id, out var old) && _rising.Contains(e.Id) && e.Building == 0)
+            {
+                old.QueueFree();
+                _views.Remove(e.Id);
+                _rising.Remove(e.Id);
+            }
             if (!_views.TryGetValue(e.Id, out var view))
             {
                 view = MakeView(e);
                 AddChild(view);
                 _views[e.Id] = view;
             }
+            if (_rising.Contains(e.Id))
+                UnitArt.SetBuilt(view, 1f - e.Building / (float)World.ConstructionTicks(e.Kind));
             var cur = ToV3(e.Pos);
             var prev = _prevPos.TryGetValue(e.Id, out var p) ? p : cur;
             var pos = prev.Lerp(cur, alpha);
@@ -1054,6 +1067,7 @@ public partial class Main : Node3D
             _tracks.Forget(id);
             if (_flags.Remove(id, out var gone)) gone.QueueFree();
             if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
+            _rising.Remove(id);
         }
 
         for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
@@ -1228,7 +1242,9 @@ public partial class Main : Node3D
             lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
         if (e.Kind == Kind.Hq && e.Owner == _me && e.ScoutQueue > 0)
             lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
-        if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        if (e.Building > 0)
+            lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
+        else if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory && e.Owner == _me)
             lines.Add(e.HasRally ? "New units go to its flag first, then attack"
                 : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"

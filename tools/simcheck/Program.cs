@@ -10,6 +10,28 @@ using Battler.Sim;
 ulong Seed = args.Length > 0 && ulong.TryParse(args[0], out var s) ? s : 12345;
 const int MaxTicks = 20 * 60 * World.TicksPerSecond;   // 20 minutes
 
+if (args.Contains("battle"))   // how long a straight fight between equal groups lasts (the user: "time to kill ... 1 minute")
+{
+    foreach (var (kind, n) in new[] { (Kind.Tank, 1), (Kind.Tank, 5), (Kind.LightTank, 5), (Kind.Spider, 5) })
+    {
+        var w = new World(3) { Started = true };
+        for (int i = 0; i < n; i++)
+        {
+            w.Spawn(kind, 0, new FixVec2(-40, -6 + i * 3));
+            w.Spawn(kind, 1, new FixVec2(-28, -6 + i * 3));
+        }
+        int first = -1, t = 0;
+        while (t++ < 6000)
+        {
+            w.Step(Array.Empty<Command>());
+            bool hit = w.Entities.Exists(e => e.Kind == kind && e.Hp < e.MaxHp);
+            if (first < 0 && hit) first = w.Tick;
+            int a = w.Entities.Count(e => e.Kind == kind && e.Owner == 0), b = w.Entities.Count(e => e.Kind == kind && e.Owner == 1);
+            if (a == 0 || b == 0) { Console.WriteLine($"{n} {kind} v {n}: {(w.Tick - first) / (float)World.TicksPerSecond:0.0} s of fighting, {a} v {b} left"); break; }
+        }
+    }
+    return 0;
+}
 if (args.Contains("probe"))   // print the ground at a few places (for checking map shapes)
 {
     foreach (var (x, z) in new[] { (-126, -100), (-126, -60), (-200, -120), (0, -120), (0, 0), (126, 100), (-224, 100) })
@@ -33,6 +55,7 @@ bool SlotTest()
     w.Spawn(Kind.Extractor, 0, World.Deposits[d]).Deposit = d;
     w.Step(new Command[] { new PlaceOutpost(0, d) });
     var post = w.Entities.Find(e => e.Kind == Kind.Outpost);
+    while (post.Building > 0) w.Step(Array.Empty<Command>());   // (it gives slots once it's built)
     int placed = 0;
     for (int dx = -12; dx <= 12 && placed < 2; dx += 3)
         for (int dz = -12; dz <= 12 && placed < 2; dz += 3)

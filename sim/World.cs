@@ -57,6 +57,7 @@ public sealed class Entity
     public FixVec2 NavGoal;
     public int NavTick;                // when that path was found
     public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
+    public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
     public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
 
     public int Level(Upgrade u) => Levels[(int)u];
@@ -107,6 +108,9 @@ public sealed class World
     public static readonly Fix DeployReach = 8;   // how near a scout must be to where an outpost or extractor goes
     static readonly Fix OutpostReach = 15, OutpostReachPerLevel = 4;   // where factories can go round it; its "Production" track is reach
 
+    // Everything has 4.5 times the health in the table (the user, 2026-10-21: "time to kill for a basic unit battle at
+    // 1 minute": equal groups took about 14 s to settle a fight; now about a minute). Kept as a ratio (/2) in integers.
+    public const int HealthScale = 9;
     public const int MaxUpgradeLevel = 3;
     // Veterancy (the user, 2026-10-19: "they get 10% stat boosts after x kills"): a rank every 3 kills, up to 3;
     // each rank +10% damage and health.
@@ -173,14 +177,14 @@ public sealed class World
         // Factory
         new() { MaxHp = 800, Radius = 2, Vision = 8 },
         // Scout: unarmed (Reload 0), quick, sees far; built at the HQ and moved by its player.
-        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Vision = 24, BuildTicks = 5 * TicksPerSecond },
+        new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Vision = 24, BuildTicks = 10 * TicksPerSecond },
         // Tank (the user, 2026-10-20: tanks and artillery "need to build slower and be weaker, we want like 20 units in
         // game eventually": twice as slow to build, about two thirds the health and damage, and an army cap).
         new() { MaxHp = 160, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
-                Damage = 16, Reload = 15, BuildTicks = 24 * TicksPerSecond },
+                Damage = 16, Reload = 15, BuildTicks = 45 * TicksPerSecond },
         // Artillery
         new() { MaxHp = 60, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
-                Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 32 * TicksPerSecond },   // (30, up from 27: its shells now miss moving targets)
+                Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 60 * TicksPerSecond },   // (30, up from 27: its shells now miss moving targets)
         // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
         // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
         new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10 },
@@ -191,14 +195,14 @@ public sealed class World
         new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8 },
         // Light tank: small, quick, fragile; a fast-firing light gun. Built every 10 s.
         new() { MaxHp = 90, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(38, 100), Range = 7, Aggro = 12, Vision = 9,
-                Damage = 7, Reload = 7, BuildTicks = 10 * TicksPerSecond },
+                Damage = 7, Reload = 7, BuildTicks = 20 * TicksPerSecond },
         // Mortar: a small artillery tank. Shorter range than artillery, a small blast, quick shells; built every 14 s.
         new() { MaxHp = 55, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(28, 100), Range = 15, MinRange = 4, Aggro = 15, Vision = 8,
-                Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 14 * TicksPerSecond },
+                Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 26 * TicksPerSecond },
         // Spider (the user, 2026-10-20: "a small spider bot. 4 legs, small tank size, a turret and a laser that shoots
         // rapid weak shots"): quick on its legs, light armour, a laser firing three times a second for little each.
         new() { MaxHp = 100, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(34, 100), Range = 7, Aggro = 12, Vision = 10,
-                Damage = 3, Reload = 3, BuildTicks = 12 * TicksPerSecond },
+                Damage = 3, Reload = 3, BuildTicks = 22 * TicksPerSecond },
     };
 
     public int Tick;
@@ -260,6 +264,7 @@ public sealed class World
         SetStats(e);
         e.Hp = e.MaxHp;
         if (kind == Kind.Factory) e.Timer = BuildTicksOf(e);
+        e.Building = ConstructionTicks(kind);   // (towers and the HQ stand ready from the start)
         e.Height = Ground.HeightAt(pos);
         Entities.Add(e);
         if (e.Stats.IsBuilding) _nav.AddBuilding(e.Pos, e.Stats.Radius);   // units plan their way round it from now on
@@ -269,7 +274,7 @@ public sealed class World
     /// <summary>Health and damage from the base stats, the upgrades it was made with, and its veterancy.</summary>
     static void SetStats(Entity e)
     {
-        e.MaxHp = WithArmour(e.Stats.MaxHp, e.Level(Upgrade.Armour)) * (100 + 10 * e.Rank) / 100;
+        e.MaxHp = WithArmour(e.Stats.MaxHp * HealthScale / 2, e.Level(Upgrade.Armour)) * (100 + 10 * e.Rank) / 100;
         e.Damage = WithDamage(e.Stats.Damage, e.Level(Upgrade.Damage)) * (100 + 10 * e.Rank) / 100;
     }
 
@@ -378,6 +383,24 @@ public sealed class World
     static Fix VisionOf(Entity e) =>
         e.Kind == Kind.Outpost ? e.Stats.Vision + OutpostReachPerLevel * e.Level(Upgrade.Production) : e.Stats.Vision;
 
+    // ---- construction (the user, 2026-10-21: "Building new factories is 1 minute. New mines is 2. An outpost is 4
+    // minutes") --------------------------------------------------------------------------------------------------
+
+    /// <summary>How long a building takes to put up once ordered (paid for up front; it does nothing till done).</summary>
+    public static int ConstructionTicks(Kind k) => k switch
+    {
+        Kind.Factory => 60 * TicksPerSecond,
+        Kind.Extractor => 120 * TicksPerSecond,
+        Kind.Outpost => 240 * TicksPerSecond,
+        _ => 0,
+    };
+
+    /// <summary>Buildings going up count down.</summary>
+    void Construct()
+    {
+        foreach (var e in Entities) if (!e.Dead && e.Building > 0) e.Building--;
+    }
+
     // ---- bases and their factory slots ---------------------------------------------------------------------
 
     /// <summary>A base: the HQ or an outpost. Factories go in its ring, up to its slots.</summary>
@@ -404,7 +427,7 @@ public sealed class World
         inRing = false;
         foreach (var b in Entities)
         {
-            if (b.Dead || b.Owner != player || !IsBase(b)) continue;
+            if (b.Dead || b.Owner != player || !IsBase(b) || b.Building > 0) continue;   // (an outpost works once built)
             var r = BaseRadius(b);
             if ((pos - b.Pos).LengthSq > r * r) continue;
             inRing = true;
@@ -530,7 +553,7 @@ public sealed class World
     public int IncomeOf(int player)
     {
         int n = 0;
-        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player) n++;
+        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0) n++;   // (mining once built)
         return IncomePerTick + ExtractorIncome * n;
     }
 
@@ -590,6 +613,7 @@ public sealed class World
         for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
         for (int i = 0; i < Players.Length; i++) Players[i].Metal += income[i];
         BuyQueuedUpgrades();
+        Construct();
         Produce();
         Fight();
         Separate();
@@ -842,7 +866,7 @@ public sealed class World
         {
             var f = Entities[i];
             if (f.Kind == Kind.Hq && !f.Dead) { BuildScouts(f); continue; }
-            if (f.Dead || f.Kind != Kind.Factory) continue;
+            if (f.Dead || f.Kind != Kind.Factory || f.Building > 0) continue;   // (making nothing till built)
             // At the army cap a factory stands idle, its next unit not started: losses take a full build to replace, so
             // winning a fight opens a window (finished units waiting at the door refilled the army at once: stalemate).
             if (army[f.Owner] >= MaxArmy) { f.Timer = BuildTicksOf(f); continue; }
@@ -903,6 +927,7 @@ public sealed class World
             if (e.Dead || e.Hp <= 0) continue;
             var s = e.Stats;
             if (e.Cooldown > 0) e.Cooldown--;
+            if (e.Building > 0) continue;   // (a gun going up doesn't fire yet)
             if (s.Reload == 0)
             {
                 // Unarmed (scouts): only go where they're sent, and stop there.
@@ -1077,7 +1102,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0); Mix(e.Building);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
         }
