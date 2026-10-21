@@ -175,7 +175,7 @@ public partial class Main : Node3D
 
     // ---- --lineup: the unit models side by side in both teams' colours, to judge their outlines at game distance ----
 
-    static readonly string[] LineupUnits = { "scout", "lighttank", "tank", "mortar", "artillery", "spider" };
+    static readonly string[] LineupUnits = { "scout", "lighttank", "tank", "mortar", "artillery", "crawler", "spider", "piercer", "drone" };
     int _lineupFrame = -1;
 
     void BuildLineup()
@@ -194,7 +194,7 @@ public partial class Main : Node3D
             {
                 var unit = UnitArt.Make(LineupUnits[i], TeamColor[team]);
                 // Emblems at a spread of levels, none to both gold.
-                int[][] levels = { new[] { 0, 0 }, new[] { 1, 0 }, new[] { 2, 3 }, new[] { 1, 1 }, new[] { 3, 3 }, new[] { 2, 0 } };
+                int[][] levels = { new[] { 0, 0 }, new[] { 1, 0 }, new[] { 2, 3 }, new[] { 1, 1 }, new[] { 3, 3 }, new[] { 0, 0 }, new[] { 2, 0 }, new[] { 1, 2 }, new[] { 0, 0 } };
                 UnitArt.AddEmblems(unit, LineupUnits[i], levels[i][0], levels[i][1]);
                 AddChild(unit);
                 unit.Position = new Vector3((i - 2) * 6, 0, team == 0 ? -3.5f : 3.5f);
@@ -204,16 +204,16 @@ public partial class Main : Node3D
         // An outpost beside them, to judge its model.
         var post = UnitArt.Make("outpost", TeamColor[0]);
         AddChild(post);
-        post.Position = new Vector3(25, 0, 3);
+        post.Position = new Vector3(35, 0, 3);
         post.Basis = Basis.LookingAt(Vector3.Right, Vector3.Up);
         // An extractor, and a deposit nobody mines yet.
         var rig = UnitArt.Make("extractor", TeamColor[1]);
         AddChild(rig);
-        rig.Position = new Vector3(25, 0, -5);
+        rig.Position = new Vector3(35, 0, -5);
         rig.Basis = Basis.LookingAt(Vector3.Left, Vector3.Up);
         var ore = UnitArt.Make("deposit", Neutral);
         AddChild(ore);
-        ore.Position = new Vector3(32, 0, -1);
+        ore.Position = new Vector3(42, 0, -1);
         // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
         for (int i = 0; i < 3; i++)
         {
@@ -410,7 +410,7 @@ public partial class Main : Node3D
         {
             if (e.Owner != _me) continue;
             if (e.Kind == Kind.Outpost) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
-            if (e.Kind != Kind.Scout) continue;
+            if (!World.IsScout(e.Kind)) continue;
             // Placing an extractor: how near each scout it must go.
             if (_placing == Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
             // A picked scout: a ring round it, and where it's going.
@@ -712,6 +712,13 @@ public partial class Main : Node3D
     }
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
+    /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
+    /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
+    static string BuildingModel(Kind kind, Kind makes, Civ civ) =>
+        kind == Kind.Factory ? "factory_" + ModelOf(makes) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
+
+    Civ MyCiv => W.Players[_me].Civ;
+
     /// <summary>A kind as the player reads it.</summary>
     static string NameOf(Kind k) => k switch { Kind.LightTank => "Light tank", Kind.Hq => "HQ", _ => k.ToString() };
 
@@ -727,7 +734,7 @@ public partial class Main : Node3D
         }
         // Buildings (tools/art/model_buildings.py): each factory kind its own building; all face the enemy's side,
         // so units roll out of the door.
-        var name = e.Kind == Kind.Factory ? "factory_" + ModelOf(e.Makes) : ModelOf(e.Kind);
+        var name = BuildingModel(e.Kind, e.Makes, W.Players[e.Owner].Civ);
         bool rising = e.Building > 0;
         var building = rising ? UnitArt.MakeBuilding(name, TeamColor[e.Owner]) : UnitArt.Make(name, TeamColor[e.Owner]);
         if (rising) _rising.Add(e.Id);
@@ -876,16 +883,16 @@ public partial class Main : Node3D
     Terrain _terrain;
 
     /// <summary>Where a view's origin sits above the ground: boxes are centred, unit models stand on y = 0.</summary>
-    static float HeightOf(Kind k) => 0f;   // every model stands on its origin
+    static float HeightOf(Kind k) => k == Kind.Drone ? 3.2f : 0f;   // models stand on their origin; fliers fly
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.1f, Kind.Artillery => 2.8f, Kind.LightTank => 0.72f, Kind.Mortar => 2.0f, Kind.Spider => 0.98f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.1f, Kind.Artillery => 2.8f, Kind.LightTank => 0.72f, Kind.Mortar => 2.0f, Kind.Spider => 0.98f, Kind.Crawler => 0.32f, Kind.Piercer => 0.72f, _ => 1f };
 
     /// <summary>How far in front of its centre a gun's muzzle is (units face their target, so it is along that line).</summary>
-    static float BarrelOf(Kind k) => k switch { Kind.Tank => 2.3f, Kind.Artillery => 1.8f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.48f, Kind.Mortar => 0.05f, Kind.Spider => 1.0f, _ => 0f };
+    static float BarrelOf(Kind k) => k switch { Kind.Tank => 2.3f, Kind.Artillery => 1.8f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.48f, Kind.Mortar => 0.05f, Kind.Spider => 0.95f, Kind.Crawler => 0.8f, Kind.Piercer => 1.75f, _ => 0f };
 
     /// <summary>How quickly each kind swings round, in radians a second.</summary>
-    static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, Kind.LightTank => 7f, Kind.Mortar => 3.5f, Kind.Spider => 8f, _ => 4f };
+    static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, Kind.LightTank => 7f, Kind.Mortar => 3.5f, Kind.Spider => 8f, Kind.Crawler => 10f, Kind.Piercer => 3f, Kind.Drone => 6f, _ => 4f };
 
     // ---- loop --------------------------------------------------------------------------------
 
@@ -1018,12 +1025,12 @@ public partial class Main : Node3D
                 if (!W.Paused && moving && Shown(e))
                 {
                     float r = e.Stats.Radius.ToFloat();
-                    _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
-                    // Tread marks under each track (the scout's wheels leave thinner, fainter ones).
-                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind == Kind.Spider;
-                    if (!legs) _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
-                    // Trees in the way go over (the scout hovers and the spider steps, so they slip between them).
-                    if (!wheels && !legs) _forest.Trample(pos, flat.Normalized(), r);
+                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer, flies = e.Stats.Flying;
+                    if (!flies) _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
+                    // Tread marks under each track (the scout's wheels leave thinner, fainter ones; walkers and fliers none).
+                    if (!legs && !flies) _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
+                    // Trees in the way go over (the scout hovers, walkers step and fliers fly, so they slip between them).
+                    if (!wheels && !legs && !flies) _forest.Trample(pos, flat.Normalized(), r);
                 }
                 // Face where it's going; standing still, face what it's shooting at. It swings round, not snaps.
                 var face = _facing.TryGetValue(e.Id, out var f) ? f : TowardEnemy(e.Owner);
@@ -1042,11 +1049,17 @@ public partial class Main : Node3D
                 float ahead = _terrain.HeightAt(pos.X + face.X, pos.Z + face.Z), behind = _terrain.HeightAt(pos.X - face.X, pos.Z - face.Z);
                 view.Basis = Basis.LookingAt(new Vector3(face.X, (ahead - behind) * 0.5f, face.Z), Vector3.Up);
                 // A walker sways side to side and bobs as it steps (its legs are one piece with it).
-                if (e.Kind == Kind.Spider && moving && !W.Paused)
+                if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer && moving && !W.Paused)
                 {
                     float gait = (float)Time.GetTicksMsec() * 0.012f + e.Id;
                     view.Basis = view.Basis * new Basis(Vector3.Back, Mathf.Sin(gait) * 0.06f);
                     walkBob = Mathf.Abs(Mathf.Sin(gait)) * 0.12f;
+                }
+                // A flier hovers, drifting up and down, and stays level over hills.
+                if (e.Stats.Flying)
+                {
+                    view.Basis = Basis.LookingAt(new Vector3(face.X, 0, face.Z), Vector3.Up);
+                    walkBob = Mathf.Sin((float)Time.GetTicksMsec() * 0.003f + e.Id) * 0.15f;
                 }
             }
             view.Position = pos + Vector3.Up * (HeightOf(e.Kind) + walkBob);
@@ -1082,7 +1095,7 @@ public partial class Main : Node3D
     static float TopOf(Kind k) => k switch
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f,   // (a factory's bar clears its cogs)
-        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, _ => 2f,
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, _ => 2f,
     };
 
     void DrawBarsAndSelection(float alpha)
@@ -1167,7 +1180,7 @@ public partial class Main : Node3D
         _scoutButton.Visible = _autoButton.Visible = hq;
         if (!hq) return;
         int have = W.ScoutCount(_me);
-        _scoutButton.Text = $"Build a scout for {World.ScoutCost}  [Q]   ({have}/{World.MaxScouts}" + (e.ScoutQueue > 0 ? $", {e.ScoutQueue} coming)" : ")");
+        _scoutButton.Text = $"Build a {(MyCiv == Civ.Lattice ? "drone" : "scout")} for {World.ScoutCost}  [Q]   ({have}/{World.MaxScouts}" + (e.ScoutQueue > 0 ? $", {e.ScoutQueue} coming)" : ")");
         _scoutButton.Disabled = !W.CanQueueScout(_me, out _) || !W.Started || W.Winner >= 0;
         _autoButton.SetPressedNoSignal(e.AutoScout);
         _autoButton.Text = e.AutoScout ? "Auto-build scouts: ON  (keeps you at " + World.MaxScouts + ")" : "Auto-build scouts: off";
@@ -1217,6 +1230,11 @@ public partial class Main : Node3D
                 Kind.Tank => "Tough all-rounder.",
                 Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
                 Kind.Spider => "A four-legged walker: quick, lightly armoured, a twin\nlaser firing three times a second, little each shot.",
+                Kind.Crawler => "The swarm's body: cheap, quick and fragile,\na little claw-gun. Comes in numbers.",
+                Kind.Piercer => "Anti-armour: slow, a heavy spike-gun every 3 s that\ndoes two and a half times to tanks and buildings.",
+                Kind.Drone => e.Owner == _me
+                    ? "A flying scout: unarmed, quick, sees far, crosses water.\nOnly HQs, towers and outposts can shoot it down."
+                    : "A flying scout: it's watching you.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
                 Kind.Hq => "Lose it and you lose the match.",
@@ -1295,7 +1313,7 @@ public partial class Main : Node3D
             else ok = W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = _placing is Kind.Outpost or Kind.Extractor ? ModelOf(_placing.Value) : "factory_" + ModelOf(_placing.Value);
+            var name = BuildingModel(_placing.Value is Kind.Outpost or Kind.Extractor ? _placing.Value : Kind.Factory, _placing.Value, MyCiv);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
@@ -1311,9 +1329,9 @@ public partial class Main : Node3D
         var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceOutpost or PlaceExtractor)
             .Select(c => c switch
             {
-                PlaceFactory pf => ("factory_" + ModelOf(pf.Makes), pf.Pos),
-                PlaceExtractor pe => ("extractor", World.Deposits[pe.Deposit]),
-                _ => ("outpost", World.Pads[((PlaceOutpost)c).Deposit]),
+                PlaceFactory pf => (BuildingModel(Kind.Factory, pf.Makes, MyCiv), pf.Pos),
+                PlaceExtractor pe => (BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), World.Deposits[pe.Deposit]),
+                _ => (BuildingModel(Kind.Outpost, Kind.Hq, MyCiv), World.Pads[((PlaceOutpost)c).Deposit]),
             }).ToList();
         if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
@@ -1379,7 +1397,7 @@ public partial class Main : Node3D
         _hud.Text =
             $"Metal {me.Metal}   +{W.IncomeOf(_me) * World.TicksPerSecond}/s\n" +
             building + "\n" +
-            $"Army {W.ArmyCount(_me)}/{World.MaxArmy}   units seen {myUnits} vs {theirUnits}\n" +
+            $"Army {W.ArmyCount(_me)}/{World.MaxArmyOf(MyCiv)}   units seen {myUnits} vs {theirUnits}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
@@ -1410,17 +1428,29 @@ public partial class Main : Node3D
     /// (a building to place, or Place null for a scout from the HQ).</summary>
     sealed record BuildOption(Key Key, string Name, int Cost, Kind? Place);
 
-    static readonly BuildOption[] BuildOptions =
+    static readonly BuildOption[] CoalitionOptions =
     {
         new(Key.L, "Light tank factory", World.FactoryCost, Kind.LightTank),
         new(Key.T, "Tank factory", World.FactoryCost, Kind.Tank),
         new(Key.M, "Mortar factory", World.FactoryCost, Kind.Mortar),
         new(Key.A, "Artillery factory", World.FactoryCost, Kind.Artillery),
-        new(Key.S, "Spider factory", World.FactoryCost, Kind.Spider),
         new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
         new(Key.O, "Outpost (on the pad by an extractor)", World.OutpostCost, Kind.Outpost),
         new(Key.C, "Scout (built at the HQ)", World.ScoutCost, null),
     };
+
+    // The Lattice's (the user, 2026-10-21): crawlers, spiders, piercers (anti-armour); drones for scouts.
+    static readonly BuildOption[] LatticeOptions =
+    {
+        new(Key.C, "Crawler nest (swarm)", World.FactoryCost, Kind.Crawler),
+        new(Key.S, "Spider nest", World.FactoryCost, Kind.Spider),
+        new(Key.A, "Piercer nest (anti-armour)", World.FactoryCost, Kind.Piercer),
+        new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
+        new(Key.O, "Outpost (on the pad by an extractor)", World.OutpostCost, Kind.Outpost),
+        new(Key.D, "Drone (flying scout, built at the HQ)", World.ScoutCost, null),
+    };
+
+    BuildOption[] BuildOptions => MyCiv == Civ.Lattice ? LatticeOptions : CoalitionOptions;
 
     Control _buildMenu;
     readonly List<Button> _buildButtons = new();
@@ -1442,11 +1472,12 @@ public partial class Main : Node3D
         var title = new Label { Text = "Build", HorizontalAlignment = HorizontalAlignment.Center };
         title.AddThemeFontSizeOverride("font_size", 22);
         column.AddChild(title);
-        foreach (var option in BuildOptions)
+        for (int i = 0; i < 8; i++)   // enough rows for any civ's menu; unused ones hidden
         {
+            int at = i;
             var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, CustomMinimumSize = new Vector2(420, 36) };
             b.AddThemeFontSizeOverride("font_size", 18);
-            b.Pressed += () => PickBuild(option);
+            b.Pressed += () => { if (at < BuildOptions.Length) PickBuild(BuildOptions[at]); };
             column.AddChild(b);
             _buildButtons.Add(b);
         }
@@ -1483,6 +1514,7 @@ public partial class Main : Node3D
     void UpdateBuildMenu()
     {
         if (!_buildOpen) return;
+        for (int i = 0; i < _buildButtons.Count; i++) _buildButtons[i].Visible = i < BuildOptions.Length;
         for (int i = 0; i < BuildOptions.Length; i++)
         {
             var o = BuildOptions[i];
@@ -1624,14 +1656,14 @@ public partial class Main : Node3D
                 var box = new Rect2(from, Vector2.Zero).Expand(up.Position);
                 if (!add) _scouts.Clear();
                 foreach (var e in W.Entities)
-                    if (e.Kind == Kind.Scout && e.Owner == _me && !_camera.IsPositionBehind(ToV3(e.Pos)) && box.HasPoint(_camera.UnprojectPosition(ToV3(e.Pos))))
+                    if (World.IsScout(e.Kind) && e.Owner == _me && !_camera.IsPositionBehind(ToV3(e.Pos)) && box.HasPoint(_camera.UnprojectPosition(ToV3(e.Pos))))
                         _scouts.Add(e.Id);
                 _selected = _scouts.Count > 0 ? _scouts.Min() : -1;
             }
             else if (_mouseGround.HasValue)
             {
                 var hit = EntityAt(_mouseGround.Value);
-                if (hit is { Kind: Kind.Scout } s && s.Owner == _me)
+                if (hit is { } s && World.IsScout(s.Kind) && s.Owner == _me)
                 {
                     // Shift-click adds or drops a scout; a plain click picks just that one.
                     if (!add) _scouts.Clear();
@@ -1657,15 +1689,15 @@ public partial class Main : Node3D
         else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) SetBuildMenu(true);
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKinds.Length && W.Winner < 0)
-                _placing = World.FactoryKinds[k.Keycode - Key.Key1];
+            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0)
+                _placing = World.FactoryKindsOf(MyCiv)[k.Keycode - Key.Key1];
             else if (k.Keycode == Key.Key7 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
             else if (k.Keycode == Key.Key6 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
             else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started) _session.Issue(new QueueScout(_me));
             else if (k.Keycode == Key.E)   // pick all my scouts
             {
                 _scouts.Clear();
-                foreach (var e in W.Entities) if (e.Kind == Kind.Scout && e.Owner == _me) _scouts.Add(e.Id);
+                foreach (var e in W.Entities) if (World.IsScout(e.Kind) && e.Owner == _me) _scouts.Add(e.Id);
                 _selected = _scouts.Count > 0 ? _scouts.Min() : -1;
             }
             else if (k.Keycode == Key.Escape)

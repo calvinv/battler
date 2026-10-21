@@ -15,7 +15,8 @@ void fragment() {
 	bool paint = c.a < 0.5;
 	ALBEDO = paint ? team * shade : c.rgb;
 	float bright = max(c.r, max(c.g, c.b));
-	bool lit = !paint && bright > 0.5 && (c.g > c.r * 1.8 || c.b > c.r * 1.8);
+	bool amber = c.r > 0.95 && c.g < 0.75 && c.b < 0.3;   // the Lattice's eyes and cores
+	bool lit = !paint && ((bright > 0.5 && (c.g > c.r * 1.8 || c.b > c.r * 1.8)) || amber);
 	EMISSION = lit ? c.rgb * 1.8 : vec3(0.0);
 	ROUGHNESS = paint ? 0.6 : 0.55;
 	METALLIC = paint ? 0.1 : 0.35;

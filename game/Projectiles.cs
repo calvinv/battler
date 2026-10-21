@@ -109,6 +109,15 @@ public partial class Projectiles : Node3D
                 AddFlash(from + side, 0.5f, 0.05f, new Color(0.5f, 1f, 1f));
                 break;
             }
+            case Kind.Crawler:   // a quick spit of amber from its claw-gun
+                Add(new Round { From = from, To = to, Flight = dist / 60f, Thick = 0.08f, Length = 1.0f, Col = new Color(1f, 0.6f, 0.15f) * 1.5f, By = by, Sparks = true });
+                AddFlash(from, 0.5f, 0.05f, new Color(1f, 0.6f, 0.2f));
+                break;
+            case Kind.Piercer:   // a heavy glowing spike: thick, very fast, a big flash
+                Add(new Round { From = from, To = to, Flight = dist / 90f, Thick = 0.2f, Length = 3.2f, Col = new Color(1f, 0.55f, 0.1f) * 2f, By = by, Sparks = true });
+                AddFlash(from, 1.8f, 0.12f, new Color(1f, 0.6f, 0.2f));
+                Dust?.Add(from, new Vector3(0, 0.6f, 0), 0.5f, Smoke);
+                break;
             default:   // tanks, towers, outposts, the HQ: one fast shell
                 float thick = by == Kind.Outpost ? 0.1f : 0.16f;
                 Add(new Round { From = from, To = to, Flight = dist / 45f, Thick = thick, Length = 2.2f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });

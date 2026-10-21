@@ -77,7 +77,10 @@ public static class UnitArt
         ["scout"] = (0.3f, 0.55f),       // its back
         ["lighttank"] = (0.65f, 0.6f),   // the back of the hull
         ["mortar"] = (-0.55f, 0.84f),    // the front deck
-        ["spider"] = (0.4f, 0.87f),      // its back, behind the turret
+        ["spider"] = (0.5f, 0.9f),       // its back, behind the turret
+        ["crawler"] = (0.2f, 0.54f),     // its back plate
+        ["piercer"] = (0.5f, 0.66f),     // its back, behind the gun
+        ["drone"] = (0.0f, 0.3f),        // its top
     };
     static readonly Color[] Metal = { new(0.8f, 0.5f, 0.25f), new(0.85f, 0.87f, 0.92f), new(1f, 0.82f, 0.25f) };   // bronze, silver, gold
     static ImageTexture _swordTex, _shieldTex;

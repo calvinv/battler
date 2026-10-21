@@ -14,7 +14,7 @@ if (args.Contains("battle"))   // how long a straight fight between equal groups
 {
     foreach (var (kind, n) in new[] { (Kind.Tank, 1), (Kind.Tank, 5), (Kind.LightTank, 5), (Kind.Spider, 5) })
     {
-        var w = new World(3) { Started = true };
+        var w = new World(3, new[] { Civ.Coalition, Civ.Lattice }) { Started = true };
         for (int i = 0; i < n; i++)
         {
             w.Spawn(kind, 0, new FixVec2(-40, -6 + i * 3));
@@ -48,7 +48,7 @@ return args.Contains("lan") ? LanTest() : ReplayTest();
 // (it used to come back with two fresh slots).
 bool SlotTest()
 {
-    var w = new World(1);
+    var w = new World(1, new[] { Civ.Coalition, Civ.Coalition });
     foreach (var p in w.Players) p.Metal = 100000;
     w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(-8, 10), Kind.Tank), new PlaceFactory(1, World.HqStart(1) - new FixVec2(-8, 10), Kind.Tank) });
     int d = Array.FindIndex(World.Deposits, at => at.X.Raw < 0 && World.HasPad[Array.IndexOf(World.Deposits, at)]);
@@ -227,7 +227,7 @@ static void Report(World world)
 // Upgrades ordered without the metal wait in the queue and buy themselves, in order, as metal comes in.
 bool QueueTest()
 {
-    var w = new World(2);
+    var w = new World(2, new[] { Civ.Coalition, Civ.Coalition });
     w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(-8, 10), Kind.Tank), new PlaceFactory(1, World.HqStart(1) - new FixVec2(-8, 10), Kind.Tank) });
     var f = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
     w.Players[0].Metal = 0;

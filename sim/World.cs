@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -20,6 +20,10 @@ public sealed class Stats
     public int Damage;
     public int Reload;     // ticks between shots; zero = unarmed
     public int BuildTicks;    // a unit: how often its factory makes one
+    public bool Flying;       // flies: crosses water and hills, and only HitsAir guns can reach it
+    public bool HitsAir;      // its gun can hit fliers
+    public bool Armoured;     // heavy plate: anti-armour weapons do extra to it
+    public int VsArmour = 100;   // percent of its damage it does to Armoured targets
 
     public bool IsBuilding => Speed.Raw == 0;
     public bool IsUnit => !IsBuilding;
@@ -65,9 +69,14 @@ public sealed class Entity
     public Stats Stats => World.StatsFor[(int)Kind];
 }
 
+/// <summary>The three civilisations (the user, 2026-10-21): the Coalition (versatile), the Lattice (swarm), the
+/// Ascendancy (tech, not built yet).</summary>
+public enum Civ { Coalition, Lattice, Ascendancy }
+
 public sealed class Player
 {
     public int Id;
+    public Civ Civ;
     public int Metal;
     public int PausesLeft;
     public FixVec2 HqPos;
@@ -133,7 +142,19 @@ public sealed class World
     /// <summary>What factories can make (scouts come from the HQ).</summary>
     // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
     // tank and a combat tank": units stay free, the light ones just come quicker).
-    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Spider };
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery };   // the Coalition's
+
+    /// <summary>What a civilisation's factories can make, in build-menu order. The Lattice (the user, 2026-10-21: "they
+    /// don't get artillery at tier 1 but they get scout fliers and anti armour units"): crawlers, spiders, piercers.</summary>
+    public static Kind[] FactoryKindsOf(Civ civ) => civ == Civ.Lattice ? LatticeKinds : FactoryKinds;
+    static readonly Kind[] LatticeKinds = { Kind.Crawler, Kind.Spider, Kind.Piercer };
+
+    /// <summary>The scout a civilisation's HQ builds: the Coalition's hovercraft, the Lattice's flying drone.</summary>
+    public static Kind ScoutKindOf(Civ civ) => civ == Civ.Lattice ? Kind.Drone : Kind.Scout;
+    public static bool IsScout(Kind k) => k is Kind.Scout or Kind.Drone;
+
+    /// <summary>How many fighting units a side can have out: the swarm more.</summary>
+    public static int MaxArmyOf(Civ civ) => civ == Civ.Lattice ? 45 : MaxArmy;
 
     /// <summary>
     /// The metal deposits, the same every match and turned round for the other side: few for the size of the map. On
@@ -173,36 +194,46 @@ public sealed class World
     public static readonly Stats[] StatsFor =
     {
         // Hq
-        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 10, Reload = 10 },
+        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 10, Reload = 10, HitsAir = true, Armoured = true },
         // Factory
-        new() { MaxHp = 800, Radius = 2, Vision = 8 },
+        new() { MaxHp = 800, Radius = 2, Vision = 8, Armoured = true },
         // Scout: unarmed (Reload 0), quick, sees far; built at the HQ and moved by its player.
         new() { MaxHp = 60, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(55, 100), Vision = 24, BuildTicks = 10 * TicksPerSecond },
         // Tank (the user, 2026-10-20: tanks and artillery "need to build slower and be weaker, we want like 20 units in
         // game eventually": twice as slow to build, about two thirds the health and damage, and an army cap).
-        new() { MaxHp = 160, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
+        new() { Armoured = true, MaxHp = 160, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
                 Damage = 16, Reload = 15, BuildTicks = 45 * TicksPerSecond },
         // Artillery
-        new() { MaxHp = 60, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
+        new() { Armoured = true, MaxHp = 60, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
                 Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 60 * TicksPerSecond },   // (30, up from 27: its shells now miss moving targets)
         // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
         // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
-        new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10 },
+        new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10, HitsAir = true, Armoured = true },
         // Outpost: a sub-base deployed out in the field (the user, 2026-10-19: "bases you can deploy further out as
         // sub bases, those can be upgraded"): factories can be built near it; a light gun; upgrades reach, guns, armour.
-        new() { MaxHp = 900, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 5, Reload = 10 },
+        new() { MaxHp = 900, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 5, Reload = 10, HitsAir = true, Armoured = true },
         // Extractor: mines a deposit. Unarmed, so it needs looking after.
-        new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8 },
+        new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8, Armoured = true },
         // Light tank: small, quick, fragile; a fast-firing light gun. Built every 10 s.
         new() { MaxHp = 90, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(38, 100), Range = 7, Aggro = 12, Vision = 9,
                 Damage = 7, Reload = 7, BuildTicks = 20 * TicksPerSecond },
         // Mortar: a small artillery tank. Shorter range than artillery, a small blast, quick shells; built every 14 s.
-        new() { MaxHp = 55, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(28, 100), Range = 15, MinRange = 4, Aggro = 15, Vision = 8,
+        new() { Armoured = true, MaxHp = 55, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(28, 100), Range = 15, MinRange = 4, Aggro = 15, Vision = 8,
                 Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 26 * TicksPerSecond },
         // Spider (the user, 2026-10-20: "a small spider bot. 4 legs, small tank size, a turret and a laser that shoots
         // rapid weak shots"): quick on its legs, light armour, a laser firing three times a second for little each.
         new() { MaxHp = 100, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(34, 100), Range = 7, Aggro = 12, Vision = 10,
                 Damage = 3, Reload = 3, BuildTicks = 22 * TicksPerSecond },
+        // ---- the Lattice (the user, 2026-10-21: the swarm civ; "they don't get artillery at tier 1 but they get scout
+        // fliers and anti armour units") ----
+        // Crawler: the swarm's body: cheap, quick, fragile, a little claw-gun. Built every 12 s.
+        new() { MaxHp = 50, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(42, 100), Range = 5, Aggro = 12, Vision = 9,
+                Damage = 5, Reload = 6, BuildTicks = 12 * TicksPerSecond },
+        // Piercer: anti-armour: slow, a heavy spike-gun every 3 s that does two and a half times to armour.
+        new() { MaxHp = 80, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(24, 100), Range = 9, Aggro = 13, Vision = 9,
+                Damage = 26, Reload = 30, VsArmour = 250, BuildTicks = 30 * TicksPerSecond },
+        // Drone: the Lattice's scout: a flier, unarmed, quick and far-seeing; crosses water. Only HitsAir guns reach it.
+        new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(65, 100), Vision = 26, Flying = true, BuildTicks = 8 * TicksPerSecond },
     };
 
     public int Tick;
@@ -223,14 +254,17 @@ public sealed class World
 
     int _nextId = 1;
 
-    public World(ulong seed)
+    /// <param name="civs">each side's civilisation; by default the Coalition against the Lattice (the user,
+    /// 2026-10-21: "make the default opponent lattice")</param>
+    public World(ulong seed, Civ[] civs = null)
     {
         Rng = new Rng(seed);
+        civs ??= new[] { Civ.Coalition, Civ.Lattice };
         Players = new Player[2];
         for (int i = 0; i < 2; i++)
         {
             var hq = HqStart(i);
-            Players[i] = new Player { Id = i, Metal = StartMetal, PausesLeft = PausesPerPlayer, HqPos = hq };
+            Players[i] = new Player { Id = i, Civ = civs[i], Metal = StartMetal, PausesLeft = PausesPerPlayer, HqPos = hq };
             Spawn(Kind.Hq, i, hq);
             foreach (var side in new[] { -10, 10 }) Spawn(Kind.Tower, i, TowerStart(i, side));
         }
@@ -448,7 +482,7 @@ public sealed class World
     {
         foreach (var e in Entities)
         {
-            if (e.Dead || e.Kind != Kind.Scout || e.Owner != player) continue;
+            if (e.Dead || !IsScout(e.Kind) || e.Owner != player) continue;
             var r = DeployReach + e.Stats.Radius;
             if ((e.Pos - pos).LengthSq <= r * r) return true;
         }
@@ -512,7 +546,7 @@ public sealed class World
         var p = Players[player];
         var r = StatsFor[(int)Kind.Factory].Radius;
         why = null;
-        if (System.Array.IndexOf(FactoryKinds, makes) < 0) { why = "No factory makes that"; return false; }
+        if (System.Array.IndexOf(FactoryKindsOf(p.Civ), makes) < 0) { why = "No factory makes that"; return false; }
         if (p.Metal < FactoryCost) { why = "Not enough metal"; return false; }
         if (OffMap(pos, r)) { why = "Off the map"; return false; }
         if (BaseFor(player, pos, out bool inRing) == null)
@@ -566,7 +600,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             if (e.Dead || e.Owner != player) continue;
-            if (e.Kind == Kind.Scout) n++;
+            if (IsScout(e.Kind)) n++;
             if (e.Kind == Kind.Hq) n += e.ScoutQueue;
         }
         return n;
@@ -702,6 +736,11 @@ public sealed class World
     /// on or every 5 s.</summary>
     FixVec2 Drive(Entity e, FixVec2 goal, Fix most, Fix goalRadius = default)
     {
+        if (e.Stats.Flying)   // straight there, over water, hills and buildings alike
+        {
+            var line = goal - e.Pos;
+            return line.LengthSq.Raw == 0 ? FixVec2.Zero : line.WithLength(Fix.Min(most, line.Length));
+        }
         var aim = goal;
         var spare = goalRadius + 2;   // (a building it's driving up to doesn't count as in the way)
         if (_nav.ClearOfAll(e.Pos, goal, spare)) e.NavPath = null;
@@ -792,7 +831,7 @@ public sealed class World
                 break;
             case QueueScout when CanQueueScout(c.Player, out _) && HqOf(c.Player) is { } hq:
                 p.Metal -= ScoutCost;
-                if (hq.ScoutQueue++ == 0) hq.Timer = StatsFor[(int)Kind.Scout].BuildTicks;
+                if (hq.ScoutQueue++ == 0) hq.Timer = StatsFor[(int)ScoutKindOf(p.Civ)].BuildTicks;
                 break;
             case SetAutoScout sa when HqOf(sa.Player) is { } autoHq:
                 autoHq.AutoScout = sa.On;
@@ -804,7 +843,7 @@ public sealed class World
                 foreach (var id in mu.Ids)
                 {
                     var u = Find(id);
-                    if (u == null || u.Kind != Kind.Scout || u.Owner != mu.Player || !given.Add(id)) continue;
+                    if (u == null || !IsScout(u.Kind) || u.Owner != mu.Player || !given.Add(id)) continue;
                     var spot = mu.Pos + SpreadOffsets[slot++ % SpreadOffsets.Length];
                     u.HasWaypoint = true;
                     u.Waypoint = new FixVec2(Clamp(spot.X, MapHalfX - 1), Clamp(spot.Z, MapHalfZ - 1));
@@ -869,7 +908,7 @@ public sealed class World
             if (f.Dead || f.Kind != Kind.Factory || f.Building > 0) continue;   // (making nothing till built)
             // At the army cap a factory stands idle, its next unit not started: losses take a full build to replace, so
             // winning a fight opens a window (finished units waiting at the door refilled the army at once: stalemate).
-            if (army[f.Owner] >= MaxArmy) { f.Timer = BuildTicksOf(f); continue; }
+            if (army[f.Owner] >= MaxArmyOf(Players[f.Owner].Civ)) { f.Timer = BuildTicksOf(f); continue; }
             f.Timer--;
             if (f.Timer > 0) continue;
             f.Timer = BuildTicksOf(f);
@@ -883,7 +922,7 @@ public sealed class World
     }
 
     /// <summary>A fighting unit, counted against the army cap (scouts aren't).</summary>
-    public static bool IsArmy(Kind k) => System.Array.IndexOf(FactoryKinds, k) >= 0;
+    public static bool IsArmy(Kind k) => System.Array.IndexOf(FactoryKinds, k) >= 0 || System.Array.IndexOf(LatticeKinds, k) >= 0;
 
     public int ArmyCount(int player)
     {
@@ -895,7 +934,7 @@ public sealed class World
     /// <summary>The HQ works through its paid-for scouts, one at a time; on auto it pays for the next itself.</summary>
     void BuildScouts(Entity hq)
     {
-        var s = StatsFor[(int)Kind.Scout];
+        var s = StatsFor[(int)ScoutKindOf(Players[hq.Owner].Civ)];
         if (hq.ScoutQueue == 0 && hq.AutoScout && CanQueueScout(hq.Owner, out _))
         {
             Players[hq.Owner].Metal -= ScoutCost;
@@ -908,7 +947,7 @@ public sealed class World
         // Out of the front door, then on a few paces to wait for orders.
         var ahead = (Players[1 - hq.Owner].HqPos - hq.Pos).WithLength(hq.Stats.Radius + s.Radius + 1);
         var across = new FixVec2(0, Fix.Ratio(Rng.Range(-30, 30), 10));
-        var scout = Spawn(Kind.Scout, hq.Owner, hq.Pos + ahead + across);
+        var scout = Spawn(ScoutKindOf(Players[hq.Owner].Civ), hq.Owner, hq.Pos + ahead + across);
         scout.HasWaypoint = true;
         scout.Waypoint = hq.HasRally ? hq.Rally + across : hq.Pos + ahead * 3 + across * 2;   // to the base rally, if set
     }
@@ -964,7 +1003,7 @@ public sealed class World
                 _moves.Add((e, Drive(e, goal, s.Speed)));
             }
         }
-        foreach (var (e, step) in _moves) e.Pos = Slide(e.Pos, step);
+        foreach (var (e, step) in _moves) e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);   // (fliers go over water)
         foreach (var (target, damage, by) in _hits)
         {
             bool alive = target.Hp > 0;
@@ -986,9 +1025,10 @@ public sealed class World
         if (s.Splash.Raw == 0)
         {
             Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, 0));
-            _hits.Add((target, e.Damage, e));
+            _hits.Add((target, Hurt(e, target, e.Damage), e));
             return;
         }
+
         // A shell: it's lobbed at the ground where the target stands and lands a while later, hurting whoever is
         // there then. Something moving gets out from under it (the user, 2026-10-20: "artillery should be able to
         // miss, it attacks ground where a unit is but if it's moving it misses").
@@ -996,6 +1036,10 @@ public sealed class World
         Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, flight));
         _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = e.Damage, Splash = s.Splash, By = e, TicksLeft = flight });
     }
+
+    /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>    static int Hurt(Entity by, Entity to, int damage) => to.Stats.Armoured ? damage * by.Stats.VsArmour / 100 : damage;
+    /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>
+    static int Hurt(Entity by, Entity to, int damage) => to.Stats.Armoured ? damage * by.Stats.VsArmour / 100 : damage;
 
     /// <summary>How long a shell is in the air: 0.6 s, and 0.1 s for every 3 units it goes.</summary>
     public static int ShellFlightTicks(FixVec2 from, FixVec2 to) => 6 + (to - from).Length.ToInt() / 3;
@@ -1012,9 +1056,9 @@ public sealed class World
             if (--sh.TicksLeft > 0) continue;
             foreach (var o in Entities)
             {
-                if (o.Dead || o.Owner == sh.Owner || o.Hp <= 0) continue;
+                if (o.Dead || o.Owner == sh.Owner || o.Hp <= 0 || o.Stats.Flying) continue;   // (shells don't reach fliers)
                 var reach = sh.Splash + o.Stats.Radius;
-                if ((o.Pos - sh.At).LengthSq <= reach * reach) _hits.Add((o, sh.Damage, sh.By));
+                if ((o.Pos - sh.At).LengthSq <= reach * reach) _hits.Add((o, Hurt(sh.By, o, sh.Damage), sh.By));
             }
         }
         _shells.RemoveAll(sh => sh.TicksLeft <= 0);
@@ -1031,6 +1075,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             if (e.Dead || e.Owner == from.Owner || e.Hp <= 0 || !CanSee(from.Owner, e)) continue;
+            if (e.Stats.Flying && !from.Stats.HitsAir) continue;   // (only anti-air guns reach fliers)
             var reach = within + e.Stats.Radius;
             var d = (e.Pos - from.Pos).LengthSq;
             if (d > reach * reach) continue;
@@ -1058,7 +1103,7 @@ public sealed class World
             {
                 if (i == j) continue;
                 var b = Entities[j];
-                if (b.Dead) continue;
+                if (b.Dead || b.Stats.Flying != a.Stats.Flying) continue;   // (fliers only jostle fliers)
                 var min = a.Stats.Radius + b.Stats.Radius;
                 var d = a.Pos - b.Pos;
                 var lsq = d.LengthSq;
@@ -1071,7 +1116,7 @@ public sealed class World
             }
             if (total.X.Raw != 0 || total.Z.Raw != 0) _moves.Add((a, total));
         }
-        foreach (var (e, step) in _moves) e.Pos = Slide(e.Pos, step);
+        foreach (var (e, step) in _moves) e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);
     }
 
     void Reap()
