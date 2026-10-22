@@ -82,6 +82,9 @@ bool BaseTest()
     var spot = World.Deposits[metalAt] + new FixVec2(0, 12);
     w.Step(new Command[] { new MoveUnits(0, new[] { truck.Id }, spot) });
     for (int t = 0; t < 4000 && truck.HasWaypoint; t++) w.Step(Array.Empty<Command>());
+    bool guarded = !w.CanDeploy(0, truck.Id, out _) && w.GuardNear(World.Deposits[metalAt]);
+    foreach (var g in w.Entities) if (g.Owner == World.Feral && (g.Pos - World.Deposits[metalAt]).LengthSq < Fix.FromInt(30 * 30)) g.Hp = 0;   // cleared
+    w.Step(Array.Empty<Command>());
     bool canDeploy = w.CanDeploy(0, truck.Id, out var why);
     w.Step(new Command[] { new Deploy(0, truck.Id) });
     var post = w.Entities.Find(e => e.Kind == Kind.Outpost && e.Owner == 0);
@@ -99,8 +102,29 @@ bool BaseTest()
     var sneak = w.Spawn(Kind.Tank, 1, hq0.Pos + new FixVec2(-10, -60));
     w.Step(Array.Empty<Command>());
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
-    bool ok = truck != null && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
-    Console.WriteLine($"Base test: truck {(truck != null)}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
+    bool ok = truck != null && guarded && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
+    Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
+    return ok && StormTest();
+}
+
+// The storm: a tank sent across the middle stops at its edge until the storm lifts. And the first feral wave comes in
+// from both edges a minute after the start.
+bool StormTest()
+{
+    var w = new World(3, new[] { Civ.Coalition, Civ.Coalition });
+    var hqs = w.Entities.FindAll(e => e.Kind == Kind.Hq);
+    w.Step(new Command[] { new AddWing(0, hqs[0].Id, Kind.Tank), new AddWing(1, hqs[1].Id, Kind.Tank) });
+    var tank = w.Spawn(Kind.Tank, 0, new FixVec2(-50, 0));
+    tank.HasWaypoint = true; tank.Waypoint = new FixVec2(50, 0);
+    int ferals = 0;
+    for (int t = 0; t < World.FirstWaveTicks + 5; t++) w.Step(Array.Empty<Command>());
+    ferals = w.Entities.Count(e => e.Owner == World.Feral && e.Stats.IsUnit && Fix.Abs(e.Pos.X) > 200);
+    bool held = !World.InStorm(tank.Pos) && tank.Pos.X.ToInt() < 0;
+    while (w.StormUp) w.Step(Array.Empty<Command>());
+    for (int t = 0; t < 600; t++) w.Step(Array.Empty<Command>());
+    bool crossed = tank.Dead || tank.Pos.X.ToInt() > -30;
+    bool ok = held && crossed && ferals >= 6;
+    Console.WriteLine($"Storm test: held at x {tank.Pos.X} while it stood {held}, through after {crossed}; first wave {ferals} ferals at the edges: {(ok ? "OK" : "FAILED")}");
     return ok;
 }
 
@@ -231,6 +255,7 @@ static void Report(World world)
     int m0 = 0, m1 = 0, f0 = 0, f1 = 0, o0 = 0, o1 = 0, x0 = 0, x1 = 0, s0 = 0, s1 = 0;
     foreach (var e in world.Entities)
     {
+        if (e.Owner == World.Feral) continue;
         if (e.Stats.IsUnit) { if (e.Owner == 0) m0++; else m1++; }
         if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
         if (e.Kind == Kind.Outpost) { if (e.Owner == 0) o0++; else o1++; }
@@ -238,7 +263,7 @@ static void Report(World world)
         if (e.Kind == Kind.Scout) { if (e.Owner == 0) s0++; else s1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  wings {f0}v{f1}  bases {o0}v{o1}  sulfur {world.SulfurOf(0)}v{world.SulfurOf(1)}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
+    Console.WriteLine($"t={world.Tick / 10,4}s  wings {f0}v{f1}  bases {o0}v{o1}  sulfur {world.SulfurOf(0)}v{world.SulfurOf(1)}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  ferals {world.Entities.Count(e => e.Owner == World.Feral)} (wave {world.WaveNumber})  defences {world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 0)}v{world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 1)}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
     string Front(int p) { var xs = world.Entities.FindAll(e => e.Owner == p && World.IsArmy(e.Kind)).ConvertAll(e => e.Pos.X.ToInt()); xs.Sort(); return xs.Count == 0 ? "-" : $"{xs[0]}..{xs[xs.Count / 2]}..{xs[^1]}"; }
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
     // Units in the water (they never should be), and how many are in the middle.

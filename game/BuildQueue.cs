@@ -35,7 +35,7 @@ public partial class Main
 
     static readonly Color BarBuild = new(0.35f, 0.75f, 1f), BarMake = new(0.45f, 0.85f, 0.4f),
         BarWait = new(0.95f, 0.75f, 0.25f), BarStuck = new(0.6f, 0.6f, 0.6f);
-    static readonly string[] UpgradeShort = { "Speed", "Damage", "Armour" }, OutpostUpgradeShort = { "Reach", "Damage", "Armour" };
+    static readonly string[] UpgradeShort = { "Speed", "Damage", "Armour" }, OutpostUpgradeShort = { "Range", "Damage", "Armour" };
 
     void BuildQueueBar(CanvasLayer ui)
     {
@@ -129,7 +129,7 @@ public partial class Main
                 for (int j = 0; j < i; j++) if (e.UpgradeQueue[j] == (int)which) level++;
                 int cost = World.UpgradeCost(level);
                 float ready = i == 0 ? Mathf.Clamp(W.Players[_me].Metal / (float)cost, 0, 1) : 0;
-                var names = e.Kind == Kind.Outpost ? OutpostUpgradeShort : UpgradeShort;
+                var names = World.IsDefence(e.Kind) ? OutpostUpgradeShort : UpgradeShort;
                 list.Add(new Queued(BuildingModel(e.Kind, e.Makes, civ), ready, "+" + names[(int)which][0] + level,
                     $"{names[(int)which]} {cost}", e.Id, BarWait, $"{names[(int)which]} {level} queued, waiting for {cost} metal"));
             }

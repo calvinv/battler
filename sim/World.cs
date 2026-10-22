@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -133,6 +133,28 @@ public sealed class World
     // Radar (the user, 2026-10-22: "a radar that pings every 30s to show where units are in the fog so you can't get
     // cheesed"): each base sweeps its range every 30 s; hidden enemy units in it show as blips, and become known.
     public const int RadarTicks = 30 * TicksPerSecond;
+
+    // Defences: placed within BaseReach of a base; turrets, flak and bombards take upgrades like wings (their
+    // "Production" track is range, +2 a level).
+    public const int TurretCost = 250, FlakCost = 200, BombardCost = 400, WallCost = 50;
+    public static readonly Kind[] DefenceKinds = { Kind.Turret, Kind.Flak, Kind.Bombard, Kind.Wall };
+    public static bool IsDefence(Kind k) => k is Kind.Turret or Kind.Flak or Kind.Bombard or Kind.Wall;
+    public static int CostOf(Kind defence) => defence switch { Kind.Turret => TurretCost, Kind.Flak => FlakCost, Kind.Bombard => BombardCost, _ => WallCost };
+
+    // Feral machines (the user, 2026-10-22: something "that slows down the early game and makes it more interesting"):
+    // a third side that's nobody's. Waves come in from the west and east edges every WaveTicks (the first a minute in)
+    // and go for the nearest building; every deposit away from home starts guarded by a derelict turret and a few
+    // ferals. Killing them pays salvage.
+    public const int Feral = 2;   // their owner number
+    public const int WaveTicks = 90 * TicksPerSecond, FirstWaveTicks = 60 * TicksPerSecond, MaxFerals = 50;
+    public static int Salvage(Kind k) => k switch { Kind.Feral => 15, Kind.FeralBrute => 40, Kind.Derelict => 150, _ => 0 };
+    static readonly FixVec2[] WaveGates = { new(-272, -20), new(272, 20) };   // west and east edges, the map turned round
+    public static readonly Fix GuardReach = 25;   // no base or extractor while a derelict stands this near
+
+    // The opening storm (the user picked it, 2026-10-22): for the first five minutes a band down the middle is shut to
+    // both armies, so the early game is building up and holding off ferals.
+    public const int StormTicks = 5 * 60 * TicksPerSecond;
+    public static readonly Fix StormHalfWidth = 35;
     public static readonly Fix HqRadar = 120, OutpostRadar = 70;
     // Sulfur: each patch mined (and powered) makes explosive weapons hit harder; one unlocks the napalm fitting.
     public const int SulfurBonusPercent = 20, NapalmHitPercent = 75, FireTicks = 8 * TicksPerSecond;
@@ -180,6 +202,7 @@ public sealed class World
     public static bool IsScout(Kind k) => k is Kind.Scout or Kind.Drone;
     /// <summary>A unit its player steers (scouts and mobile bases); the rest fight on their own.</summary>
     public static bool IsSteered(Kind k) => IsScout(k) || k == Kind.MobileBase;
+    public static bool IsFeral(Kind k) => k is Kind.Feral or Kind.FeralBrute or Kind.Derelict;
 
     /// <summary>How many fighting units a side can have out: the swarm more.</summary>
     public static int MaxArmyOf(Civ civ) => civ == Civ.Lattice ? 45 : MaxArmy;
@@ -273,6 +296,23 @@ public sealed class World
         new() { MaxHp = 300, Radius = Fix.Ratio(12, 10), Vision = 10, Armoured = true },
         // Mobile base: a big slow unarmed vehicle, steered like a scout, that sets up as a base (an Outpost) where it stops.
         new() { Armoured = true, MaxHp = 400, Radius = 2, Speed = Fix.Ratio(18, 100), Vision = 14, BuildTicks = 40 * TicksPerSecond },
+        // ---- defences (the user, 2026-10-22: "I want it to kind of feel a bit like a tower defense too") ----
+        // Turret: the all-round gun emplacement.
+        new() { Armoured = true, MaxHp = 500, Radius = Fix.Ratio(12, 10), Range = 11, Aggro = 11, Vision = 12, Damage = 9, Reload = 8, Explosive = true },
+        // Flak: a quick gun that reaches fliers too; light against the ground.
+        new() { Armoured = true, MaxHp = 400, Radius = Fix.Ratio(12, 10), Range = 13, Aggro = 13, Vision = 12, Damage = 5, Reload = 4, HitsAir = true },
+        // Bombard: an artillery emplacement: long reach, a blast, slow; nothing close; needs others to spot for it.
+        new() { Armoured = true, MaxHp = 400, Radius = Fix.Ratio(15, 10), Range = 26, MinRange = 8, Aggro = 26, Vision = 8, Splash = Fix.Ratio(25, 10),
+                Damage = 30, Reload = 50, Explosive = true },
+        // Wall: a block of armour; a line of them funnels attackers.
+        new() { Armoured = true, MaxHp = 1500, Radius = 1, Vision = 3 },
+        // ---- feral machines: nobody's, wild scrap that attacks everyone (owner World.Feral) ----
+        // Feral scrapper: quick and weak, in packs.
+        new() { MaxHp = 40, Radius = Fix.Ratio(8, 10), Speed = Fix.Ratio(36, 100), Range = 4, Aggro = 12, Vision = 10, Damage = 4, Reload = 6 },
+        // Feral brute: slow and tough.
+        new() { Armoured = true, MaxHp = 140, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(24, 100), Range = 5, Aggro = 12, Vision = 10, Damage = 12, Reload = 12 },
+        // Derelict: an old turret gone feral, guarding a deposit.
+        new() { Armoured = true, MaxHp = 600, Radius = Fix.Ratio(14, 10), Range = 11, Aggro = 11, Vision = 12, Damage = 8, Reload = 8 },
     };
 
     public int Tick;
@@ -283,6 +323,15 @@ public sealed class World
     public int Winner = -1;
     /// <summary>False during setup, until both sides have placed their first factory.</summary>
     public bool Started;
+    public int StartTick;   // when both sides had their first wing: waves and the storm count from here
+    public int WaveNumber;   // feral waves sent so far
+
+    /// <summary>Whether the opening storm still shuts the middle.</summary>
+    public bool StormUp => !Started || Tick - StartTick < StormTicks;
+    public int StormTicksLeft => Started ? System.Math.Max(0, StormTicks - (Tick - StartTick)) : StormTicks;
+    public static bool InStorm(FixVec2 p) => Fix.Abs(p.X) < StormHalfWidth;
+    /// <summary>Ticks until the next feral wave.</summary>
+    public int NextWaveIn => Started ? StartTick + FirstWaveTicks + WaveNumber * WaveTicks - Tick : FirstWaveTicks;
 
     public int PausedBy = -1;
     public int PauseTicksLeft;
@@ -307,6 +356,7 @@ public sealed class World
             Spawn(Kind.Hq, i, hq);
             foreach (var side in new[] { -10, 10 }) Spawn(Kind.Tower, i, TowerStart(i, side));
         }
+        PlaceGuards();
     }
 
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
@@ -384,7 +434,7 @@ public sealed class World
     {
         var f = Find(factoryId);
         why = null;
-        if (f == null || f.Kind != Kind.Factory || f.Makes == Kind.MobileBase || f.Owner != player) { why = "Not yours to upgrade"; return false; }
+        if (f == null || !(f.Kind == Kind.Factory && f.Makes != Kind.MobileBase || f.Kind is Kind.Turret or Kind.Flak or Kind.Bombard) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
         if (f.Level(which) + Queued(f, which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
         return true;
     }
@@ -401,7 +451,7 @@ public sealed class World
     {
         Players[f.Owner].Metal -= UpgradeCost(f.Level(which) + 1);
         f.Levels[(int)which]++;
-        if (f.Kind == Kind.Outpost)   // an outpost's own guns and armour improve at once
+        if (f.Kind == Kind.Outpost || IsDefence(f.Kind))   // a building's own guns and armour improve at once
         {
             int before = f.MaxHp;
             SetStats(f);
@@ -432,7 +482,7 @@ public sealed class World
     /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, _ => FactoryCost };
+        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => FactoryCost };
         foreach (var level in b.Levels)
             for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
@@ -444,7 +494,7 @@ public sealed class World
     {
         var b = Find(id);
         why = null;
-        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost or Kind.Extractor) || b.Owner != player) { why = "Not yours to sell"; return false; }
+        if (b == null || !(b.Kind is Kind.Factory or Kind.Outpost or Kind.Extractor || IsDefence(b.Kind)) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -459,6 +509,9 @@ public sealed class World
         Kind.Factory => 60 * TicksPerSecond,
         Kind.Extractor => 120 * TicksPerSecond,
         Kind.Outpost => 30 * TicksPerSecond,
+        Kind.Turret or Kind.Flak => 30 * TicksPerSecond,
+        Kind.Bombard => 45 * TicksPerSecond,
+        Kind.Wall => 8 * TicksPerSecond,
         _ => 0,
     };
 
@@ -571,6 +624,7 @@ public sealed class World
         var u = Find(unitId);
         if (u == null || u.Kind != Kind.MobileBase || u.Owner != player) { why = "Not your mobile base"; return false; }
         if (Blocked(u.Pos, StatsFor[(int)Kind.Outpost].Radius)) { why = "No room to set up here"; return false; }
+        if (GuardNear(u.Pos)) { why = "A derelict guards this ground: clear it first"; return false; }
         foreach (var e in Entities)
             if (!e.Dead && IsBase(e) && (e.Pos - u.Pos).LengthSq < BaseSpacing * BaseSpacing) { why = $"Too near a base (keep {BaseSpacing} apart)"; return false; }
         return true;
@@ -630,6 +684,7 @@ public sealed class World
         if (deposit < 0 || deposit >= Deposits.Length) { why = "Put it on a deposit"; return false; }
         if (Players[player].Metal < ExtractorCost) { why = "Not enough metal"; return false; }
         if (ExtractorOn(deposit) != null) { why = "Already mined"; return false; }
+        if (GuardNear(Deposits[deposit])) { why = "A derelict guards it: clear it first"; return false; }
         if (BaseNear(player, Deposits[deposit], BaseReach) == null) { why = $"Needs one of your bases within {BaseReach} (set up a mobile base near it)"; return false; }
         return true;
     }
@@ -650,6 +705,107 @@ public sealed class World
         foreach (var e in Entities)
             if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && DepositResource[e.Deposit] == Resource.Sulfur) n++;
         return n;
+    }
+
+    // ---- defences -----------------------------------------------------------------------------------------------
+
+    public bool CanPlaceDefence(int player, FixVec2 pos, Kind kind, out string why)
+    {
+        why = null;
+        var r = StatsFor[(int)kind].Radius;
+        if (!IsDefence(kind)) { why = "Not a defence"; return false; }
+        if (Players[player].Metal < CostOf(kind)) { why = "Not enough metal"; return false; }
+        if (OffMap(pos, r)) { why = "Off the map"; return false; }
+        if (BaseNear(player, pos, BaseReach) == null) { why = $"Must be within {BaseReach} of one of your bases"; return false; }
+        if (kind == Kind.Wall ? WallBlocked(pos, r) : Blocked(pos, r)) { why = "Blocked"; return false; }
+        return true;
+    }
+
+    /// <summary>Walls may stand shoulder to shoulder with each other (a line of them is a wall); otherwise as Blocked.</summary>
+    bool WallBlocked(FixVec2 pos, Fix r)
+    {
+        if (!Nav.OpenAt(pos)) return true;
+        foreach (var e in Entities)
+        {
+            if (e.Dead || !e.Stats.IsBuilding) continue;
+            var gap = e.Stats.Radius + r + (e.Kind == Kind.Wall ? Fix.Zero : Fix.One);
+            if ((e.Pos - pos).LengthSq < gap * gap * Fix.Ratio(9, 10)) return true;
+        }
+        foreach (var d in Deposits)
+        {
+            var gap = DepositRadius + r;
+            if ((d - pos).LengthSq < gap * gap) return true;
+        }
+        return false;
+    }
+
+    /// <summary>How far an entity's gun reaches and looks: a defence's range upgrades add to both.</summary>
+    public static Fix RangeOf(Entity e) => e.Stats.Range + (IsDefence(e.Kind) ? 2 * e.Level(Upgrade.Production) : 0);
+    static Fix AggroOf(Entity e) => e.Stats.Aggro + (IsDefence(e.Kind) ? 2 * e.Level(Upgrade.Production) : 0);
+
+    // ---- feral machines --------------------------------------------------------------------------------------
+
+    /// <summary>A derelict still standing near `pos` (a deposit, or where a base would set up).</summary>
+    public bool GuardNear(FixVec2 pos)
+    {
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind == Kind.Derelict && (e.Pos - pos).LengthSq <= GuardReach * GuardReach) return true;
+        return false;
+    }
+
+    /// <summary>Every deposit away from the two home ones starts guarded: a derelict turret beside it and a pack of
+    /// ferals that hold the ground (sulfur twice over, with a brute).</summary>
+    void PlaceGuards()
+    {
+        for (int d = 0; d < Deposits.Length; d++)
+        {
+            var at = Deposits[d];
+            if ((at - HqStart(0)).LengthSq < Fix.FromInt(40 * 40) || (at - HqStart(1)).LengthSq < Fix.FromInt(40 * 40)) continue;   // home
+            bool sulfur = DepositResource[d] == Resource.Sulfur;
+            var offsets = sulfur ? new[] { new FixVec2(7, 0), new FixVec2(-7, 0) } : new[] { new FixVec2(0, at.Z.Raw >= 0 ? -7 : 7) };
+            foreach (var off in offsets) Spawn(Kind.Derelict, Feral, at + off);
+            int pack = sulfur ? 4 : 2;
+            for (int i = 0; i < pack; i++)
+                Guard(Spawn(Kind.Feral, Feral, at + SpreadOffsets[1 + i] * 2));
+            if (sulfur) Guard(Spawn(Kind.FeralBrute, Feral, at + new FixVec2(0, 4)));
+        }
+        static void Guard(Entity e) { e.HasRally = true; e.Rally = e.Pos; }   // (it holds this ground, and comes back to it)
+    }
+
+    /// <summary>A wave from both edges at once, every WaveTicks: a few scrappers more each time, brutes from the
+    /// fourth. They go for the nearest building of either side.</summary>
+    void SendWaves()
+    {
+        if (Tick < StartTick + FirstWaveTicks + WaveNumber * WaveTicks) return;
+        WaveNumber++;
+        int alive = 0;
+        foreach (var e in Entities) if (!e.Dead && e.Owner == Feral && e.Stats.IsUnit) alive++;
+        if (alive >= MaxFerals) return;
+        int scrappers = System.Math.Min(10, 2 + WaveNumber), brutes = WaveNumber >= 4 ? System.Math.Min(4, (WaveNumber - 2) / 2) : 0;
+        foreach (var gate in WaveGates)
+        {
+            for (int i = 0; i < scrappers + brutes; i++)
+            {
+                var at = gate + new FixVec2(Rng.Range(-6, 6), Rng.Range(-12, 12));
+                Spawn(i < brutes ? Kind.FeralBrute : Kind.Feral, Feral, at);
+            }
+        }
+    }
+
+    /// <summary>Where a feral with nothing in reach goes: a guard back to its post; the rest to the nearest building of
+    /// either side (the HQ at worst).</summary>
+    FixVec2 FeralGoal(Entity e)
+    {
+        if (e.HasRally) return e.Rally;
+        Entity best = null;
+        var bestD = Fix.Zero;
+        foreach (var b in Entities)
+        {
+            if (b.Dead || b.Owner == Feral || !b.Stats.IsBuilding) continue;
+            var d = (b.Pos - e.Pos).LengthSq;
+            if (best == null || d < bestD) { best = b; bestD = d; }
+        }
+        return best?.Pos ?? e.Pos;
     }
 
     // ---- radar -----------------------------------------------------------------------------------------------
@@ -797,6 +953,7 @@ public sealed class World
             foreach (var c in commands)
                 if (c is AddWing or UpgradeFactory or CancelUpgrades or SetRally) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
+            if (Started) StartTick = Tick;
             UpdateVision();
             return;
         }
@@ -816,6 +973,7 @@ public sealed class World
         BuyQueuedUpgrades();
         Construct();
         Produce();
+        SendWaves();
         Fight();
         Separate();
         Settle();
@@ -967,15 +1125,21 @@ public sealed class World
     /// <summary>Where the nearest enemy this side knows of is (or was last seen).</summary>
     FixVec2 NearestKnown(int player, FixVec2 from, bool hitsAir)
     {
-        var best = Players[1 - player].HqPos;
-        var bestD = (best - from).LengthSq;
         var me = Players[player];
+        bool storm = StormUp;
+        bool found = false;
+        // With the storm up the enemy is out of reach: anything known on the far side of it is ignored, and with
+        // nothing on this side the army waits in front of home (rather than piling up against the storm).
+        var best = storm ? me.HqPos + (Players[1 - player].HqPos - me.HqPos).WithLength(Fix.FromInt(28)) : Players[1 - player].HqPos;
+        var bestD = Fix.Zero;
         foreach (var (id, at) in me.Known)
         {
             if (!hitsAir && me.KnownFliers.Contains(id)) continue;   // (it can't shoot that: don't chase it)
+            if (storm && (InStorm(at) || (at.X.Raw > 0) != (me.HqPos.X.Raw > 0))) continue;
             var d = (at - from).LengthSq;
-            if (d < bestD) { best = at; bestD = d; }
+            if (!found || d < bestD) { best = at; bestD = d; found = true; }
         }
+        if (!storm && found && (Players[1 - player].HqPos - from).LengthSq < bestD) best = Players[1 - player].HqPos;
         return best;
     }
 
@@ -1030,6 +1194,10 @@ public sealed class World
                 break;
             case SetFitting sf when CanSetFitting(sf.Player, sf.FactoryId, sf.Fitting, out _):
                 Find(sf.FactoryId).Fitting = sf.Fitting;
+                break;
+            case PlaceDefence pd when CanPlaceDefence(pd.Player, pd.Pos, pd.What, out _):
+                p.Metal -= CostOf(pd.What);
+                Spawn(pd.What, pd.Player, pd.Pos);
                 break;
             case PlaceExtractor pe when CanPlaceExtractor(pe.Player, pe.Deposit, out _):
                 p.Metal -= ExtractorCost;
@@ -1164,19 +1332,24 @@ public sealed class World
                 continue;
             }
 
-            var target = NearestEnemy(e, s.Aggro + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
+            var target = NearestEnemy(e, AggroOf(e) + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
-            if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, s.Aggro + MaxDownhillRange, Fix.Zero) != null) continue;
+            if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, AggroOf(e) + MaxDownhillRange, Fix.Zero) != null) continue;
             if (target != null)
             {
                 var gap = (target.Pos - e.Pos).Length - s.Radius - target.Stats.Radius;
-                var reach = s.Range + DownhillRange(e, target);   // firing down from a hill reaches further
+                var reach = RangeOf(e) + DownhillRange(e, target);   // firing down from a hill reaches further
                 if (gap <= reach)
                 {
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
                 if (s.IsUnit) _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
+            }
+            else if (s.IsUnit && e.Owner == Feral)
+            {
+                var home = FeralGoal(e);
+                if (!e.HasRally || (home - e.Pos).LengthSq > Fix.FromInt(9)) _moves.Add((e, FanOut(e, Drive(e, home, s.Speed))));
             }
             else if (s.IsUnit)
             {
@@ -1189,12 +1362,16 @@ public sealed class World
                 _moves.Add((e, FanOut(e, Drive(e, goal, s.Speed))));
             }
         }
-        foreach (var (e, step) in _moves) e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);   // (fliers go over water)
+        foreach (var (e, step) in _moves) Move(e, step);
         foreach (var (target, damage, by) in _hits)
         {
             bool alive = target.Hp > 0;
             target.Hp -= damage;
-            if (alive && target.Hp <= 0 && by != null) Credit(by);   // the shot that finished it
+            if (alive && target.Hp <= 0 && by != null)   // the shot that finished it
+            {
+                Credit(by);
+                if (target.Owner == Feral && by.Owner != Feral) Players[by.Owner].Metal += Salvage(target.Kind);   // salvage
+            }
         }
         _hits.Clear();
     }
@@ -1341,7 +1518,16 @@ public sealed class World
             }
             if (total.X.Raw != 0 || total.Z.Raw != 0) _moves.Add((a, total));
         }
-        foreach (var (e, step) in _moves) e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);
+        foreach (var (e, step) in _moves) Move(e, step);
+    }
+
+    /// <summary>A step taken: fliers straight over anything, the rest sliding along water and cliffs; and while the
+    /// storm is up nothing of the players' goes into it.</summary>
+    void Move(Entity e, FixVec2 step)
+    {
+        var to = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);
+        if (e.Owner != Feral && StormUp && InStorm(to) && !InStorm(e.Pos)) return;
+        e.Pos = to;
     }
 
     void Reap()
@@ -1366,7 +1552,7 @@ public sealed class World
     {
         ulong h = 14695981039346656037UL;
         void Mix(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (i * 8)); h *= 1099511628211UL; } }
-        Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State); Mix(Started ? 1 : 0);
+        Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State); Mix(Started ? 1 : 0); Mix(StartTick); Mix(WaveNumber);
         foreach (var p in Players)
         {
             Mix(p.Metal); Mix(p.PausesLeft);

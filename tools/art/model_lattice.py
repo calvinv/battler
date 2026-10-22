@@ -227,6 +227,48 @@ def l_factory_mobilebase():
     nest(lambda: [hexagon(1.0, 0, 2.2, 4.0, 7.0, "steel", r1=1.6, sides=6), eyes(3.0, 0, 6.0, 3, 0.3)])
 
 
+
+def l_turret():
+    """A Lattice spike turret: a squat scrap mound, a stubby tripod and a long spike-gun with an eye."""
+    hexagon(0, 0, 6.4, 0.0, 2.0, "plate", r1=5.0, sides=6)
+    hexagon(0, 0, 4.2, 2.0, 2.3, "paint", sides=6)
+    for i in range(3):
+        ang = math.tau * i / 3
+        tube_between((math.cos(ang) * 3.0, math.sin(ang) * 3.0, 2.0), (0, 0, 6.0), 0.5, "dark", 4)
+    k.drum(0, 0, 1.6, 5.4, 7.2, "mid", 6)
+    k.box(0.5, 9.0, -0.3, 0.3, 6.0, 6.6, "dark")
+    k.box(8.4, 9.6, -0.18, 0.18, 6.1, 6.5, "ember")
+    eyes(1.7, 0, 6.4, 2, 0.28)
+
+
+def l_flak():
+    """A Lattice flak spitter: a cluster of tubes pointing up out of a scrap mound."""
+    hexagon(0, 0, 6.0, 0.0, 2.2, "plate", r1=4.6, sides=6)
+    hexagon(0, 0, 3.8, 2.2, 2.5, "paint", sides=6)
+    for i in range(5):
+        ang = math.tau * i / 5
+        ca, sa = math.cos(ang) * 1.5, math.sin(ang) * 1.5
+        tube_between((ca, sa, 2.4), (ca * 1.8 + 1.0, sa * 1.8, 9.5), 0.35, "dark", 6)
+        k.drum(ca * 1.8 + 1.0, sa * 1.8, 0.3, 9.3, 9.7, "ember", 6)
+
+
+def l_bombard():
+    """A Lattice bombard mound: a wide scrap heap with a fat tube raised out of it."""
+    hexagon(0, 0, 8.0, 0.0, 2.6, "plate", r1=6.0, sides=6)
+    hexagon(0, 0, 5.2, 2.6, 2.9, "paint", sides=6)
+    tube_between((-1.0, 0, 2.6), (6.0, 0, 11.0), 1.1, "dark", 6)
+    k.drum(0, 0, 2.6, 2.6, 4.4, "mid", 6)
+    eyes(2.7, 0, 3.6, 3, 0.3)
+
+
+def l_wall():
+    """A Lattice scrap wall: a block of plates welded on a frame, a team plate on top."""
+    plate(-5.2, 5.2, -5.2, 5.2, 0.0, 6.0, "plate", inset=1.4, front=1.4, back=1.4)
+    k.box(-3.6, 3.6, -3.6, 3.6, 6.0, 6.25, "paint")
+    for s in (1, -1):
+        tube_between((-5.0, s * 5.0, 0.4), (5.0, s * 5.0, 5.0), 0.35, "dark", 4)
+
+
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()

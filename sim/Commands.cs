@@ -48,3 +48,6 @@ public sealed record CancelUpgrades(int Player, int BuildingId) : Command(Player
 
 /// <summary>What one of the player's factories fits its units with from now on (napalm needs sulfur).</summary>
 public sealed record SetFitting(int Player, int FactoryId, Fitting Fitting) : Command(Player);
+
+/// <summary>A defence (World.DefenceKinds) at Pos, within reach of one of the player's bases.</summary>
+public sealed record PlaceDefence(int Player, FixVec2 Pos, Kind What) : Command(Player);

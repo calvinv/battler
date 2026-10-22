@@ -80,6 +80,9 @@ public sealed class SimpleAi
                 if (f.Kind == Kind.Factory && World.CanFitNapalm(f.Makes) && f.Fitting == Fitting.Standard && f.Id % 2 == 0)
                 { issue(new SetFitting(_player, f.Id, Fitting.Napalm)); return; }
 
+        // Defences: a turret or two at each base, more as the waves grow; a flak once there are fliers about.
+        if (wings >= 2 && Defend(w, mine, issue)) return;
+
         // Fighting wings: as many as its mines can keep busy (three, and two a mine), on whichever base has room.
         int extractors = mine.FindAll(e => e.Kind == Kind.Extractor).Count;
         if (wings < Math.Min(MaxWings, 3 + 2 * extractors))
@@ -93,6 +96,29 @@ public sealed class SimpleAi
             }
         }
         MaybeUpgrade(w, mine, issue, p.Metal > 800 ? 1 : 2);   // (with metal piling up, every time)
+    }
+
+    bool Defend(World w, List<Entity> mine, Action<Command> issue)
+    {
+        int want = Math.Min(3, 1 + w.WaveNumber / 3);
+        bool fliers = w.Entities.Exists(e => e.Owner != _player && e.Stats.Flying && !e.Dead);
+        foreach (var b in mine)
+        {
+            if (!World.IsBase(b) || b.Building > 0) continue;
+            int turrets = 0, flak = 0;
+            foreach (var d in mine)
+                if ((d.Pos - b.Pos).LengthSq < Fix.FromInt(30 * 30)) { if (d.Kind == Kind.Turret) turrets++; if (d.Kind == Kind.Flak) flak++; }
+            var kind = turrets < want ? Kind.Turret : fliers && flak == 0 ? Kind.Flak : (Kind?)null;
+            if (kind == null) continue;
+            if (w.Players[_player].Metal < World.CostOf(kind.Value)) return true;   // saving for it
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                var spot = b.Pos + new FixVec2(_rng.Range(-16, 16), _rng.Range(-16, 16));
+                if ((spot - b.Pos).LengthSq < Fix.FromInt(10 * 10)) continue;   // (clear of its wings)
+                if (w.CanPlaceDefence(_player, spot, kind.Value, out _)) { issue(new PlaceDefence(_player, spot, kind.Value)); return true; }
+            }
+        }
+        return false;
     }
 
     Kind PickUnit(Civ civ)
@@ -124,6 +150,7 @@ public sealed class SimpleAi
             {
                 var at = World.Deposits[d];
                 if (w.ExtractorOn(d) != null || w.BaseNear(_player, at, World.BaseReach) != null) continue;
+                if (w.GuardNear(at) || (w.StormUp && World.InStorm(at))) continue;   // (cleared and reachable ones only)
                 if (claimed.Exists(c => Dist(c, at) < 30)) continue;
                 if (target < 0 || Dist(at, t.Pos) < Dist(World.Deposits[target], t.Pos)) target = d;
             }
@@ -143,7 +170,7 @@ public sealed class SimpleAi
     bool Near(World w, FixVec2 pos)
     {
         for (int d = 0; d < World.Deposits.Length; d++)
-            if (Dist(pos, World.Deposits[d]) < 26 && w.ExtractorOn(d) == null && w.BaseNear(_player, World.Deposits[d], World.BaseReach) == null) return true;
+            if (Dist(pos, World.Deposits[d]) < 26 && w.ExtractorOn(d) == null && w.BaseNear(_player, World.Deposits[d], World.BaseReach) == null && !w.GuardNear(World.Deposits[d])) return true;
         return false;
     }
 

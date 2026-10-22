@@ -87,7 +87,7 @@ public partial class Projectiles : Node3D
                     AddFlash(from, 0.6f, 0.06f, hot, i * 0.07f);
                 }
                 break;
-            case Kind.Artillery:   // a slow lobbed shell that trails smoke and bursts
+            case Kind.Artillery or Kind.Bombard:   // a slow lobbed shell that trails smoke and bursts
                 Add(new Round { From = from, To = to, Flight = flight > 0 ? flight : 0.55f + dist / 30f, Arc = dist * 0.4f, Thick = 0.3f, Length = 0.8f, Col = new Color(0.25f, 0.22f, 0.18f), By = by, Burst = true });
                 AddFlash(from, 2.6f, 0.16f, new Color(1f, 0.6f, 0.25f));
                 for (int i = 0; i < 3; i++) Dust?.Add(from, new Vector3(_rng.RandfRange(-1, 1), _rng.RandfRange(0.6f, 1.4f), _rng.RandfRange(-1, 1)), 0.9f, Smoke);
@@ -109,7 +109,7 @@ public partial class Projectiles : Node3D
                 AddFlash(from + side, 0.5f, 0.05f, new Color(0.5f, 1f, 1f));
                 break;
             }
-            case Kind.Crawler:   // a quick spit of amber from its claw-gun
+            case Kind.Crawler or Kind.Feral or Kind.FeralBrute:   // a quick spit of amber from its claw-gun
                 Add(new Round { From = from, To = to, Flight = dist / 60f, Thick = 0.08f, Length = 1.0f, Col = new Color(1f, 0.6f, 0.15f) * 1.5f, By = by, Sparks = true });
                 AddFlash(from, 0.5f, 0.05f, new Color(1f, 0.6f, 0.2f));
                 break;

@@ -30,7 +30,7 @@ public partial class Main : Node3D
 {
     const double TickLength = 1.0 / World.TicksPerSecond;
 
-    static readonly Color[] TeamColor = { new(0.25f, 0.55f, 1f), new(1f, 0.42f, 0.18f) };
+    static readonly Color[] TeamColor = { new(0.25f, 0.55f, 1f), new(1f, 0.42f, 0.18f), new(0.52f, 0.58f, 0.3f) };   // (the third: feral machines)
     static readonly Color Neutral = new(0.5f, 0.5f, 0.5f);   // (deposits: their model has no team paint)
 
     ISession _session;
@@ -414,7 +414,7 @@ public partial class Main : Node3D
         foreach (var e in W.Entities)
         {
             // Placing an extractor: how far round each of my bases one can go.
-            if (_placing == Kind.Extractor && e.Owner == _me && World.IsBase(e) && e.Building == 0) Circle(e.Pos, World.BaseReach.ToFloat());
+            if (_placing != null && e.Owner == _me && World.IsBase(e) && e.Building == 0) Circle(e.Pos, World.BaseReach.ToFloat());
             // A mobile base picked: round every base, where it can't set up.
             if (pickedTruck && World.IsBase(e) && Shown(e)) Circle(e.Pos, World.BaseSpacing.ToFloat());
             if (e.Owner != _me || !World.IsSteered(e.Kind)) continue;
@@ -431,6 +431,9 @@ public partial class Main : Node3D
                 if (W.ExtractorOn(d) == null && W.BaseNear(_me, World.Deposits[d], World.BaseReach) != null)
                     Circle(World.Deposits[d], 3.4f);
         SweepRings(Circle);   // the radar, just after it pings
+        // Placing a gun: how far it will reach from where it would stand.
+        if (_placing is { } gun && World.StatsFor[(int)gun].Range.Raw > 0 && _mouseGround is { } mg)
+            Circle(ToFix(mg), World.StatsFor[(int)gun].Range.ToFloat());
         void Line(FixVec2 from, FixVec2 to)
         {
             ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, _ringMat);
@@ -724,6 +727,7 @@ public partial class Main : Node3D
     /// <summary>The flat direction from a player's HQ to the other's: which way its buildings face, and so on.</summary>
     static Vector3 TowardEnemy(int player)
     {
+        if (player >= 2) return Vector3.Forward;   // (ferals have no side to face)
         var d = World.HqStart(1 - player) - World.HqStart(player);
         return new Vector3(d.X.ToFloat(), 0, d.Z.ToFloat()).Normalized();
     }
@@ -735,12 +739,19 @@ public partial class Main : Node3D
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
     /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
     static string BuildingModel(Kind kind, Kind makes, Civ civ) =>
-        kind == Kind.Factory ? (makes == Kind.MobileBase && civ == Civ.Lattice ? "l_" : "") + "factory_" + ModelOf(makes) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
+        kind == Kind.Factory ? (makes == Kind.MobileBase && civ == Civ.Lattice ? "l_" : "") + "factory_" + ModelOf(makes)
+        : World.IsFeral(kind) ? ModelOf(kind) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
 
     Civ MyCiv => W.Players[_me].Civ;
+    /// <summary>A side's civilisation (the ferals' models aren't any civilisation's: they're named for themselves).</summary>
+    Civ CivOf(int owner) => owner < W.Players.Length ? W.Players[owner].Civ : Civ.Coalition;
 
     /// <summary>A kind as the player reads it.</summary>
-    static string NameOf(Kind k) => k switch { Kind.LightTank => "Light tank", Kind.Hq => "HQ", Kind.MobileBase => "Mobile base", Kind.Outpost => "Base", _ => k.ToString() };
+    static string NameOf(Kind k) => k switch
+    {
+        Kind.LightTank => "Light tank", Kind.Hq => "HQ", Kind.MobileBase => "Mobile base", Kind.Outpost => "Base",
+        Kind.Feral => "Feral scrapper", Kind.FeralBrute => "Feral brute", _ => k.ToString(),
+    };
 
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
     Node3D MakeView(Entity e)
@@ -749,10 +760,10 @@ public partial class Main : Node3D
         {
             // (Damage/armour upgrades have no visual for now: the user, 2026-10-22, "they dont need a visual right
             // now". UnitArt.AddEmblems still draws deck emblems if they come back.)
-            return UnitArt.Make(UnitModel(e.Kind, W.Players[e.Owner].Civ), TeamColor[e.Owner]);
+            return UnitArt.Make(UnitModel(e.Kind, CivOf(e.Owner)), TeamColor[e.Owner]);
         }
         // Buildings (tools/art/model_buildings.py): each wing kind its own building; the rest face the enemy's side.
-        var name = BuildingModel(e.Kind, e.Makes, W.Players[e.Owner].Civ);
+        var name = BuildingModel(e.Kind, e.Makes, CivOf(e.Owner));
         bool rising = e.Building > 0;
         var building = rising ? UnitArt.MakeBuilding(name, TeamColor[e.Owner]) : UnitArt.Make(name, TeamColor[e.Owner]);
         if (rising) _rising.Add(e.Id);
@@ -1107,6 +1118,7 @@ public partial class Main : Node3D
             _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
         DrawRadarBlips();
+        UpdateStorm();
         DrawFires();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
@@ -1116,7 +1128,8 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
+        Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, _ => 2f,
     };
 
@@ -1181,8 +1194,8 @@ public partial class Main : Node3D
 
     static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
     // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
-    static readonly string[] OutpostTrack = { "Reach", "Guns", "Armour" };
-    static readonly string[] OutpostEffect = { "+4 build reach and sight", "+25% gun damage", "+25% health" };
+    static readonly string[] DefenceTrack = { "Range", "Damage", "Armour" };
+    static readonly string[] DefenceEffect = { "+2 range", "+25% damage", "+25% health" };
 
     /// <summary>The Sell button, for my factories and outposts: 75% back of all it cost, upgrades included.</summary>
     void ShowSell(Entity e)
@@ -1223,6 +1236,12 @@ public partial class Main : Node3D
         _truckButton.Disabled = !canTruck || !W.Started || W.Winner >= 0;
     }
 
+    static string Clock(int ticks)
+    {
+        int secs = Mathf.Max(0, Mathf.CeilToInt(ticks / (float)World.TicksPerSecond));
+        return $"{secs / 60}:{secs % 60:00}";
+    }
+
     /// <summary>The set-up / pack-up button: for a picked mobile base on the move, or a set-up one of mine.</summary>
     void ShowDeploy(Entity e)
     {
@@ -1255,7 +1274,7 @@ public partial class Main : Node3D
     /// <summary>The three upgrade buttons, for one of my factories only.</summary>
     void ShowUpgrades(Entity e)
     {
-        bool mine = e.Kind is Kind.Factory or Kind.Outpost && e.Owner == _me;
+        bool mine = e.Owner == _me && (e.Kind == Kind.Factory && !World.IsUtility(e) || e.Kind is Kind.Turret or Kind.Flak or Kind.Bombard);
         for (int i = 0; i < _upgradeButtons.Length; i++)
         {
             var b = _upgradeButtons[i];
@@ -1263,9 +1282,9 @@ public partial class Main : Node3D
             if (!mine) continue;
             var which = (Upgrade)i;
             int level = e.Level(which);
-            bool post = e.Kind == Kind.Outpost;
-            var name = post ? OutpostTrack[i] : which.ToString();
-            var effect = post ? OutpostEffect[i] : UpgradeEffect[i];
+            bool post = World.IsDefence(e.Kind);
+            var name = post ? DefenceTrack[i] : which.ToString();
+            var effect = post ? DefenceEffect[i] : UpgradeEffect[i];
             // Clicking buys it now, or queues it if the metal isn't there (or others are queued first).
             int queued = World.Queued(e, which), next = level + queued;
             var waiting = queued > 0 ? $"   (+{queued} queued)" : "";
@@ -1284,7 +1303,7 @@ public partial class Main : Node3D
         var s = e.Stats;
         var lines = new List<string>
         {
-            $"{(World.IsUtility(e) ? "Utility wing" : e.Kind == Kind.Factory ? NameOf(e.Makes) + " wing" : NameOf(e.Kind))}  ({(e.Owner == _me ? "yours" : "enemy")})",
+            $"{(World.IsUtility(e) ? "Utility wing" : e.Kind == Kind.Factory ? NameOf(e.Makes) + " wing" : NameOf(e.Kind))}  ({(e.Owner == _me ? "yours" : e.Owner == World.Feral ? "feral" : "enemy")})",
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
@@ -1308,6 +1327,13 @@ public partial class Main : Node3D
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
                 Kind.Hq => $"Lose it and you lose the match. Takes {World.HqWings} wings (B);\nits radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
                 Kind.Tower => "Guards the base: long range and sight.",
+                Kind.Turret => "A gun emplacement: holds the ground round a base.",
+                Kind.Flak => "A quick gun that reaches fliers too; light against the ground.",
+                Kind.Bombard => "An artillery emplacement: long reach and a blast, but\nnothing close, and it needs others to spot for it.",
+                Kind.Wall => "A block of armour. A line of them turns attackers aside.",
+                Kind.Feral => $"A feral scrapper: wild, quick, weak. Worth {World.Salvage(Kind.Feral)} metal as scrap.",
+                Kind.FeralBrute => $"A feral brute: wild, slow, tough. Worth {World.Salvage(Kind.FeralBrute)} metal as scrap.",
+                Kind.Derelict => $"An old turret gone feral, guarding the ground: no base or\nextractor within {World.GuardReach} till it's gone. Worth {World.Salvage(Kind.Derelict)} metal.",
                 Kind.Outpost => $"A mobile base, set up: takes {World.OutpostWings} wings (B), extractors within\n{World.BaseReach}, radar {World.OutpostRadar}. With no wings it can pack up and move.",
                 _ when World.IsUtility(e) => "Utility wing: builds scouts and mobile bases to order.",
                 _ => $"Wing: makes {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
@@ -1318,7 +1344,7 @@ public partial class Main : Node3D
         {
             float every = s.Reload / (float)World.TicksPerSecond;
             lines.Add($"Damage  {e.Damage} every {every:0.#} s  ({e.Damage / every:0.#} per s)");
-            lines.Add($"Range  {s.Range}" + (s.MinRange.Raw > 0 ? $"   (none within {s.MinRange})" : ""));
+            lines.Add($"Range  {World.RangeOf(e)}" + (s.MinRange.Raw > 0 ? $"   (none within {s.MinRange})" : ""));
             if (s.Splash.Raw > 0) lines.Add($"Splash  {s.Splash} wide");
         }
         if (s.IsUnit) lines.Add($"Speed  {s.Speed.ToFloat() * World.TicksPerSecond:0.#} per s");
@@ -1377,10 +1403,10 @@ public partial class Main : Node3D
                 ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
                 if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
             }
-            else ok = false;
+            else ok = W.CanPlaceDefence(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = BuildingModel(Kind.Extractor, Kind.Hq, MyCiv);
+            var name = BuildingModel(_placing.Value, Kind.Hq, MyCiv);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
@@ -1441,13 +1467,14 @@ public partial class Main : Node3D
         int myHq = 0, theirHq = 0;
         foreach (var e in W.Entities)
         {
-            if (e.Stats.IsUnit && Shown(e)) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
+            if (e.Stats.IsUnit && Shown(e) && e.Owner != World.Feral) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         UpdateBuildMenu();
         UpdateQueueBar();
         var menu = "[B] Build   [E] Pick scouts   [F] Set up / pack up   [P] Pause   [Esc] Menu";
-        var placingWhat = _placing == Kind.Extractor ? $"an extractor (on a deposit within {World.BaseReach} of a base)" : "";
+        var placingWhat = _placing == Kind.Extractor ? $"an extractor (on a deposit within {World.BaseReach} of a base)"
+            : _placing is { } pd ? $"a {NameOf(pd).ToLowerInvariant()} (within {World.BaseReach} of a base; Shift to place more)" : "";
         var building = _placing == null
             ? menu
             : $"Placing {placingWhat}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
@@ -1458,6 +1485,8 @@ public partial class Main : Node3D
             (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
+            (W.StormUp ? $"Storm closes the middle for {Clock(W.StormTicksLeft)}\n" : "") +
+            (W.Started ? $"Feral wave {W.WaveNumber + 1} in {Clock(W.NextWaveIn)}\n" : "") +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
         if (_session is LockstepSession ls)
             _hud.Text += $"\nLAN {(_me == 0 ? "host" : "client")}   checks passed {ls.VerifiedTicks}" + (_waiting ? "   waiting..." : "");
@@ -1486,7 +1515,7 @@ public partial class Main : Node3D
     /// What; Kind.MobileBase for the utility wing), an extractor to place, or a scout or mobile base to order at a
     /// utility wing.</summary>
     sealed record BuildOption(Key Key, string Name, int Cost, Kind What, BuildAction Action);
-    enum BuildAction { Wing, Extractor, Order }
+    enum BuildAction { Wing, Extractor, Order, Defence }
 
     static readonly BuildOption[] CoalitionOptions =
     {
@@ -1498,6 +1527,10 @@ public partial class Main : Node3D
         new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
         new(Key.C, "Scout (from a utility wing)", World.ScoutCost, Kind.Scout, BuildAction.Order),
         new(Key.G, "Mobile base (from a utility wing)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
+        new(Key.Y, "Turret", World.TurretCost, Kind.Turret, BuildAction.Defence),
+        new(Key.F, "Flak (hits fliers)", World.FlakCost, Kind.Flak, BuildAction.Defence),
+        new(Key.O, "Bombard (long range)", World.BombardCost, Kind.Bombard, BuildAction.Defence),
+        new(Key.W, "Wall (place several; Esc to stop)", World.WallCost, Kind.Wall, BuildAction.Defence),
     };
 
     // The Lattice's (the user, 2026-10-21): crawlers, spiders, piercers (anti-armour); drones for scouts.
@@ -1510,6 +1543,10 @@ public partial class Main : Node3D
         new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
         new(Key.D, "Drone (flying scout, from a utility nest)", World.ScoutCost, Kind.Drone, BuildAction.Order),
         new(Key.G, "Mobile base (from a utility nest)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
+        new(Key.Y, "Spike turret", World.TurretCost, Kind.Turret, BuildAction.Defence),
+        new(Key.F, "Flak spitter (hits fliers)", World.FlakCost, Kind.Flak, BuildAction.Defence),
+        new(Key.O, "Bombard mound (long range)", World.BombardCost, Kind.Bombard, BuildAction.Defence),
+        new(Key.W, "Scrap wall (place several; Esc to stop)", World.WallCost, Kind.Wall, BuildAction.Defence),
     };
 
     /// <summary>The base a new wing goes onto: the picked base of mine (or the base of a picked wing), else the HQ.</summary>
@@ -1549,10 +1586,10 @@ public partial class Main : Node3D
         var title = new Label { Text = "Build", HorizontalAlignment = HorizontalAlignment.Center };
         title.AddThemeFontSizeOverride("font_size", 22);
         column.AddChild(title);
-        for (int i = 0; i < 8; i++)   // enough rows for any civ's menu; unused ones hidden
+        for (int i = 0; i < 12; i++)   // enough rows for any civ's menu; unused ones hidden
         {
             int at = i;
-            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, CustomMinimumSize = new Vector2(420, 36) };
+            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, CustomMinimumSize = new Vector2(460, 32) };
             b.AddThemeFontSizeOverride("font_size", 18);
             b.Pressed += () => { if (at < BuildOptions.Length) PickBuild(BuildOptions[at]); };
             column.AddChild(b);
@@ -1613,6 +1650,7 @@ public partial class Main : Node3D
         {
             case BuildAction.Wing: _session.Issue(new AddWing(_me, WingTarget().Id, o.What)); break;
             case BuildAction.Extractor: _placing = Kind.Extractor; break;
+            case BuildAction.Defence: _placing = o.What; break;
             case BuildAction.Order: _session.Issue(new Order(_me, OrderTarget().Id, o.What)); break;
         }
     }
@@ -1708,7 +1746,9 @@ public partial class Main : Node3D
                     {
                         var at = ToFix(_mouseGround.Value);
                         if (_placing == Kind.Extractor) _session.Issue(new PlaceExtractor(_me, _placeDeposit));
-                        _placing = null;
+                        else _session.Issue(new PlaceDefence(_me, at, _placing.Value));
+                        // Walls (and anything with Shift held) keep going: a line of them is a wall.
+                        if (_placing != Kind.Wall && !mb.ShiftPressed) _placing = null;
                     }
                 }
                 else _dragFrom = mb.Position;   // a click or a box: decided when the button comes up

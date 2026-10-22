@@ -263,6 +263,65 @@ def factory_mobilebase():
     finish_realistic("factory_mobilebase", 34.0, serial="18")
 
 
+
+# ---- defences (the user, 2026-10-22: "I want it to kind of feel a bit like a tower defense too") ----------------
+
+def turret():
+    """Turret: a gun emplacement: a hex footing, an armoured drum, a wedge turret with a twin cannon."""
+    k.begin(0.0)
+    hexagon(0, 0, 6.6, 0.0, 1.2, "mid", r1=6.2, sides=6)
+    k.drum(0, 0, 4.0, 1.2, 4.6, "steel", 10)
+    plate(-3.2, 3.6, -2.8, 2.8, 4.6, 7.2, "steel", inset=0.6, front=1.4, back=0.4)
+    plate(-2.4, 1.6, -1.9, 1.9, 7.2, 7.45, "paint", inset=0.15)
+    for x in (-0.8, 0.8):
+        k.tube(3.0, 9.5, x, 6.0, 0.36, "dark", 10)
+        k.tube(8.6, 9.8, x, 6.0, 0.55, "dark", 10)
+    k.box(-3.0, -2.0, -2.0, 2.0, 0.9, 1.25, "hazard")
+    hexagon(0, 0, 4.1, 3.0, 3.3, "glow", r1=4.1, sides=10)
+    finish_realistic("turret", 22.0, serial="31")
+
+
+def flak():
+    """Flak: a quad gun on a cradle, its four thin barrels raised steeply, on a round footing."""
+    k.begin(0.0)
+    hexagon(0, 0, 6.4, 0.0, 1.2, "mid", r1=6.0, sides=8)
+    k.drum(0, 0, 3.4, 1.2, 3.6, "steel", 10)
+    plate(-2.6, 2.6, -2.8, 2.8, 3.6, 6.2, "steel", inset=0.5)
+    k.box(-1.6, 1.6, -2.0, 2.0, 6.2, 6.45, "paint")
+    for x in (-1.6, -0.55, 0.55, 1.6):
+        tube_between((0.8, x, 5.2), (6.0, x, 11.0), 0.22, "dark", 8)
+    k.box(-2.6, -1.8, -2.9, 2.9, 4.0, 4.3, "glow")
+    finish_realistic("flak", 22.0, serial="32")
+
+
+def bombard():
+    """Bombard: an artillery emplacement: a sunk octagonal pit ringed by a parapet, a fat barrel raised high."""
+    k.begin(0.0)
+    hexagon(0, 0, 8.4, 0.0, 2.2, "steel", r1=7.6, sides=8, turn=math.pi / 8)
+    hexagon(0, 0, 6.6, 2.2, 2.4, "mid", r1=6.6, sides=8, turn=math.pi / 8)
+    k.drum(0, 0, 3.2, 2.2, 4.4, "plate", 10)
+    k.box(-2.6, 0.6, -2.4, 2.4, 4.4, 4.65, "paint")
+    tube_between((-1.0, 0, 4.6), (7.0, 0, 13.0), 0.8, "dark", 12)                      # the barrel
+    tube_between((-0.4, 0, 5.2), (2.2, 0, 7.9), 1.15, "mid", 12)                       # recoil sleeve
+    tube_between((6.2, 0, 12.2), (7.6, 0, 13.6), 1.2, "dark", 12)                      # muzzle
+    for i in range(4):
+        ang = math.pi / 4 + i * math.pi / 2
+        k.box(math.cos(ang) * 7.0 - 0.6, math.cos(ang) * 7.0 + 0.6, math.sin(ang) * 7.0 - 0.6, math.sin(ang) * 7.0 + 0.6, 2.2, 2.5, "hazard")
+    finish_realistic("bombard", 26.0, serial="33")
+
+
+def wall():
+    """Wall: a block of armour with sloped faces, a hazard band and a lit strip; lines of them make a wall."""
+    k.begin(0.0)
+    plate(-5.4, 5.4, -5.4, 5.4, 0.0, 6.6, "steel", inset=1.2, front=1.2, back=1.2)
+    k.box(-4.0, 4.0, -4.0, 4.0, 6.6, 6.85, "paint")
+    for s in (1, -1):
+        k.box(-5.0, 5.0, s * 4.95 - 0.1, s * 4.95 + 0.1, 3.0, 3.4, "glow")
+    k.box(-5.6, 5.6, -5.6, 5.6, 0.0, 0.8, "hazard")
+    finish_realistic("wall", 16.0, serial="34")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar, "factory_spider": factory_spider,
- "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node, "factory_mobilebase": factory_mobilebase}[which]()
+ "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node, "factory_mobilebase": factory_mobilebase,
+ "turret": turret, "flak": flak, "bombard": bombard, "wall": wall}[which]()

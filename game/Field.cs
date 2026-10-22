@@ -9,6 +9,7 @@ namespace Battler.Game;
 ///   - sulfur patches, clusters of yellow crystals (the user, 2026-10-22: "a sulfur patch that could increase explosive
 ///     damage ... or give you access to napalm");
 ///   - napalm burning as a glowing patch with flames licking up, dying down as it burns out;
+///   - the opening storm: a churning curtain at each edge of the band it shuts, for its first five minutes;
 ///   - the radar (the user, 2026-10-22: "a radar that pings every 30s to show where units are in the fog"): a ring
 ///     sweeping out from each of my bases as it pings, and a red blip where each hidden enemy unit was, fading out.
 /// </summary>
@@ -18,6 +19,58 @@ public partial class Main
     {
         foreach (var f in _fireViews) f.QueueFree();
         _fireViews.Clear();
+    }
+
+    // ---- the opening storm ------------------------------------------------------------------------------------
+
+    Node3D _storm;
+    ShaderMaterial _stormMat;
+
+    const string StormShader = @"
+shader_type spatial;
+render_mode unshaded, blend_mix, cull_disabled, depth_draw_never, shadows_disabled;
+uniform float strength = 1.0;
+float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float n(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
+void fragment() {
+    vec2 p = UV * vec2(40.0, 3.0);
+    float swirl = n(p + vec2(TIME * 0.6, -TIME * 0.9)) * 0.6 + n(p * 2.3 - vec2(TIME * 1.3, TIME * 0.4)) * 0.4;
+    float up = 1.0 - UV.y;   // (UV.y runs down the curtain: thick at the ground, thinning upward)
+    ALBEDO = mix(vec3(0.55, 0.45, 0.18), vec3(0.85, 0.75, 0.3), swirl);
+    ALPHA = clamp(swirl * up * 0.75 * strength, 0.0, 1.0);
+}";
+
+    /// <summary>The storm while it's up: a churning curtain of dust at each edge of the shut band, and a yellowed
+    /// haze on the ground between; it thins away over its last ten seconds.</summary>
+    void UpdateStorm()
+    {
+        if (_storm == null)
+        {
+            _storm = new Node3D();
+            AddChild(_storm);
+            _stormMat = new ShaderMaterial { Shader = new Shader { Code = StormShader } };
+            float half = World.StormHalfWidth.ToFloat(), length = World.MapHalfZ.ToFloat() * 2;
+            foreach (var side in new[] { -1f, 1f })
+                _storm.AddChild(new MeshInstance3D
+                {
+                    Mesh = new QuadMesh { Size = new Vector2(length, 26) }, MaterialOverride = _stormMat,
+                    Position = new Vector3(side * half, 11, 0), RotationDegrees = new Vector3(0, 90, 0),
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                });
+            _storm.AddChild(new Decal
+            {
+                Size = new Vector3(half * 2, 80, length), Position = new Vector3(0, 20, 0),
+                TextureAlbedo = new GradientTexture2D
+                {
+                    Width = 8, Height = 8,
+                    Gradient = new Gradient { Offsets = new[] { 0f, 1f }, Colors = new[] { new Color(0.6f, 0.5f, 0.2f, 0.35f), new Color(0.6f, 0.5f, 0.2f, 0.35f) } },
+                },
+            });
+        }
+        float left = W.StormTicksLeft / (float)World.TicksPerSecond;
+        _storm.Visible = W.StormUp;
+        _stormMat.SetShaderParameter("strength", Mathf.Clamp(left / 10f, 0, 1));
     }
 
     // ---- radar -----------------------------------------------------------------------------------------------

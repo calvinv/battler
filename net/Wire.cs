@@ -69,6 +69,7 @@ public static class Wire
             case PackUp pu: w.Write((byte)10); w.Write((byte)pu.Player); w.Write(pu.BaseId); break;
             case CancelUpgrades cu: w.Write((byte)12); w.Write((byte)cu.Player); w.Write(cu.BuildingId); break;
             case Order od: w.Write((byte)13); w.Write((byte)od.Player); w.Write(od.WingId); w.Write((byte)od.What); break;
+            case PlaceDefence pd: w.Write((byte)15); w.Write((byte)pd.Player); w.Write(pd.Pos.X.Raw); w.Write(pd.Pos.Z.Raw); w.Write((byte)pd.What); break;
             case SetFitting sf: w.Write((byte)14); w.Write((byte)sf.Player); w.Write(sf.FactoryId); w.Write((byte)sf.Fitting); break;
             case MoveUnits mu:
                 w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
@@ -97,6 +98,7 @@ public static class Wire
             11 => ReadMove(player, r),
             12 => new CancelUpgrades(player, r.ReadInt32()),
             13 => new Order(player, r.ReadInt32(), (Kind)r.ReadByte()),
+            15 => new PlaceDefence(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64())), (Kind)r.ReadByte()),
             14 => new SetFitting(player, r.ReadInt32(), (Fitting)r.ReadByte()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
