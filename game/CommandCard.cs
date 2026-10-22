@@ -174,7 +174,7 @@ public partial class Main
 
     string CardTitle(Entity e) => e.Kind switch
     {
-        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": defences" : $": build   (wings {W.SlotsUsed(e)}/{World.SlotsOf(e)})"),
+        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": structures" : $": build   (wings {W.SlotsUsed(e)}/{World.SlotsOf(e)})"),
         Kind.Factory => World.IsUtility(e) ? "Utility wing" : NameOf(e.Makes) + " wing",
         _ => NameOf(e.Kind),
     };
@@ -208,7 +208,7 @@ public partial class Main
                 UpgradeItems(e, items, true);
                 items.Add(SellItem(e));
                 break;
-            case Kind.Wall or Kind.Extractor:
+            case Kind.Wall or Kind.Extractor or Kind.PowerPlant:
                 items.Add(SellItem(e));
                 break;
             case Kind.MobileBase:
@@ -233,19 +233,15 @@ public partial class Main
             var kind = kinds[i];
             W.CanAddWing(_me, b.Id, kind, out var why);
             items.Add(new CardItem(keys[i], NameOf(kind), UnitModel(kind, MyCiv), null, World.WingCost(kind), $"{NameOf(kind)} {(MyCiv == Civ.Lattice ? "nest" : "wing")}",
-                $"Built onto this base in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.\n\n" + UnitStats(kind),
+                $"Built onto this base in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.\nPower draw {World.PowerDraw(kind)}  (you have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}).\n\n" + UnitStats(kind),
                 why?.ToLowerInvariant(), () => _session.Issue(new AddWing(_me, b.Id, kind))));
         }
         W.CanAddWing(_me, b.Id, Kind.MobileBase, out var uwhy);
         items.Add(new CardItem(Key.U, "Utility", BuildingModel(Kind.Factory, Kind.MobileBase, MyCiv), null, World.WingCost(Kind.MobileBase), MyCiv == Civ.Lattice ? "Utility nest" : "Utility wing",
             $"Builds scouts ({World.ScoutCost}) and mobile bases ({World.MobileBaseCost}) to order.\nMobile bases are how you expand.", uwhy?.ToLowerInvariant(),
             () => _session.Issue(new AddWing(_me, b.Id, Kind.MobileBase))));
-        string xwhy = !W.Started ? "once the battle starts" : W.Players[_me].Metal < World.ExtractorCost ? "not enough metal" : null;
-        items.Add(new CardItem(Key.X, "Extractor", BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), null, World.ExtractorCost, "Extractor",
-            $"Goes on a deposit within {World.BaseReach} of one of your bases (not one a derelict still guards).\nMines {World.ExtractorIncome} metal a second (sulfur: +{World.SulfurBonusPercent}% explosive damage, napalm).\nTakes {World.ConstructionTicks(Kind.Extractor) / World.TicksPerSecond} s to build.",
-            xwhy, () => _placing = Kind.Extractor));
-        items.Add(new CardItem(Key.N, "Defences", BuildingModel(Kind.Turret, Kind.Hq, MyCiv), null, 0, "Defences  \u25b8",
-            "Turrets, flak, bombards and walls, placed within " + World.BaseReach + " of a base.", W.Started ? null : "once the battle starts", () => _cardPage = "defences"));
+        items.Add(new CardItem(Key.N, "Structures", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, 0, "Structures  \u25b8",
+            $"Extractors, power plants and defences, placed within {World.BaseReach} of a base.", W.Started ? null : "once the battle starts", () => _cardPage = "defences"));
         if (b.Kind == Kind.Outpost)
         {
             bool can = W.CanPackUp(_me, b.Id, out var why);
@@ -257,6 +253,14 @@ public partial class Main
 
     void DefenceItems(Entity b, List<CardItem> items)
     {
+        string xwhy = W.Players[_me].Metal < World.ExtractorCost ? "not enough metal" : null;
+        items.Add(new CardItem(Key.X, "Extractor", BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), null, World.ExtractorCost, "Extractor",
+            $"Goes on a deposit within {World.BaseReach} of one of your bases.\nMines {World.ExtractorIncome} metal a second (sulfur: +{World.SulfurBonusPercent}% explosive damage, napalm).\nTakes {World.ConstructionTicks(Kind.Extractor) / World.TicksPerSecond} s to build.",
+            xwhy, () => _placing = Kind.Extractor));
+        string pwhy = W.Players[_me].Metal < World.PlantCost ? "not enough metal" : null;
+        items.Add(new CardItem(Key.Z, "Power plant", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, World.PlantCost, "Power plant",
+            $"Goes on a power vent (one beside every metal deposit) within {World.BaseReach} of a base.\n+{World.PlantPower} power. Your wings draw power; short of it, they all build slower.\nYou have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}. Takes {World.ConstructionTicks(Kind.PowerPlant) / World.TicksPerSecond} s to build.",
+            pwhy, () => _placing = Kind.PowerPlant));
         var keys = new[] { Key.T, Key.F, Key.O, Key.L };
         for (int i = 0; i < World.DefenceKinds.Length; i++)
         {
@@ -265,7 +269,7 @@ public partial class Main
             var body = $"Placed within {World.BaseReach} of a base; takes {World.ConstructionTicks(kind) / World.TicksPerSecond} s to build." + (kind == Kind.Wall ? " Places one after another till Esc." : " Upgrades: range, damage, armour.") + "\n\n" + UnitStats(kind);
             items.Add(new CardItem(keys[i], NameOf(kind), BuildingModel(kind, Kind.Hq, MyCiv), null, World.CostOf(kind), DefenceName(kind), body, why, () => _placing = kind));
         }
-        items.Add(new CardItem(Key.Z, "Back", null, "\u25c2 Back", 0, "Back", "To the base's build card (or Esc).", null, () => _cardPage = "main"));
+        items.Add(new CardItem(Key.Escape, "Back", null, "\u25c2 Back", 0, "Back", "To the base's build card.", null, () => _cardPage = "main"));
     }
 
     string DefenceName(Kind k) => MyCiv == Civ.Lattice

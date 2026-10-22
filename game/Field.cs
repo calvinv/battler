@@ -52,6 +52,51 @@ public partial class Main
                 circle(b.Pos, World.RadarOf(b).ToFloat() * since / SweepSeconds);
     }
 
+    // ---- power vents ---------------------------------------------------------------------------------------------
+
+    readonly List<Node3D> _ventViews = new();
+    StandardMaterial3D _steamMat;
+
+    /// <summary>A power vent: a scorched patch of ground (a decal) with a glowing crack, steam rising off it.</summary>
+    Node3D MakeVent(int seed)
+    {
+        _steamMat ??= new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.85f, 0.85f, 0.82f, 0.35f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+        };
+        var root = new Node3D();
+        root.AddChild(new Decal
+        {
+            Size = new Vector3(6, 3, 6),
+            TextureAlbedo = Radial(new[] { new Color(0.08f, 0.07f, 0.06f, 0.95f), new Color(0.15f, 0.12f, 0.1f, 0.7f), new Color(0.2f, 0.17f, 0.14f, 0f) }),
+            TextureEmission = Radial(new[] { new Color(1f, 0.45f, 0.1f), new Color(0.2f, 0.05f, 0f), new Color(0, 0, 0) }),
+            EmissionEnergy = 1.4f, UpperFade = 0.3f, LowerFade = 0.3f,
+        });
+        for (int i = 0; i < 5; i++)   // steam puffs (rising and fading in AnimateVents)
+            root.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(1.6f, 1.6f) }, MaterialOverride = _steamMat });
+        root.SetMeta("seed", seed);
+        return root;
+    }
+
+    void AnimateVents()
+    {
+        float now = (float)Time.GetTicksMsec() * 0.001f;
+        foreach (var vent in _ventViews)
+        {
+            if (!vent.Visible) continue;
+            int seed = (int)vent.GetMeta("seed");
+            for (int k = 1; k < vent.GetChildCount(); k++)
+            {
+                float t = (now * 0.35f + k * 0.2f + seed * 0.13f) % 1f;   // each puff's age, 0 to 1
+                var puff = vent.GetChild<MeshInstance3D>(k);
+                puff.Position = new Vector3(Mathf.Sin(seed + k * 2.1f) * 0.6f + t * 0.8f, 0.5f + t * 6f, Mathf.Cos(seed + k * 1.3f) * 0.6f);
+                puff.Scale = Vector3.One * (0.6f + t * 1.8f);
+                puff.Transparency = t;
+            }
+        }
+    }
+
     // ---- sulfur ----------------------------------------------------------------------------------------------
 
     /// <summary>A sulfur patch: a low pale rock bristling with yellow crystals that glow a little.</summary>

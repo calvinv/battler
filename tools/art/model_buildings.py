@@ -321,7 +321,63 @@ def wall():
     finish_realistic("wall", 16.0, serial="34")
 
 
+
+def powerplant():
+    """Power plant: a diesel generator house over a power vent: a riveted engine hall, two tall exhaust chimneys, a
+    radiator bank down one side, a lit cable mast; team panel on the roof."""
+    k.begin(0.0)
+    apron(10.5, 9.0)
+    plate(-8, 7, -6, 6, 0.5, 7.0, "steel", inset=1.0, front=0.4, back=0.6)                # the engine hall
+    plate(-7, 6, -5, 5, 7.0, 8.2, "plate", inset=0.8)                                      # its roof
+    k.box(-5.0, 3.0, -3.4, 3.4, 8.2, 8.45, "paint")
+    for x in (-5.5, -2.0):                                                                 # exhaust chimneys
+        k.drum(x, 4.0, 1.0, 7.0, 15.5, "dark", 10)
+        k.drum(x, 4.0, 1.25, 15.5, 16.3, "mid", 10)
+        k.drum(x, 4.0, 1.15, 10.5, 11.0, "hazard", 10)
+    for i in range(6):                                                                     # radiator fins down the side
+        a = -6.5 + i * 2.2
+        k.box(a, a + 1.4, -7.2, -6.0, 0.5, 5.5, "mid")
+    k.box(-6.8, 6.4, -7.3, -7.2, 1.0, 5.0, "glow")
+    k.drum(5.0, -3.5, 0.4, 8.2, 12.5, "dark", 6)                                          # cable mast
+    k.drum(5.0, -3.5, 0.9, 12.0, 12.4, "glow", 8)
+    k.box(7.0, 7.8, -2.5, 2.5, 0.5, 5.0, "hazard")                                        # the door
+    finish_realistic("powerplant", 30.0, serial="41")
+
+
+
+def factory_ranger():
+    """The ranger wing: a low barracks-like hall with a row of bay doors, a rack of rifles' worth of antennae."""
+    k.begin(0.0)
+    apron(11.5, 9.0)
+    plate(-9, 8, -7, 7, 0.5, 5.5, "steel", inset=0.8, front=0.3, back=0.5)
+    plate(-8, 7, -6, 6, 5.5, 6.3, "plate", inset=0.5)
+    k.box(-6.5, 4.5, -4.0, 4.0, 6.3, 6.55, "paint")
+    for z in (-4.5, 0.0, 4.5):
+        k.box(7.6, 8.4, z - 1.6, z + 1.6, 0.5, 4.0, "black")                            # bay doors
+        k.box(7.6, 8.6, z - 1.9, z + 1.9, 4.0, 4.5, "hazard")
+    for x in (-6.0, -3.0):
+        k.drum(x, -5.0, 0.2, 6.3, 10.5, "dark", 6)
+    strip(-8.5, 7.5, 7.05, 7.25, 3.0, "glow", 0.2)
+    finish_realistic("factory_ranger", 34.0, serial="51")
+
+
+def factory_air():
+    """The airfield wing: a curved hangar beside a square landing pad with lit edges and a control mast."""
+    k.begin(0.0)
+    apron(12.0, 10.0)
+    plate(-10, 1, -8, 8, 0.5, 7.5, "steel", inset=2.5, front=1.0, back=1.0)                # the hangar
+    k.box(-8.5, -0.5, -5.0, 5.0, 7.5, 7.75, "paint")
+    k.box(1.0, 1.8, -6.0, 6.0, 0.5, 5.5, "black")                                          # its open end
+    k.box(2.5, 10.5, -6.5, 6.5, 0.5, 0.9, "mid")                                           # the pad
+    for z in (-6.3, 6.3):
+        k.box(2.5, 10.5, z - 0.15, z + 0.15, 0.9, 1.05, "glow")
+    k.box(5.5, 7.5, -0.5, 0.5, 0.9, 1.0, "hazard")
+    k.drum(-8.0, 7.0, 0.4, 0.5, 11.0, "dark", 6)                                          # control mast
+    k.drum(-8.0, 7.0, 1.0, 10.5, 11.2, "glow", 8)
+    finish_realistic("factory_air", 34.0, serial="52")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar, "factory_spider": factory_spider,
  "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node, "factory_mobilebase": factory_mobilebase,
- "turret": turret, "flak": flak, "bombard": bombard, "wall": wall}[which]()
+ "turret": turret, "flak": flak, "bombard": bombard, "wall": wall, "powerplant": powerplant, "factory_ranger": factory_ranger, "factory_air": factory_air}[which]()

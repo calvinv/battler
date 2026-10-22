@@ -304,6 +304,38 @@ def l_bomber():
     eyes(3.4, 0, 2.0, 4, 0.3, 0.6)
 
 
+
+def l_powerplant():
+    """A Lattice power plant: a squat scrap boiler on the vent, three crooked smoking stacks, glowing amber firebox."""
+    hexagon(0, 0, 8.0, 0.0, 1.5, "mid", r1=7.2, sides=6)
+    hexagon(0, 0, 5.4, 1.5, 7.5, "plate", r1=4.4, sides=8)
+    hexagon(0, 0, 3.4, 7.5, 7.8, "paint", sides=8)
+    hexagon(5.0, 0, 1.6, 1.5, 3.5, "ember", r1=1.4, sides=6)                               # the firebox
+    for i, (x, z, lean) in enumerate(((-2.5, 2.0, 1.0), (1.5, 3.0, -0.8), (-1.0, -3.0, 0.6))):
+        tube_between((x, z, 7.0), (x + lean, z, 15.0 - i * 1.5), 0.8, "dark", 6)
+    eyes(5.5, 0, 5.0, 3, 0.3)
+
+
+
+def l_factory_ranger():
+    """The Lattice's ranger nest: the nest ring with a cluster of small hatching pods on the crane."""
+    nest(lambda: [hexagon(1.0 + dx, dz, 0.9, 4.2, 5.6, "steel", r1=0.6, sides=6) for dx, dz in ((0, 0), (-1.2, 1.0), (-1.2, -1.0))])
+
+
+def l_factory_air():
+    """The Lattice's roost: a scrap tower with a flat landing platform on top and amber landing lamps."""
+    for i in range(4):
+        ang = math.tau * (i + 0.5) / 4
+        tube_between((math.cos(ang) * 6.0, math.sin(ang) * 6.0, 0.0), (math.cos(ang) * 3.0, math.sin(ang) * 3.0, 8.0), 0.6, "dark", 4)
+    hexagon(0, 0, 3.4, 0.0, 8.0, "plate", r1=2.8, sides=6)
+    hexagon(0, 0, 7.0, 8.0, 8.8, "mid", r1=7.0, sides=8)                                 # the platform
+    hexagon(0, 0, 4.6, 8.8, 9.0, "paint", sides=8)
+    for i in range(8):
+        ang = math.tau * i / 8
+        k.drum(math.cos(ang) * 6.4, math.sin(ang) * 6.4, 0.3, 8.8, 9.2, "ember", 6)
+    eyes(3.5, 0, 5.0, 3, 0.3)
+
+
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()

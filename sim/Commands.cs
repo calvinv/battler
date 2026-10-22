@@ -51,3 +51,6 @@ public sealed record SetFitting(int Player, int FactoryId, Fitting Fitting) : Co
 
 /// <summary>A defence (World.DefenceKinds) at Pos, within reach of one of the player's bases.</summary>
 public sealed record PlaceDefence(int Player, FixVec2 Pos, Kind What) : Command(Player);
+
+/// <summary>A power plant on one of World.Vents, within reach of one of the player's bases.</summary>
+public sealed record PlacePlant(int Player, int Vent) : Command(Player);

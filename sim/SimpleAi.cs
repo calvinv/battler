@@ -54,6 +54,15 @@ public sealed class SimpleAi
             return;
         }
 
+        // Power: a plant on a free vent in reach whenever the wings draw (nearly) all there is.
+        if (w.PowerDrawOf(_player) >= w.PowerSupply(_player) - 1)
+            for (int v = 0; v < World.Vents.Length; v++)
+                if (w.PlantOn(v) == null && w.BaseNear(_player, World.Vents[v], World.BaseReach) != null)
+                {
+                    if (w.CanPlacePlant(_player, v, out _)) issue(new PlacePlant(_player, v));
+                    return;   // (or saving for it)
+                }
+
         // A utility wing, then a scout, then mobile bases.
         var util = mine.Find(World.IsUtility);
         int wings = mine.FindAll(e => e.Kind == Kind.Factory && !World.IsUtility(e)).Count;

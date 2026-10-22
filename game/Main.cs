@@ -422,6 +422,10 @@ public partial class Main : Node3D
                 if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
             }
         }
+        if (_placing == Kind.PowerPlant)
+            for (int v = 0; v < World.Vents.Length; v++)
+                if (W.PlantOn(v) == null && W.BaseNear(_me, World.Vents[v], World.BaseReach) != null)
+                    Circle(World.Vents[v], 3.4f);
         // Placing an extractor: a ring round each free deposit in reach.
         if (_placing == Kind.Extractor)
             for (int d = 0; d < World.Deposits.Length; d++)
@@ -531,6 +535,14 @@ public partial class Main : Node3D
         _forest = new Forest();
         AddChild(_forest);
         if (OS.GetEnvironment("NOTREES") != "1") _forest.Plant(_terrain.TreeSpots);   // (NOTREES=1: none, to measure their cost)
+        // The power vents: a steaming scorch on each, hidden while a power plant stands on it.
+        for (int i = 0; i < World.Vents.Length; i++)
+        {
+            var vent = MakeVent(i);
+            vent.Position = ToV3(World.Vents[i]) with { Y = _terrain.HeightAt(World.Vents[i].X.ToFloat(), World.Vents[i].Z.ToFloat()) };
+            AddChild(vent);
+            _ventViews.Add(vent);
+        }
         // The metal deposits: an outcrop of ore on each, hidden while an extractor stands on it.
         for (int i = 0; i < World.Deposits.Length; i++)
         {
@@ -683,8 +695,11 @@ public partial class Main : Node3D
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
     /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
     static string BuildingModel(Kind kind, Kind makes, Civ civ) =>
-        kind == Kind.Factory ? (makes == Kind.MobileBase && civ == Civ.Lattice ? "l_" : "") + "factory_" + ModelOf(makes)
+        kind == Kind.Factory ? (civ == Civ.Lattice && makes is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" : "") + "factory_" + WingModel(makes)
         : World.IsFeral(kind) ? ModelOf(kind) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
+
+    /// <summary>Which wing model makes a unit: fliers and bombers share the airfield.</summary>
+    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber ? "air" : ModelOf(makes);
 
     Civ MyCiv => W.Players[_me].Civ;
     /// <summary>A side's civilisation (the ferals' models aren't any civilisation's: they're named for themselves).</summary>
@@ -1073,6 +1088,9 @@ public partial class Main : Node3D
             _rising.Remove(id);
         }
 
+        for (int i = 0; i < _ventViews.Count; i++)   // a vent shows until a (seen) power plant stands on it
+            _ventViews[i].Visible = W.PlantOn(i) is not { } plant || !Shown(plant);
+        AnimateVents();
         for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
             _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
@@ -1088,7 +1106,7 @@ public partial class Main : Node3D
     static float TopOf(Kind k) => k switch
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
-        Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
+        Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.PowerPlant => 3.2f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, _ => 2f,
     };
 
@@ -1172,6 +1190,13 @@ public partial class Main : Node3D
 
 
 
+    /// <summary>"Power 6/10", and how slow the wings are when they draw more than there is.</summary>
+    string PowerLine()
+    {
+        int draw = W.PowerDrawOf(_me), supply = W.PowerSupply(_me);
+        return $"Power {draw}/{supply}" + (draw > supply ? $"   LOW: wings at {100 * supply / draw}% (build a power plant on a vent)" : "") + "\n";
+    }
+
     static string Clock(int ticks)
     {
         int secs = Mathf.Max(0, Mathf.CeilToInt(ticks / (float)World.TicksPerSecond));
@@ -1226,6 +1251,7 @@ public partial class Main : Node3D
                 Kind.Flak => "A quick gun that reaches fliers too; light against the ground.",
                 Kind.Bombard => "An artillery emplacement: long reach and a blast, but\nnothing close, and it needs others to spot for it.",
                 Kind.Wall => "A block of armour. A line of them turns attackers aside.",
+                Kind.PowerPlant => $"A diesel generator on a power vent: +{World.PlantPower} power for your wings.",
                 Kind.Feral => $"A feral scrapper: wild, quick, weak. Worth {World.Salvage(Kind.Feral)} metal as scrap.",
                 Kind.FeralBrute => $"A feral brute: wild, slow, tough. Worth {World.Salvage(Kind.FeralBrute)} metal as scrap.",
                 Kind.Derelict => $"An old turret gone feral, guarding the ground: no base or\nextractor within {World.GuardReach} till it's gone. Worth {World.Salvage(Kind.Derelict)} metal.",
@@ -1258,6 +1284,7 @@ public partial class Main : Node3D
         if (e.Building > 0)
             lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
         else if (e.Kind == Kind.Factory && !World.IsUtility(e)) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        if (e.Kind == Kind.Factory && e.Owner == _me) lines.Add($"Power draw  {World.PowerDraw(e.Makes)}");
         if (e.Kind == Kind.Factory && e.Owner == _me)
             lines.Add(e.HasRally ? "New units go to its flag first, then attack"
                 : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"
@@ -1298,6 +1325,13 @@ public partial class Main : Node3D
                 ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
                 if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
             }
+            else if (_placing == Kind.PowerPlant)
+            {
+                // It snaps onto the vent under the mouse.
+                _placeDeposit = NearestOf(World.Vents, at);
+                ok = W.CanPlacePlant(_me, _placeDeposit, out _placeProblem);
+                if (_placeDeposit >= 0) at = ToV3(World.Vents[_placeDeposit]);
+            }
             else ok = W.CanPlaceDefence(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
@@ -1328,7 +1362,7 @@ public partial class Main : Node3D
 
     Node3D _placeModel;
     (string, bool) _placeModelKey;
-    int _placeDeposit = -1;   // placing an extractor or outpost: the deposit it would go on (or by)
+    int _placeDeposit = -1;   // placing an extractor or power plant: the deposit or vent it would go on
 
     /// <summary>The index of the spot (a deposit, or a pad) nearest a point on the ground, if within a few paces; else -1.</summary>
     static int NearestOf(FixVec2[] spots, Vector3 at, bool[] only = null)
@@ -1377,6 +1411,7 @@ public partial class Main : Node3D
             $"Metal {me.Metal}   +{W.IncomeOf(_me)}/s   (and salvage: destroy things)\n" +
             building + "\n" +
             $"Army {W.ArmyCount(_me)}/{World.MaxArmyOf(MyCiv)}   units seen {myUnits} vs {theirUnits}\n" +
+            PowerLine() +
             (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
@@ -1512,6 +1547,7 @@ public partial class Main : Node3D
                     {
                         var at = ToFix(_mouseGround.Value);
                         if (_placing == Kind.Extractor) _session.Issue(new PlaceExtractor(_me, _placeDeposit));
+                        else if (_placing == Kind.PowerPlant) _session.Issue(new PlacePlant(_me, _placeDeposit));
                         else _session.Issue(new PlaceDefence(_me, at, _placing.Value));
                         // Walls (and anything with Shift held) keep going: a line of them is a wall.
                         if (_placing != Kind.Wall && !mb.ShiftPressed) _placing = null;

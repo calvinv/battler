@@ -260,7 +260,35 @@ bool BaseTest()
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
     bool ok = truck != null && guarded && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && (!World.FeralsOn || WaveTest());
+    return ok && (!World.FeralsOn || WaveTest()) && PowerTest();
+}
+
+// Power: three tank wings (drawing 6) on the HQ's 4 make their first tank in half as long again (45 s becomes
+// 67.5 s); with a power plant up as well, in the usual 45 s.
+bool PowerTest()
+{
+    int FirstTank(bool plant)
+    {
+        var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
+        foreach (var p in w.Players) p.Metal = 100000;
+        var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+        var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
+        w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Tank), new AddWing(0, hq.Id, Kind.Tank), new AddWing(0, hq.Id, Kind.Tank), new AddWing(1, hq1.Id, Kind.LightTank) });
+        if (plant)
+        {
+            int v = Array.FindIndex(World.Vents, at => w.BaseNear(0, at, World.BaseReach) != null);
+            w.Spawn(Kind.PowerPlant, 0, World.Vents[v]).Vent = v;
+            w.Entities.Find(e => e.Kind == Kind.PowerPlant).Building = 0;
+        }
+        foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) f.Building = 0;
+        int start = w.Tick;
+        while (!w.Entities.Exists(e => e.Kind == Kind.Tank) && w.Tick - start < 2000) w.Step(Array.Empty<Command>());
+        return w.Tick - start;
+    }
+    int shortOf = FirstTank(false), powered = FirstTank(true);
+    bool ok = Math.Abs(shortOf - 675) <= 5 && Math.Abs(powered - 450) <= 5;
+    Console.WriteLine($"Power test: first tank with 6 drawn on 4 supplied after {shortOf / 10.0:0.0} s, with a plant {powered / 10.0:0.0} s: {(ok ? "OK" : "FAILED")}");
+    return ok;
 }
 
 // The first feral wave comes in from both edges a minute after the start.
@@ -413,6 +441,7 @@ static void Report(World world)
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
     Console.WriteLine($"t={world.Tick / 10,4}s  wings {f0}v{f1}  bases {o0}v{o1}  sulfur {world.SulfurOf(0)}v{world.SulfurOf(1)}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  ferals {world.Entities.Count(e => e.Owner == World.Feral)} (wave {world.WaveNumber})  defences {world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 0)}v{world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 1)}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
     string Front(int p) { var xs = world.Entities.FindAll(e => e.Owner == p && World.IsArmy(e.Kind)).ConvertAll(e => e.Pos.X.ToInt()); xs.Sort(); return xs.Count == 0 ? "-" : $"{xs[0]}..{xs[xs.Count / 2]}..{xs[^1]}"; }
+    Console.WriteLine($"         power: {world.PowerDrawOf(0)}/{world.PowerSupply(0)} v {world.PowerDrawOf(1)}/{world.PowerSupply(1)} (draw/supply), plants {world.Entities.Count(e => e.Kind == Kind.PowerPlant && e.Owner == 0)}v{world.Entities.Count(e => e.Kind == Kind.PowerPlant && e.Owner == 1)}");
     Console.WriteLine($"         earned: mined {world.Players[0].Mined}/{world.Players[1].Mined}, salvage {world.Players[0].Salvaged}/{world.Players[1].Salvaged}");
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
     // Units in the water (they never should be), and how many are in the middle.

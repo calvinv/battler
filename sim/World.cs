@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -67,7 +67,9 @@ public sealed class Entity
     public int BaseId;     // a wing (factory): the HQ or set-up mobile base it's built onto
     public int Deposit = -1;   // an extractor: which of World.Deposits it sits on
     public int Slot;           // a wing (factory): which of its base's wing spots it fills
-    public readonly List<int> Orders = new();   // a utility wing: what's paid for and waiting to be built (by Kind), in order
+    public readonly List<int> Orders = new();
+    public int PowerAcc;       // a wing short of power: what it has banked toward its next tick of work (World.Work)
+    public int Vent = -1;      // a power plant: which of World.Vents it stands on   // a utility wing: what's paid for and waiting to be built (by Kind), in order
     public readonly List<int> UpgradeQueue = new();   // a factory or outpost: upgrades (by Upgrade) to buy, in order, once affordable
     public List<FixVec2> NavPath;      // a unit: corners to drive through to NavGoal (Nav), when there is no straight way
     public FixVec2 NavGoal;
@@ -152,6 +154,17 @@ public sealed class World
     // cheesed"): each base sweeps its range every 30 s; hidden enemy units in it show as blips, and become known.
     public const int RadarTicks = 30 * TicksPerSecond;
 
+    // Power (the user, 2026-10-22: "build powerplants to produce power to build units, this encourages expansion"):
+    // the HQ supplies a little; each power plant, on one of the vents beside every metal deposit, supplies more. Every
+    // finished wing draws power; drawing more than is supplied, all the side's wings work that much slower.
+    public const int HqPower = 4, PlantPower = 6, PlantCost = 300;
+    public static int PowerDraw(Kind makes) => makes switch
+    {
+        Kind.LightTank or Kind.Crawler or Kind.Ranger or Kind.MobileBase => 1,
+        Kind.Artillery or Kind.Bomber => 3,
+        _ => 2,
+    };
+
     // Defences: placed within BaseReach of a base; turrets, flak and bombards take upgrades like wings (their
     // "Production" track is range, +2 a level).
     public const int TurretCost = 250, FlakCost = 200, BombardCost = 400, WallCost = 50;
@@ -177,7 +190,7 @@ public sealed class World
         Kind.Tank => 120, Kind.Artillery => 140, Kind.MobileBase => 300,
         Kind.Ranger => 30, Kind.Flier => 70, Kind.Bomber => 100,
         Kind.Factory => 250, Kind.Extractor => 150, Kind.Outpost => 300, Kind.Tower => 200, Kind.Hq => 0,
-        Kind.Turret or Kind.Flak => 120, Kind.Bombard => 200, Kind.Wall => 25,
+        Kind.Turret or Kind.Flak => 120, Kind.Bombard => 200, Kind.Wall => 25, Kind.PowerPlant => 150,
         _ => 0,
     };
 
@@ -252,6 +265,8 @@ public sealed class World
     public static readonly bool[] HasPad;
     /// <summary>What each deposit gives.</summary>
     public static readonly Resource[] DepositResource;
+    /// <summary>Power vents, where power plants go: one beside each metal deposit, toward the middle of the map.</summary>
+    public static readonly FixVec2[] Vents;
 
     static World()
     {
@@ -286,6 +301,19 @@ public sealed class World
         HasPad = new bool[all.Count];   // (outposts are gone: the network replaced them)
         DepositResource = new Resource[all.Count];
         for (int i = metal; i < all.Count; i++) DepositResource[i] = Resource.Sulfur;
+        var vents = new List<FixVec2>();
+        for (int i = 0; i < metal; i++)
+        {
+            var d = Deposits[i];
+            var toMiddle = d.LengthSq.Raw == 0 ? new FixVec2(1, 0) : -d;
+            foreach (var side in new[] { Fix.Zero, Fix.FromInt(2), Fix.FromInt(-2) })   // (straight in, or a little to one side if that's water)
+            {
+                var off = toMiddle.WithLength(Fix.One) + new FixVec2(-toMiddle.Z, toMiddle.X).WithLength(Fix.One) * (side / 3);
+                var at = d + off.WithLength(Fix.FromInt(10));
+                if (Nav.OpenAt(at) && Ground.Passable(at + new FixVec2(3, 0)) && Ground.Passable(at - new FixVec2(3, 0))) { vents.Add(at); break; }
+            }
+        }
+        Vents = vents.ToArray();
     }
 
     // Roles: the scout is fast and fragile; the tank is tough, the all-rounder; artillery outranges everything and
@@ -365,6 +393,8 @@ public sealed class World
         // Bomber: slow; flies over a ground target, drops a heavy bomb with a wide blast, flies on and comes round again.
         new() { MaxHp = 120, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(45, 100), Range = 2, Aggro = 18, Vision = 12,
                 Splash = 3, Damage = 60, Reload = 60, Flying = true, Explosive = true, BuildTicks = 40 * TicksPerSecond },
+        // Power plant: a diesel generator house on a power vent; it powers the wings.
+        new() { Armoured = true, MaxHp = 700, Radius = Fix.Ratio(18, 10), Vision = 8 },
     };
 
     public int Tick;
@@ -532,7 +562,7 @@ public sealed class World
     /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => WingCost(b.Makes) };
+        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, Kind.PowerPlant => PlantCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => WingCost(b.Makes) };
         foreach (var level in b.Levels)
             for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
@@ -544,7 +574,7 @@ public sealed class World
     {
         var b = Find(id);
         why = null;
-        if (b == null || !(b.Kind is Kind.Factory or Kind.Outpost or Kind.Extractor || IsDefence(b.Kind)) || b.Owner != player) { why = "Not yours to sell"; return false; }
+        if (b == null || !(b.Kind is Kind.Factory or Kind.Outpost or Kind.Extractor or Kind.PowerPlant || IsDefence(b.Kind)) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -562,6 +592,7 @@ public sealed class World
         Kind.Turret or Kind.Flak => 30 * TicksPerSecond,
         Kind.Bombard => 45 * TicksPerSecond,
         Kind.Wall => 8 * TicksPerSecond,
+        Kind.PowerPlant => 45 * TicksPerSecond,
         _ => 0,
     };
 
@@ -709,6 +740,11 @@ public sealed class World
             var gap = DepositRadius + r;
             if ((d - pos).LengthSq < gap * gap) return true;
         }
+        foreach (var v in Vents)   // (vents are kept for power plants)
+        {
+            var gap = StatsFor[(int)Kind.PowerPlant].Radius + r;
+            if ((v - pos).LengthSq < gap * gap) return true;
+        }
         return false;
     }
 
@@ -746,6 +782,55 @@ public sealed class World
         foreach (var e in Entities)
             if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && DepositResource[e.Deposit] == Resource.Metal) n++;   // (mining once built)
         return TrickleIncome + ExtractorIncome * n;
+    }
+
+    // ---- power -------------------------------------------------------------------------------------------------
+
+    /// <summary>The live power plant on a vent, if any.</summary>
+    public Entity PlantOn(int vent) => Entities.Find(e => !e.Dead && e.Kind == Kind.PowerPlant && e.Vent == vent);
+
+    public bool CanPlacePlant(int player, int vent, out string why)
+    {
+        why = null;
+        if (vent < 0 || vent >= Vents.Length) { why = "Put it on a power vent"; return false; }
+        if (Players[player].Metal < PlantCost) { why = "Not enough metal"; return false; }
+        if (PlantOn(vent) != null) { why = "Already taken"; return false; }
+        if (GuardNear(Vents[vent])) { why = "A derelict guards it: clear it first"; return false; }
+        if (BaseNear(player, Vents[vent], BaseReach) == null) { why = $"Needs one of your bases within {BaseReach} (set up a mobile base near it)"; return false; }
+        return true;
+    }
+
+    /// <summary>Power a side has: the HQ's and its finished plants'.</summary>
+    public int PowerSupply(int player)
+    {
+        int n = 0;
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Owner != player || e.Building > 0) continue;
+            if (e.Kind == Kind.Hq) n += HqPower;
+            if (e.Kind == Kind.PowerPlant) n += PlantPower;
+        }
+        return n;
+    }
+
+    /// <summary>Power a side's finished wings draw.</summary>
+    public int PowerDrawOf(int player)
+    {
+        int n = 0;
+        foreach (var e in Entities)
+            if (!e.Dead && e.Owner == player && e.Kind == Kind.Factory && e.Building == 0) n += PowerDraw(e.Makes);
+        return n;
+    }
+
+    /// <summary>Whether a wing gets a tick of work done: always with power to spare; short of power, it banks the
+    /// supply each tick and works whenever it has banked the draw, so every wing slows to supply/draw.</summary>
+    bool Work(Entity wing, int supply, int draw)
+    {
+        if (draw <= supply) return true;
+        wing.PowerAcc += supply;
+        if (wing.PowerAcc < draw) return false;
+        wing.PowerAcc -= draw;
+        return true;
     }
 
     /// <summary>How many sulfur patches a player mines (built).</summary>
@@ -1247,6 +1332,10 @@ public sealed class World
                 p.Metal -= CostOf(pd.What);
                 Spawn(pd.What, pd.Player, pd.Pos);
                 break;
+            case PlacePlant pp when CanPlacePlant(pp.Player, pp.Vent, out _):
+                p.Metal -= PlantCost;
+                Spawn(Kind.PowerPlant, pp.Player, Vents[pp.Vent]).Vent = pp.Vent;
+                break;
             case PlaceExtractor pe when CanPlaceExtractor(pe.Player, pe.Deposit, out _):
                 p.Metal -= ExtractorCost;
                 Spawn(Kind.Extractor, pe.Player, Deposits[pe.Deposit]).Deposit = pe.Deposit;
@@ -1303,6 +1392,9 @@ public sealed class World
 
     void Produce()
     {
+        var supply = new int[Players.Length];
+        var draw = new int[Players.Length];
+        for (int i = 0; i < Players.Length; i++) { supply[i] = PowerSupply(i); draw[i] = PowerDrawOf(i); }
         var army = new int[Players.Length];
         foreach (var e in Entities) if (!e.Dead && IsArmy(e.Kind)) army[e.Owner]++;
         int count = Entities.Count;   // units made now don't act until next tick
@@ -1310,6 +1402,7 @@ public sealed class World
         {
             var f = Entities[i];
             if (f.Dead || f.Kind != Kind.Factory || f.Building > 0) continue;   // (making nothing till built)
+            if (!Work(f, supply[f.Owner], draw[f.Owner])) continue;   // (short of power: this tick it waits)
             if (IsUtility(f)) { WorkOrders(f); continue; }
             // At the army cap a factory stands idle, its next unit not started: losses take a full build to replace, so
             // winning a fight opens a window (finished units waiting at the door refilled the army at once: stalemate).
@@ -1684,7 +1777,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.PowerAcc); Mix(e.Vent);
             Mix(e.Orders.Count); foreach (var o in e.Orders) Mix(o);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
