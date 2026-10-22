@@ -54,6 +54,24 @@ float bumps(vec2 p) {
 	return noise(p * 2.2) * 0.5 + noise(p * 6.5) * 0.3 + noise(p * 17.0) * 0.2;
 }
 
+uniform sampler2D dirt_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D mud_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D gravel_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D scorched_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+
+// A soil texture as a multiplier around 1 (its mean divided out, half its colour kept): `size` metres a tile, read
+// twice at different turns and scales and blended by noise so the repeat doesn't show.
+vec3 soil(sampler2D t, vec2 p, float size, vec3 mean, float contrast) {
+	vec2 a = p / size;
+	vec2 b = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * p / (size * 1.37) + 0.31;
+	vec3 c = mix(texture(t, a).rgb, texture(t, b).rgb, smoothstep(0.35, 0.65, noise(p * 0.08 + size)));
+	vec3 r = c / mean;
+	r = mix(vec3(dot(r, vec3(0.333))), r, 0.5);
+	return mix(vec3(1.0), r, contrast);
+}
+
+float lum(vec3 c) { return dot(c, vec3(0.3, 0.5, 0.2)); }
+
 void vertex() {
 	world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
@@ -67,18 +85,21 @@ void fragment() {
 	float hollow = COLOR.r, wet = COLOR.g, grassy = COLOR.b;
 	float slope = 1.0 - clamp(world_normal.y, 0.0, 1.0);   // 0 flat, more as it steepens
 
-	// Dry earth, its tone drifting over tens of metres and mottled at a metre or so.
+	// Dry earth, its tone drifting over tens of metres; the grain from the painted soil textures.
 	vec3 earth_light = vec3(0.30, 0.25, 0.18), earth_dark = vec3(0.17, 0.14, 0.10);
 	float broad = fbm(p * 0.035);
 	vec3 col = mix(earth_dark, earth_light, smoothstep(0.3, 0.7, broad));
-	col *= 0.85 + 0.3 * noise(p * 0.9);
-	// Fine soil grain and specks: crisp detail for close up.
-	col *= 0.82 + 0.36 * noise(p * 11.0);
-	col *= 1.0 - step(0.93, hash(floor(p * 22.0))) * 0.35;
-	// Dried mud: crack lines in patches of the open earth (not in the grass, not on wet ground).
-	float cracked = smoothstep(0.55, 0.7, fbm(p * 0.12 + 40.0)) * (1.0 - wet);
-	float crack_line = smoothstep(0.06, 0.0, cell_edge(p * 1.6));
-	col *= 1.0 - crack_line * cracked * 0.45;
+	col *= 0.88 + 0.24 * noise(p * 0.9);
+	// Where each soil lies: cracked earth, gravel and scorch in patches over the dirt (not in the grass).
+	float cracked = smoothstep(0.52, 0.68, fbm(p * 0.05 + 40.0)) * (1.0 - wet);
+	float stony = smoothstep(0.58, 0.72, fbm(p * 0.07 + 90.0));
+	float burnt = smoothstep(0.66, 0.78, fbm(p * 0.04 + 7.0));
+	vec3 dirt = soil(dirt_tex, p, 1.5, vec3(0.178, 0.106, 0.062), 0.55);
+	vec3 grain = dirt;
+	grain = mix(grain, soil(mud_tex, p, 4.0, vec3(0.119, 0.065, 0.038), 0.5) * 0.9, cracked);
+	vec3 stones = soil(gravel_tex, p, 1.6, vec3(0.148, 0.117, 0.097), 0.5);
+	col = mix(col * grain, col * vec3(0.95, 0.97, 1.0) * stones, stony * 0.8);
+	col = mix(col, vec3(0.075, 0.065, 0.055) * soil(scorched_tex, p, 5.0, vec3(0.066, 0.053, 0.043), 0.6), burnt * 0.85);
 
 	// Scrub: olive grass in the grassy places, broken up at its edges, with streaks of blades.
 	float grass_edge = smoothstep(0.15, 0.6, grassy + (fbm(p * 0.6) - 0.5) * 0.5);
@@ -98,18 +119,6 @@ void fragment() {
 	rock *= 1.0 - crack * 0.5;
 	col = mix(col, rock, clamp(rocky, 0.0, 1.0));
 
-	// Gravel and pebbles on the open earth: round stones of random size in a grid of cells.
-	vec2 cell = floor(p * 3.0), in_cell = fract(p * 3.0);
-	float pick = hash(cell);
-	if (pick < 0.16) {
-		vec2 centre = vec2(hash(cell + vec2(7, 1)), hash(cell + vec2(3, 11))) * 0.6 + 0.2;
-		float radius = 0.07 + 0.13 * hash(cell + vec2(19, 5));
-		float pebble = smoothstep(radius, radius * 0.55, length(in_cell - centre)) * (1.0 - grass_edge * 0.8);
-		vec3 stone = pick < 0.07 ? vec3(0.36, 0.35, 0.32) : col * 0.5;
-		float lit = 0.8 + 0.4 * clamp(centre.y - in_cell.y + 0.5, 0.0, 1.0);   // lit on one side
-		col = mix(col, stone * lit, pebble * 0.85);
-	}
-
 	// Hollows darker, ridges a touch lighter.
 	col *= mix(1.15, 0.6, hollow);
 
@@ -118,11 +127,11 @@ void fragment() {
 	SPECULAR = mix(0.25, 0.5, wet);
 
 	// The light catches the small relief (world-space tilt, carried into view space: the mesh has no tangents).
-	float e = 0.04;
-	float h = bumps(p);
-	float dx = (bumps(p + vec2(e, 0.0)) - h) / e;
-	float dz = (bumps(p + vec2(0.0, e)) - h) / e;
-	float strength = 0.10 + rocky * 0.12;
+	// Off the soil itself (lighter reads as higher): stones and clods stand up from the ground.
+	float e = 0.05;
+	float dx = (bumps(p + vec2(e, 0.0)) * 0.3 + lum(texture(dirt_tex, (p + vec2(e, 0.0)) / 1.5).rgb) * 0.6 - bumps(p) * 0.3 - lum(texture(dirt_tex, p / 1.5).rgb) * 0.6) / e;
+	float dz = (bumps(p + vec2(0.0, e)) * 0.3 + lum(texture(dirt_tex, (p + vec2(0.0, e)) / 1.5).rgb) * 0.6 - bumps(p) * 0.3 - lum(texture(dirt_tex, p / 1.5).rgb) * 0.6) / e;
+	float strength = 0.10 + rocky * 0.12 + stony * 0.1;
 	vec3 tilt = (VIEW_MATRIX * vec4(-dx * strength, 0.0, -dz * strength, 0.0)).xyz;
 	NORMAL = normalize(NORMAL + tilt);
 }

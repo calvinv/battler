@@ -527,6 +527,8 @@ public partial class Main : Node3D
         var groundMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/ground_fog.gdshader") };
         groundMat.SetShaderParameter("fog", _fogTexture);
         groundMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
+        foreach (var soil in new[] { "dirt", "mud", "gravel", "scorched" })
+            groundMat.SetShaderParameter(soil + "_tex", GD.Load<Texture2D>($"res://art/ground/{soil}.png"));
         AddChild(_terrain.BuildGround(groundMat));
         var waterMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/water_fog.gdshader") };
         waterMat.SetShaderParameter("fog", _fogTexture);
