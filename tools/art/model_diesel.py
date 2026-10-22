@@ -11,6 +11,7 @@ Run: blender --background --python tools/art/model_diesel.py -- tank   (one per 
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
 from unit_parts import *
+import math
 
 # Olive drab and gunmetal, sooty blacks, amber lamps ("glow": the game lights it), faded yellow markings.
 k.recolour(steel=(104, 110, 78), plate=(86, 90, 64), mid=(78, 76, 68), dark=(44, 42, 38), black=(26, 24, 22),
@@ -85,20 +86,51 @@ def lighttank():
 
 
 def tank():
-    """Tank: heavy, on tracks, a slab hull with a sloped glacis, a big turret and long gun, twin exhaust stacks."""
+    """Tank, the Gun Drum (FLUX concept flux_drum_1_s91, the user's pick 2026-10-22): no familiar tank. A big riveted
+    drum lying along a girder chassis on four huge treaded wheels, a rust band round its middle, a domed nose with a
+    stubby cannon (team-coloured muzzle ring), a hatch box with amber lamps on top, a machine gun slung on its left
+    flank, an exhaust stack and hoses at the back."""
+    k.recolour(brass_dark=(146, 78, 38))                                                    # (rust, for the band)
     k.begin(0.0)
     for s in (1, -1):
-        tracked(s, 3.4, 5.6, -7.0, 7.0, 2.8)
-    plate(-7.4, 7.6, -4.0, 4.0, 1.2, 4.6, "steel", inset=0.5, front=2.8, back=0.8)
-    k.box(-7.0, -3.4, -3.0, 3.0, 4.6, 5.1, "mid")                                           # engine deck
-    plate(-3.6, 2.6, -3.0, 3.0, 4.6, 7.0, "steel", inset=0.7, front=1.4, back=0.4)
-    plate(-2.6, 1.2, -2.0, 2.0, 7.0, 7.2, "paint", inset=0.15)
-    k.tube(2.2, 3.4, 0, 5.8, 0.9, "plate", 10)                                              # mantlet
-    barrel(3.2, 12.0, 5.8, 0.42)
-    k.drum(-1.4, -1.0, 0.8, 7.0, 7.5, "mid", 10)                                            # hatch ring
+        wheels(s, -4.6, 4.4, 2, 2.3, 3.7, 1.7)
+        for a in (-4.6, 4.4):                                                                # tread lugs on the tyres
+            for i in range(10):
+                t = i * math.tau / 10
+                c = (a + math.cos(t) * 2.35, s * 3.7, 2.3 + math.sin(t) * 2.35)
+                k.box(c[0] - 0.28, c[0] + 0.28, *xs(s, 2.75, 4.65), c[2] - 0.28, c[2] + 0.28, "black")
+        k.box(-5.0, 4.8, *xs(s, 1.4, 2.6), 1.9, 2.6, "dark")                                # chassis rails
+    for a in (-4.6, 4.4):
+        tube_between((a, -2.9, 2.3), (a, 2.9, 2.3), 0.35, "dark", 8)                         # axles
+    # The drum: riveted body, rust band, rib rings, a back cap and a domed nose.
+    k.tube(-5.8, 3.6, 0, 5.3, 2.8, "steel", 16)
+    k.tube(-1.6, 1.4, 0, 5.3, 2.88, "brass_dark", 16)
+    for a in (-5.6, -3.4, 3.4):
+        k.tube(a - 0.15, a + 0.15, 0, 5.3, 2.95, "mid", 16)
+    k.tube(-6.4, -5.8, 0, 5.3, 2.4, "mid", 16, 2.8)
+    k.tube(3.5, 3.9, 0, 5.3, 3.05, "mid", 16)                                               # nose flange
+    for a0, a1, r0, r1 in ((3.9, 4.9, 2.8, 2.55), (4.9, 5.7, 2.55, 2.0), (5.7, 6.2, 2.0, 1.25), (6.2, 6.4, 1.25, 0.5)):
+        k.tube(a0, a1, 0, 5.3, r0, "steel", 16, r1)
+    k.tube(5.6, 8.4, 0.3, 4.9, 0.8, "dark", 12)                                             # the stubby cannon
+    k.tube(7.6, 8.2, 0.3, 4.9, 1.0, "paint", 12)
+    k.tube(8.2, 8.7, 0.3, 4.9, 1.08, "mid", 12)
+    k.tube(8.7, 8.75, 0.3, 4.9, 0.6, "black", 12)                                           # the bore
+    # Top: a hatch box with an amber lamp strip and a team-coloured lid, an aerial.
+    k.box(-4.4, -1.2, -1.3, 1.3, 7.6, 8.6, "plate")
+    k.box(-4.2, -1.4, -1.1, 1.1, 8.6, 8.75, "paint")
+    k.box(-1.25, -1.1, -0.9, 0.9, 7.9, 8.3, "glow")
+    tube_between((-3.8, -0.9, 8.75), (-3.8, -0.9, 12.5), 0.07, "dark", 4)
+    # Left flank: a slung machine gun with its lamp; right flank: a toolbox. Exhaust and hoses at the back.
+    k.box(-2.8, 1.2, 2.5, 3.5, 3.1, 4.1, "mid")
+    k.tube(1.2, 4.6, 3.0, 3.6, 0.2, "dark", 8)
+    k.tube(4.0, 4.6, 3.0, 3.6, 0.32, "dark", 8)
+    lamp(1.3, 3.0, 2.8, 0.32)
+    k.box(-3.0, 0.5, -3.4, -2.6, 3.2, 4.2, "plate")
+    stack(-5.4, 2.0, 6.6, 2.6, 0.38)
+    tube_between((-5.4, 2.0, 7.2), (-2.6, 2.9, 4.1), 0.16, "black", 6)                      # hose to the gun
+    tube_between((-6.2, -1.2, 4.0), (-4.8, -2.4, 2.5), 0.16, "black", 6)
     for s in (1, -1):
-        stack(-6.6, s * 2.2, 4.6, 2.6, 0.45)
-        lamp(7.7, s * 3.2, 3.6)
+        lamp(6.0, s * 1.6, 3.4, 0.28)
     finish_realistic("tank", 30.0, serial="12", grit=GRIT)
 
 

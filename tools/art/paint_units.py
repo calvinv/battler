@@ -24,7 +24,7 @@ WHAT = {"hq": "headquarters bunker", "factory": "vehicle workshop", "extractor":
         "turret": "gun emplacement", "flak": "anti-aircraft gun", "bombard": "heavy mortar emplacement", "wall": "armoured wall",
         "outpost": "field outpost", "flier": "propeller fighter plane", "bomber": "propeller bomber plane", "scout": "armoured car",
         "ranger": "armoured car with a machine gun", "mobilebase": "big armoured truck", "artillery": "self-propelled howitzer",
-        "mortar": "mortar carrier", "lighttank": "light tank", "tank": "battle tank"}
+        "mortar": "mortar carrier", "lighttank": "light tank", "tank": "riveted steel drum war machine on four huge treaded wheels"}
 
 args = sys.argv[1:]
 
