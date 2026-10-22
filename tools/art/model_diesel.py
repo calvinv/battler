@@ -85,53 +85,162 @@ def lighttank():
     finish_realistic("lighttank", 24.0, grit=GRIT)
 
 
+def rivet_ring(a, x, z, r, n=28, mat="mid", lo=-0.6, hi=3.75):
+    """Rivet heads round a drum at a, `r` out from its axis (x, z), skipping the hidden underside."""
+    for i in range(n):
+        t = lo + (hi - lo) * i / (n - 1)
+        c, d = math.cos(t), math.sin(t)
+        tube_between((a, x + c * r, z + d * r), (a, x + c * (r + 0.1), z + d * (r + 0.1)), 0.09, mat, 6, 0.05)
+
+
+def arc_plate(a, x0, x1, z, r0, r1, t0, t1, mat, steps=16):
+    """A curved plate over a wheel (a mudguard), one smooth piece: radii r0..r1 from (a, z), angles t0..t1, across x0..x1."""
+    import bmesh, bpy
+    bm = bmesh.new()
+    loops = []
+    for i in range(steps + 1):
+        t = t0 + (t1 - t0) * i / steps
+        c, d = math.cos(t), math.sin(t)
+        loops.append([bm.verts.new(k.at(a + c * rr, xx, z + d * rr)) for rr, xx in ((r0, x0), (r0, x1), (r1, x1), (r1, x0))])
+    for i in range(steps):
+        for j in range(4):
+            f = bm.faces.new([loops[i][j], loops[i][(j + 1) % 4], loops[i + 1][(j + 1) % 4], loops[i + 1][j]])
+            f.smooth = j in (1, 3)      # (the curved inner and outer faces; the edges stay crisp)
+    bm.faces.new(loops[0])
+    bm.faces.new(loops[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("piece")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("piece", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me.materials.append(k.mats[mat])
+    k.pieces.append(ob)
+
+
+def hose(points, r=0.14, mat="black"):
+    """A hose through points ((a, x, z) each)."""
+    for p, q in zip(points, points[1:]):
+        tube_between(p, q, r, mat, 8)
+
+
+def lug_tyre(a, s, z, r, inner, outer, lugs=18):
+    """A big tyre on side s: smooth black carcass, a dished gunmetal rim, a hub with a bolt circle, chevron lugs."""
+    x0, x1 = xs(s, inner, outer)
+    xm = (x0 + x1) / 2
+    wlathe(a, z, [(r * 0.62, x0), (r * 0.9, x0), (r, x0 + 0.18), (r, x1 - 0.18), (r * 0.9, x1), (r * 0.62, x1)], "black", 32)
+    face = x1 if s > 0 else x0
+    out = 1 if s > 0 else -1
+    wlathe(a, z, [(r * 0.64, face - out * 0.3), (r * 0.64, face + out * 0.02), (r * 0.5, face + out * 0.06),
+                  (r * 0.3, face - out * 0.05)], "mid", 32)
+    wlathe(a, z, [(r * 0.3, face - out * 0.1), (r * 0.3, face + out * 0.2), (r * 0.2, face + out * 0.32)], "dark", 20)
+    for i in range(8):
+        t = i * math.tau / 8
+        p = (a + math.cos(t) * r * 0.25, face + out * 0.18, z + math.sin(t) * r * 0.25)
+        tube_between(p, (p[0], p[1] + out * 0.1, p[2]), 0.06, "steel", 6)
+    for i in range(lugs):
+        t = i * math.tau / lugs
+        R = r + 0.08
+        e0 = (a + math.cos(t) * R, x0 + 0.05, z + math.sin(t) * R)
+        m = (a + math.cos(t + 0.12) * R, xm, z + math.sin(t + 0.12) * R)
+        e1 = (a + math.cos(t) * R, x1 - 0.05, z + math.sin(t) * R)
+        tube_between(e0, m, 0.16, "black", 4)
+        tube_between(m, e1, 0.16, "black", 4)
+
+
 def tank():
-    """Tank, the Gun Drum (FLUX concept flux_drum_1_s91, the user's pick 2026-10-22): no familiar tank. A big riveted
-    drum lying along a girder chassis on four huge treaded wheels, a rust band round its middle, a domed nose with a
-    stubby cannon (team-coloured muzzle ring), a hatch box with amber lamps on top, a machine gun slung on its left
-    flank, an exhaust stack and hoses at the back."""
+    """Tank, the Gun Drum (FLUX concept flux_drum_1_s91, picked by the user 2026-10-22): no familiar tank. A big
+    riveted drum lying along a girder chassis on four huge lugged tyres, a rust band round its middle, a domed nose
+    with a stubby cannon (team-coloured muzzle ring), a hatch box with amber lamps on top, a machine gun slung on its
+    left flank, exhaust and hoses at the back. Detail is geometry (smooth round parts, rivet heads, leaf springs), not
+    painted seams (the user: "less lines, it looks a bit aliased")."""
     k.recolour(brass_dark=(146, 78, 38))                                                    # (rust, for the band)
     k.begin(0.0)
-    for s in (1, -1):
-        wheels(s, -4.6, 4.4, 2, 2.3, 3.7, 1.7)
-        for a in (-4.6, 4.4):                                                                # tread lugs on the tyres
-            for i in range(10):
-                t = i * math.tau / 10
-                c = (a + math.cos(t) * 2.35, s * 3.7, 2.3 + math.sin(t) * 2.35)
-                k.box(c[0] - 0.28, c[0] + 0.28, *xs(s, 2.75, 4.65), c[2] - 0.28, c[2] + 0.28, "black")
-        k.box(-5.0, 4.8, *xs(s, 1.4, 2.6), 1.9, 2.6, "dark")                                # chassis rails
+    Z, R = 5.3, 2.8                                                                         # the drum's axis height and radius
+    # Running gear: four lugged tyres, mudguards, axles with leaf springs, the girder chassis.
     for a in (-4.6, 4.4):
-        tube_between((a, -2.9, 2.3), (a, 2.9, 2.3), 0.35, "dark", 8)                         # axles
-    # The drum: riveted body, rust band, rib rings, a back cap and a domed nose.
-    k.tube(-5.8, 3.6, 0, 5.3, 2.8, "steel", 16)
-    k.tube(-1.6, 1.4, 0, 5.3, 2.88, "brass_dark", 16)
-    for a in (-5.6, -3.4, 3.4):
-        k.tube(a - 0.15, a + 0.15, 0, 5.3, 2.95, "mid", 16)
-    k.tube(-6.4, -5.8, 0, 5.3, 2.4, "mid", 16, 2.8)
-    k.tube(3.5, 3.9, 0, 5.3, 3.05, "mid", 16)                                               # nose flange
-    for a0, a1, r0, r1 in ((3.9, 4.9, 2.8, 2.55), (4.9, 5.7, 2.55, 2.0), (5.7, 6.2, 2.0, 1.25), (6.2, 6.4, 1.25, 0.5)):
-        k.tube(a0, a1, 0, 5.3, r0, "steel", 16, r1)
-    k.tube(5.6, 8.4, 0.3, 4.9, 0.8, "dark", 12)                                             # the stubby cannon
-    k.tube(7.6, 8.2, 0.3, 4.9, 1.0, "paint", 12)
-    k.tube(8.2, 8.7, 0.3, 4.9, 1.08, "mid", 12)
-    k.tube(8.7, 8.75, 0.3, 4.9, 0.6, "black", 12)                                           # the bore
-    # Top: a hatch box with an amber lamp strip and a team-coloured lid, an aerial.
-    k.box(-4.4, -1.2, -1.3, 1.3, 7.6, 8.6, "plate")
-    k.box(-4.2, -1.4, -1.1, 1.1, 8.6, 8.75, "paint")
-    k.box(-1.25, -1.1, -0.9, 0.9, 7.9, 8.3, "glow")
-    tube_between((-3.8, -0.9, 8.75), (-3.8, -0.9, 12.5), 0.07, "dark", 4)
-    # Left flank: a slung machine gun with its lamp; right flank: a toolbox. Exhaust and hoses at the back.
-    k.box(-2.8, 1.2, 2.5, 3.5, 3.1, 4.1, "mid")
-    k.tube(1.2, 4.6, 3.0, 3.6, 0.2, "dark", 8)
-    k.tube(4.0, 4.6, 3.0, 3.6, 0.32, "dark", 8)
-    lamp(1.3, 3.0, 2.8, 0.32)
-    k.box(-3.0, 0.5, -3.4, -2.6, 3.2, 4.2, "plate")
-    stack(-5.4, 2.0, 6.6, 2.6, 0.38)
-    tube_between((-5.4, 2.0, 7.2), (-2.6, 2.9, 4.1), 0.16, "black", 6)                      # hose to the gun
-    tube_between((-6.2, -1.2, 4.0), (-4.8, -2.4, 2.5), 0.16, "black", 6)
+        tube_between((a, -3.0, 2.35), (a, 3.0, 2.35), 0.34, "dark", 12)
+        wlathe(a, 2.35, [(0.75, -0.6), (0.75, 0.6)], "dark", 16)                              # diff housing
+        for s in (1, -1):
+            lug_tyre(a, s, 2.35, 2.3, 2.85, 4.6)
+            arc_plate(a, *xs(s, 2.7, 4.85), 2.35, 2.62, 2.74, math.radians(25), math.radians(155), "plate", 20)
+            for h, l in ((0.0, 1.5), (0.16, 1.2), (0.32, 0.9), (0.48, 0.6)):
+                k.box(a - l, a + l, *xs(s, 1.55, 2.45), 2.7 + h, 2.86 + h, "dark")          # leaf spring
     for s in (1, -1):
-        lamp(6.0, s * 1.6, 3.4, 0.28)
-    finish_realistic("tank", 30.0, serial="12", grit=GRIT)
+        k.box(-5.6, 5.4, *xs(s, 1.5, 2.5), 3.3, 3.9, "dark")                               # chassis rail
+        k.box(-5.6, 5.4, *xs(s, 1.6, 2.4), 3.9, 4.0, "mid")
+    for a in (-5.4, -1.8, 1.6, 5.2):
+        k.box(a - 0.25, a + 0.25, -1.6, 1.6, 3.35, 3.85, "dark")                           # cross members
+    for a in (-1.8, 1.6):
+        k.box(a - 0.5, a + 0.5, -1.2, 1.2, 3.85, Z - R + 0.4, "dark")                      # drum saddles
+    # The drum: one smooth turned body, back cap to domed nose.
+    nose = [(R * math.cos(t * math.pi / 2 / 8), 3.9 + 2.5 * math.sin(t * math.pi / 2 / 8)) for t in range(1, 9)]
+    hlathe(0, Z, [(2.1, -6.7), (2.55, -6.55), (2.75, -6.3), (R, -6.0), (R, 3.9)] + nose, "steel", 40)
+    hlathe(0, Z, [(R + 0.06, -1.6), (R + 0.06, 1.4)], "brass_dark", 40)                     # rust band
+    for a0, a1 in ((-5.75, -5.45), (-3.55, -3.25), (3.45, 3.95)):
+        hlathe(0, Z, [(R + 0.12, a0), (R + 0.12, a1)], "mid", 40)                          # rib rings
+        rivet_ring((a0 + a1) / 2, 0, Z, R + 0.12)
+    for a in (-1.45, 1.25):
+        rivet_ring(a, 0, Z, R + 0.06, 32)
+    hlathe(0, Z, [(1.25, -6.85), (1.25, -6.68)], "plate", 24)                              # back hatch
+    tube_between((-6.9, -0.6, Z), (-6.9, 0.6, Z), 0.07, "dark", 6)
+    # The stubby cannon out of the nose, its muzzle ring in team colour, a bolted face, the bore.
+    gx, gz = 0.55, 4.7
+    hlathe(gx, gz, [(1.15, 5.4), (1.15, 6.3), (0.9, 6.45), (0.78, 6.45), (0.78, 7.55), (1.0, 7.6), (1.0, 8.15),
+                    (1.12, 8.2), (1.12, 8.65), (0.98, 8.72)], "dark", 32)
+    hlathe(gx, gz, [(1.04, 7.62), (1.04, 8.13)], "paint", 32)
+    hlathe(gx, gz, [(0.55, 8.7), (0.55, 8.78)], "black", 24)
+    for i in range(10):
+        t = i * math.tau / 10
+        tube_between((8.68, gx + math.cos(t) * 0.86, gz + math.sin(t) * 0.86), (8.8, gx + math.cos(t) * 0.86, gz + math.sin(t) * 0.86), 0.07, "steel", 6)
+    # On top: a hatch box with louvres, a team-coloured lid, an amber lamp strip, an aerial; grab rails.
+    top = Z + R
+    k.box(-4.4, -1.2, -1.3, 1.3, top - 0.5, top + 0.55, "plate")
+    k.box(-4.3, -1.3, -1.2, 1.2, top + 0.55, top + 0.72, "paint")
+    k.box(-1.25, -1.12, -0.95, 0.95, top - 0.1, top + 0.3, "glow")
+    for i in range(4):
+        for s in (1, -1):
+            k.box(-4.0 + i * 0.7, -3.6 + i * 0.7, *xs(s, 1.3, 1.38), top - 0.2, top + 0.35, "dark")   # louvres
+    k.drum(-3.8, -0.9, 0.16, top + 0.72, top + 0.95, "dark", 8)
+    tube_between((-3.8, -0.9, top + 0.95), (-3.8, -0.9, top + 4.4), 0.05, "dark", 4)
+    for s in (1, -1):
+        rx, rz = s * 1.65, Z + math.sqrt(R * R - 1.65 * 1.65)
+        for a in (-0.4, 1.4, 3.0):
+            tube_between((a, rx, rz - 0.05), (a, rx, rz + 0.4), 0.06, "dark", 6)
+        tube_between((-0.4, rx, rz + 0.4), (3.0, rx, rz + 0.4), 0.06, "dark", 6)
+    # Left flank: a slung machine gun (receiver, perforated cooling jacket, ammo drum) on a bracket, with a lamp.
+    k.box(-2.6, 0.2, 2.45, 2.85, 3.6, 4.4, "dark")
+    k.box(-2.9, 0.4, 2.85, 3.75, 3.2, 4.2, "mid")
+    hlathe(3.3, 3.7, [(0.3, 0.4), (0.3, 3.4)], "dark", 16)
+    for a in (0.8, 1.4, 2.0, 2.6, 3.2):
+        hlathe(3.3, 3.7, [(0.34, a), (0.34, a + 0.12)], "black", 16)
+    hlathe(3.3, 3.7, [(0.12, 3.4), (0.12, 4.7), (0.2, 4.75), (0.2, 4.95)], "dark", 10)
+    k.drum(-1.6, 4.05, 0.5, 4.2, 4.75, "dark", 16)
+    lamp(0.5, 3.3, 2.95, 0.32)
+    k.box(0.35, 0.65, 2.95, 3.65, 3.3, 3.4, "dark")                                         # its hood
+    # Right flank: a toolbox with hinges, two jerry cans.
+    k.box(-3.2, 0.4, -3.55, -2.75, 3.3, 4.3, "plate")
+    for a in (-2.6, -0.4):
+        k.box(a - 0.15, a + 0.15, -3.6, -3.5, 4.0, 4.32, "dark")
+    for a in (1.0, 2.0):
+        k.box(a, a + 0.8, -3.45, -2.75, 3.3, 4.6, "mid")
+        k.box(a + 0.3, a + 0.5, -3.5, -3.4, 3.4, 4.5, "dark")
+    # Back: exhaust stack with a silencer and a heat shield, hoses down to the gun and the chassis.
+    sx, sz = 2.0, Z + 1.9
+    k.drum(-5.5, sx, 0.34, sz, sz + 3.4, "mid", 16)
+    k.drum(-5.5, sx, 0.55, sz + 0.6, sz + 1.9, "dark", 16)
+    k.drum(-5.5, sx, 0.42, sz + 3.4, sz + 3.7, "black", 16)
+    k.box(-5.0, -4.9, sx - 0.5, sx + 0.5, sz + 0.5, sz + 2.0, "plate")
+    hose([(-5.4, 2.35, sz + 0.4), (-4.6, 2.95, sz - 1.0), (-3.4, 3.2, 4.6), (-2.8, 3.3, 4.2)])
+    hose([(-6.2, -1.4, 4.2), (-6.0, -2.0, 3.6), (-5.4, -2.0, 3.6)])
+    hose([(-6.1, 1.2, Z - 1.2), (-6.4, 1.6, 4.3), (-5.8, 2.0, 3.9)], 0.12, "dark")
+    # Front: headlamps with hoods on the chassis, tow hooks.
+    for s in (1, -1):
+        lamp(5.75, s * 1.9, 3.6, 0.3)
+        k.box(5.5, 5.9, *xs(s, 1.55, 2.25), 3.95, 4.05, "dark")
+        k.box(5.4, 5.9, *xs(s, 0.9, 1.2), 3.0, 3.5, "dark")
+        k.box(-6.1, -5.6, *xs(s, 0.9, 1.2), 3.0, 3.5, "dark")
+    finish_realistic("tank", 30.0, serial="12", grit=1.0, panels=False, bevel=0.04)      # (clean: the paint pass adds the wear)
 
 
 def mortar():

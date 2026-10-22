@@ -4,7 +4,7 @@
 // green or blue is well over their red and that are bright, so they're picked out by that.
 shader_type spatial;
 
-uniform sampler2D skin : source_color, filter_linear_mipmap;
+uniform sampler2D skin : source_color, filter_linear_mipmap_anisotropic;
 uniform vec3 team : source_color = vec3(0.27, 0.43, 0.75);
 
 const vec3 BAKED_PAINT = vec3(0.275, 0.431, 0.745);   // "paint" as the models baked it

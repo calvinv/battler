@@ -1,4 +1,4 @@
-"""Repaints Battler models' flat views with ComfyUI: paint_units.py <name> ... [--stray 0.5] [--seed 5]
+"""Repaints Battler models' flat views with ComfyUI: paint_units.py <name> ... [--stray 0.5] [--seed 5] [--flux]
 The whole paint pass for one model:
   1. blender_views.py (ai-tools) renders art/units/<name>.glb straight on -> art/_gen/ships_iso/paint/<name>_<view>.png
   2. this: each view cropped to the model, enlarged so SDXL has room for detail, repainted as worn dieselpunk armour
@@ -9,6 +9,8 @@ import os, sys, subprocess
 from PIL import Image
 sys.path.insert(0, r"C:\dev\ai-tools\comfy")
 import pixelgen as pg
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fluxgen
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 DIR = os.path.join(ROOT, "art", "_gen", "ships_iso", "paint")
@@ -39,6 +41,12 @@ def opt(name, default, kind=float):
 
 
 stray, seed = opt("--stray", 0.5), int(opt("--seed", 5))
+use_flux = "--flux" in args          # (FLUX schnell repaints instead of SDXL: cleaner, more believable metal)
+if use_flux:
+    args.remove("--flux")
+FLUX_WORDS = ("{look}, straight on, of a {what}. Practical 1940s diesel-era engineering painted olive drab: clean "
+              "welded steel plates, rivets, bolts, hinges, worn chipped paint edges showing bare steel, light dust "
+              "and soot. Flat even lighting, sharp, orthographic, plain dark background. No text.")
 env = dict(os.environ, ART_PROJECT=ROOT)
 pg.start_server()
 for name in args:
@@ -61,8 +69,14 @@ for name in args:
         canvas.paste(crop, (0, 0), crop)
         init = os.path.join(DIR, "_init.png")
         canvas.resize((w, h), Image.Resampling.LANCZOS).save(init)
-        g = pg.workflow(WORDS.format(look=look, what=what), w, h, seed, 30, 0.0, False, init=pg.stage_init(init), denoise=stray)
-        g["neg"]["inputs"]["text"] = NEG
+        if use_flux:
+            g = fluxgen.graph(FLUX_WORDS.format(look=look[0].upper() + look[1:], what=what), seed, w, h, steps=8)
+            g["init"] = {"class_type": "LoadImage", "inputs": {"image": pg.stage_init(init)}}
+            g["latent"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["init", 0], "vae": ["vae", 0]}}
+            g["sample"]["inputs"]["denoise"] = stray
+        else:
+            g = pg.workflow(WORDS.format(look=look, what=what), w, h, seed, 30, 0.0, False, init=pg.stage_init(init), denoise=stray)
+            g["neg"]["inputs"]["text"] = NEG
         out = pg.generate(g).convert("RGBA").resize(crop.size, Image.Resampling.LANCZOS)
         out.putalpha(crop.getchannel("A"))
         full = Image.new("RGBA", src.size, (0, 0, 0, 0))

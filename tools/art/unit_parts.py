@@ -97,6 +97,52 @@ def apron(half_a, half_x, h=0.5, lines=True):
 
 # ---- detail (the user, 2026-10-20: "can we make more detailed models of the units and buildings") ------------------
 
+def hlathe(x, z, profile, mat, sides=32):
+    """A round piece lying along the length (a) at (x, z), turned from a profile ((radius, a) points, back first) and
+    shaded smooth: a drum, a domed nose, a barrel that's really round."""
+    import bmesh, bpy
+    bm = bmesh.new()
+    rings = [[bm.verts.new(k.at(a, x + math.cos(i * math.tau / sides) * max(r, 0.02), z + math.sin(i * math.tau / sides) * max(r, 0.02)))
+              for i in range(sides)] for r, a in profile]
+    for i in range(len(rings) - 1):
+        for j in range(sides):
+            bm.faces.new([rings[i][j], rings[i + 1][j], rings[i + 1][(j + 1) % sides], rings[i][(j + 1) % sides]]).smooth = True
+    bm.faces.new(rings[0])
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("piece")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("piece", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me.materials.append(k.mats[mat])
+    k.pieces.append(ob)
+    return ob
+
+
+def wlathe(a, z, profile, mat, sides=32):
+    """A round piece across the width (x) at (a, z), turned from a profile ((radius, x) points): a wheel, a hub, an
+    axle cap, shaded smooth."""
+    import bmesh, bpy
+    bm = bmesh.new()
+    rings = [[bm.verts.new(k.at(a + math.cos(i * math.tau / sides) * max(r, 0.02), x, z + math.sin(i * math.tau / sides) * max(r, 0.02)))
+              for i in range(sides)] for r, x in profile]
+    for i in range(len(rings) - 1):
+        for j in range(sides):
+            bm.faces.new([rings[i][j], rings[i + 1][j], rings[i + 1][(j + 1) % sides], rings[i][(j + 1) % sides]]).smooth = True
+    bm.faces.new(rings[0])
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("piece")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("piece", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me.materials.append(k.mats[mat])
+    k.pieces.append(ob)
+    return ob
+
+
 def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
     """k.finish, but first every piece's sharp edges are bevelled: a narrow chamfer on each edge sharper than `angle`
     degrees, so edges catch the light instead of every box meeting at a knife line. Thin pieces are left alone where
@@ -375,7 +421,7 @@ def _fbm3(p, scale, seed=0, octaves=4):
     return s / total
 
 
-def finish_realistic(name, span, style="coalition", serial="07", folder=None, bevel=0.06, grit=1.7):
+def finish_realistic(name, span, style="coalition", serial="07", folder=None, bevel=0.06, grit=1.7, panels=True):
     """Build the model (softened edges, baked shading), then weather its texture so it looks like real worn
     machinery. Baked probes give each texel its place on the model, its facing, and how sharp a corner it is on
     (Cycles pointiness), and from those:
@@ -460,9 +506,11 @@ def finish_realistic(name, span, style="coalition", serial="07", folder=None, be
     col = np.floor(uu)
     fu, fv = uu - col, v / pv - row
     seam = (np.minimum(fu, 1 - fu) * pu < 0.04) | (np.minimum(fv, 1 - fv) * pv < 0.04)
+    if not panels:      # (detail as geometry instead: painted hairline seams alias in game. The user, 2026-10-22.)
+        seam = np.zeros_like(seam)
     du, dv = np.minimum(fu, 1 - fu) * pu, np.minimum(fv, 1 - fv) * pv
-    rivet = np.hypot(du - 0.14, dv - 0.14) < 0.045
-    panel_shade = 1.0 + 0.06 * (((np.sin(col * 12.9898 + row * 78.233 + ax * 37.719) * 43758.5453) % 1.0) - 0.5)
+    rivet = (np.hypot(du - 0.14, dv - 0.14) < 0.045) & panels
+    panel_shade = 1.0 if not panels else 1.0 + 0.06 * (((np.sin(col * 12.9898 + row * 78.233 + ax * 37.719) * 43758.5453) % 1.0) - 0.5)
 
     big = _fbm3(pos, 0.35, 1)
     mid = _fbm3(pos, 1.6, 2)
@@ -506,7 +554,7 @@ def finish_realistic(name, span, style="coalition", serial="07", folder=None, be
     out = np.where(seam[:, :, None], out * 0.6, out)
     out = np.where((rivet & ~seam)[:, :, None], out * 0.75, out)
 
-    if not lattice:
+    if not lattice and panels:
         top = (ax == 2) & (up > 0) & ~painted & work & ~seam
         pick = ((np.sin(col * 3.1 + row * 7.7 + 99) * 43758.5453) % 1.0) > 0.7
         band = (fv > 0.15) & (fv < 0.33) & (fu > 0.2) & (fu < 0.8)
