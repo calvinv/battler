@@ -1065,7 +1065,6 @@ public partial class Main : Node3D
         BuildRing();
         DrawRadarBlips();
         DrawSalvage();
-        UpdateStorm();
         DrawFires();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
@@ -1365,7 +1364,6 @@ public partial class Main : Node3D
             (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
-            (W.StormUp ? $"Storm closes the middle for {Clock(W.StormTicksLeft)}\n" : "") +
             (W.Started ? $"Feral wave {W.WaveNumber + 1} in {Clock(W.NextWaveIn)}\n" : "") +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
         if (_session is LockstepSession ls)

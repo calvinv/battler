@@ -129,6 +129,7 @@ public sealed class Terrain : System.IDisposable
     /// <summary>Where scrub grows: low, damp, flat ground in patches (the shader paints grass there; tufts stand on it).</summary>
     public float Grassy(float x, float z)
     {
+        if (Map.Test) return 0;   // (the test map: bare dirt)
         float patch = ValueNoise(x * 0.09f + 5f, z * 0.09f - 3f) * 0.7f + ValueNoise(x * 0.3f, z * 0.3f) * 0.3f;
         float low = Mathf.Clamp(0.6f - SmoothAt(x, z) * 0.35f, 0f, 1f);
         return Mathf.Clamp((patch - 0.48f) * 4f, 0f, 1f) * low;
@@ -187,6 +188,7 @@ public sealed class Terrain : System.IDisposable
         // The north and south water: a sheet each following its shore out past the map's edge (the south one is the
         // north one turned round, as the map is). Its UV.x runs 1 at the shore's edge (just up the bank, fading out)
         // to 0 far out, as water_fog.gdshader expects of a pond.
+        if (Map.Test) { TreeSpots.Clear(); return root; }   // (the test map: bare dirt, nothing on it)
         var sheet = WaterSheet();
         root.AddChild(new MeshInstance3D { Mesh = sheet, MaterialOverride = water, Position = new Vector3(0, WaterLevel, 0) });
         root.AddChild(new MeshInstance3D { Mesh = sheet, MaterialOverride = water, Position = new Vector3(0, WaterLevel, 0), Rotation = new Vector3(0, Mathf.Pi, 0) });

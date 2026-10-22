@@ -232,12 +232,12 @@ public partial class Main
         {
             var kind = kinds[i];
             W.CanAddWing(_me, b.Id, kind, out var why);
-            items.Add(new CardItem(keys[i], NameOf(kind), UnitModel(kind, MyCiv), null, World.FactoryCost, $"{NameOf(kind)} {(MyCiv == Civ.Lattice ? "nest" : "wing")}",
+            items.Add(new CardItem(keys[i], NameOf(kind), UnitModel(kind, MyCiv), null, World.WingCost(kind), $"{NameOf(kind)} {(MyCiv == Civ.Lattice ? "nest" : "wing")}",
                 $"Built onto this base in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.\n\n" + UnitStats(kind),
                 why?.ToLowerInvariant(), () => _session.Issue(new AddWing(_me, b.Id, kind))));
         }
         W.CanAddWing(_me, b.Id, Kind.MobileBase, out var uwhy);
-        items.Add(new CardItem(Key.U, "Utility", BuildingModel(Kind.Factory, Kind.MobileBase, MyCiv), null, World.FactoryCost, MyCiv == Civ.Lattice ? "Utility nest" : "Utility wing",
+        items.Add(new CardItem(Key.U, "Utility", BuildingModel(Kind.Factory, Kind.MobileBase, MyCiv), null, World.WingCost(Kind.MobileBase), MyCiv == Civ.Lattice ? "Utility nest" : "Utility wing",
             $"Builds scouts ({World.ScoutCost}) and mobile bases ({World.MobileBaseCost}) to order.\nMobile bases are how you expand.", uwhy?.ToLowerInvariant(),
             () => _session.Issue(new AddWing(_me, b.Id, Kind.MobileBase))));
         string xwhy = !W.Started ? "once the battle starts" : W.Players[_me].Metal < World.ExtractorCost ? "not enough metal" : null;

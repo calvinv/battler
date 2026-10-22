@@ -35,7 +35,8 @@ public sealed class SimpleAi
 
         if (!w.Started)   // setup: one fighting wing on the HQ
         {
-            if (!mine.Exists(e => e.Kind == Kind.Factory) && w.CanAddWing(_player, hq.Id, PickUnit(p.Civ), out _)) issue(new AddWing(_player, hq.Id, PickUnit(p.Civ)));
+            var first = PickUnit(p.Civ);
+            if (!mine.Exists(e => e.Kind == Kind.Factory) && w.CanAddWing(_player, hq.Id, first, out _)) issue(new AddWing(_player, hq.Id, first));
             return;
         }
 
@@ -92,7 +93,7 @@ public sealed class SimpleAi
             {
                 var makes = PickUnit(p.Civ);
                 if (w.CanAddWing(_player, onto.Id, makes, out _)) issue(new AddWing(_player, onto.Id, makes));
-                if (p.Metal < World.FactoryCost) return;   // saving for it
+                if (p.Metal < World.WingCost(makes)) return;   // saving for it
             }
         }
         MaybeUpgrade(w, mine, issue, p.Metal > 800 ? 1 : 2);   // (with metal piling up, every time)
@@ -150,7 +151,7 @@ public sealed class SimpleAi
             {
                 var at = World.Deposits[d];
                 if (w.ExtractorOn(d) != null || w.BaseNear(_player, at, World.BaseReach) != null) continue;
-                if (w.GuardNear(at) || (w.StormUp && World.InStorm(at))) continue;   // (cleared and reachable ones only)
+                if (w.GuardNear(at)) continue;   // (cleared ones only)
                 if (claimed.Exists(c => Dist(c, at) < 30)) continue;
                 if (target < 0 || Dist(at, t.Pos) < Dist(World.Deposits[target], t.Pos)) target = d;
             }

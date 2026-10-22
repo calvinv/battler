@@ -122,15 +122,25 @@ public sealed class World
     // comes from salvage, what's destroyed paying whoever destroyed it (World.Salvage). Paid once a second.
     public const int TrickleIncome = 3;     // per second
     public const int ExtractorIncome = 3;   // per extractor, per second
-    public const int ExtractorCost = 300;
+    public const int ExtractorCost = 250;
     public static readonly Fix DepositRadius = 3;   // nothing else can be built this near a deposit's centre
-    public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
+    // What a wing costs, by what it makes (the user, 2026-10-22: "we should balance the cost of things, light tanks
+    // should be much cheaper"). The units themselves are free; the wing is the price of a stream of them.
+    public static int WingCost(Kind makes) => makes switch
+    {
+        Kind.LightTank or Kind.Crawler => 200,
+        Kind.Mortar or Kind.Spider => 350,
+        Kind.Tank or Kind.Piercer => 450,
+        Kind.Artillery => 600,
+        Kind.MobileBase => 300,   // the utility wing
+        _ => 500,
+    };
     // Bases and wings (the user, 2026-10-22: "the main hq can build wings on it which produce vehicles, one of the
     // wings is a utility vehicle, that lets you build scouts and mobile bases, you can move a mobile base like a scout
     // and set it up somewhere else"). The HQ takes five wings, a set-up mobile base (Kind.Outpost) three; a wing makes
     // one kind of unit, or (the utility wing) scouts and mobile bases to order. Extractors go near a base.
     // (The branching network this replaced is on the network-prototype branch.)
-    public const int HqWings = 5, OutpostWings = 3, MobileBaseCost = 600, MaxBases = 4;
+    public const int HqWings = 5, OutpostWings = 3, MobileBaseCost = 500, MaxBases = 4;
     public static readonly Fix BaseReach = 30, BaseSpacing = 40;
     // Radar (the user, 2026-10-22: "a radar that pings every 30s to show where units are in the fog so you can't get
     // cheesed"): each base sweeps its range every 30 s; hidden enemy units in it show as blips, and become known.
@@ -164,13 +174,8 @@ public sealed class World
 
     /// <summary>Salvage paid this tick, for the game to show (where, to whom, how much).</summary>
     public readonly List<(FixVec2 At, int Owner, int Amount)> Salvaged = new();
-    static readonly FixVec2[] WaveGates = { new(-272, -20), new(272, 20) };   // west and east edges, the map turned round
+    static FixVec2[] WaveGates => new FixVec2[] { new(6 - HalfX, -20), new(HalfX - 6, 20) };   // west and east edges, the map turned round
     public static readonly Fix GuardReach = 25;   // no base or extractor while a derelict stands this near
-
-    // The opening storm (the user picked it, 2026-10-22): for the first five minutes a band down the middle is shut to
-    // both armies, so the early game is building up and holding off ferals.
-    public const int StormTicks = 5 * 60 * TicksPerSecond;
-    public static readonly Fix StormHalfWidth = 35;
     public static readonly Fix HqRadar = 120, OutpostRadar = 70;
     // Sulfur: each patch mined (and powered) makes explosive weapons hit harder; one unlocks the napalm fitting.
     public const int SulfurBonusPercent = 20, NapalmHitPercent = 75, FireTicks = 8 * TicksPerSecond;
@@ -199,8 +204,10 @@ public sealed class World
     // (The user, 2026-10-19: "the maps should also be further apart": the HQs 144 apart, was 90.)
     // (The user, 2026-10-20: "make more expansive maps with less resources on them": 280 by 170, the HQs 230 apart,
     // seven deposits where there were twelve.)
-    public static readonly Fix MapHalfX = 140 * Ground.Scale, MapHalfZ = 85 * Ground.Scale;   // (2026-10-20: "4x bigger", four times the area)
-    public static readonly Ground Ground = new(140 * Ground.Scale, 85 * Ground.Scale, new[] { HqStart(0), HqStart(1) });
+    // (2026-10-20: "4x bigger", four times the area; the test map much smaller, Map.cs.)
+    static readonly int HalfX = Map.Test ? 110 : 140 * Ground.Scale, HalfZ = Map.Test ? 70 : 85 * Ground.Scale;
+    public static readonly Fix MapHalfX = HalfX, MapHalfZ = HalfZ;
+    public static readonly Ground Ground = new(HalfX, HalfZ, new[] { HqStart(0), HqStart(1) });
     static readonly Fix MaxHighGround = 5, MaxDownhillRange = 4;
 
     /// <summary>What factories can make (scouts come from the HQ).</summary>
@@ -240,13 +247,20 @@ public sealed class World
     static World()
     {
         // (deposit, its pad) on player 0's half; player 1's are the same turned round about the middle.
-        var west = new (FixVec2 At, FixVec2? Pad)[]
-        {
-            (new(-237, 88), null),                                   // home, on the HQ's hill
-            (new(-200, -30), new FixVec2(-200, -20)),                // out by the north water, behind the valley
-            (new(-154, 40), new FixVec2(-154, 30)),                  // down in the valley
-            (new(-48, -12), new FixVec2(-38, -12)),                  // up on the middle hill: contested
-        };
+        var west = Map.Test
+            ? new (FixVec2 At, FixVec2? Pad)[]
+            {
+                (new(-74, 24), null),                                // home, beside the HQ
+                (new(-38, -30), null),                               // out front, either flank
+                (new(-28, 42), null),
+            }
+            : new (FixVec2 At, FixVec2? Pad)[]
+            {
+                (new(-237, 88), null),                                   // home, on the HQ's hill
+                (new(-200, -30), new FixVec2(-200, -20)),                // out by the north water, behind the valley
+                (new(-154, 40), new FixVec2(-154, 30)),                  // down in the valley
+                (new(-48, -12), new FixVec2(-38, -12)),                  // up on the middle hill: contested
+            };
         var all = new List<(FixVec2 At, FixVec2? Pad)>();
         foreach (var d in west)
         {
@@ -255,8 +269,9 @@ public sealed class World
         }
         int metal = all.Count;
         // Sulfur: two patches in the open middle between the lakes, one a little nearer each side, so both are fought over.
-        all.Add((new FixVec2(0, 45), null));
-        all.Add((new FixVec2(0, -45), null));
+        int sulfurZ = Map.Test ? 30 : 45;
+        all.Add((new FixVec2(0, sulfurZ), null));
+        all.Add((new FixVec2(0, -sulfurZ), null));
         Deposits = all.ConvertAll(d => d.At).ToArray();
         Pads = all.ConvertAll(d => d.Pad ?? d.At).ToArray();
         HasPad = new bool[all.Count];   // (outposts are gone: the network replaced them)
@@ -339,13 +354,9 @@ public sealed class World
     public int Winner = -1;
     /// <summary>False during setup, until both sides have placed their first factory.</summary>
     public bool Started;
-    public int StartTick;   // when both sides had their first wing: waves and the storm count from here
+    public int StartTick;   // when both sides had their first wing: the waves count from here
     public int WaveNumber;   // feral waves sent so far
 
-    /// <summary>Whether the opening storm still shuts the middle.</summary>
-    public bool StormUp => !Started || Tick - StartTick < StormTicks;
-    public int StormTicksLeft => Started ? System.Math.Max(0, StormTicks - (Tick - StartTick)) : StormTicks;
-    public static bool InStorm(FixVec2 p) => Fix.Abs(p.X) < StormHalfWidth;
     /// <summary>Ticks until the next feral wave.</summary>
     public int NextWaveIn => Started ? StartTick + FirstWaveTicks + WaveNumber * WaveTicks - Tick : FirstWaveTicks;
 
@@ -378,7 +389,9 @@ public sealed class World
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
 
     // Each HQ on the hill in its corner: player 0 bottom left, player 1 top right (the map turned round).
-    public static FixVec2 HqStart(int player) => player == 0 ? new FixVec2(-224, 100) : new FixVec2(224, -100);
+    public static FixVec2 HqStart(int player) =>
+        Map.Test ? (player == 0 ? new FixVec2(-60, 10) : new FixVec2(60, -10))
+                 : (player == 0 ? new FixVec2(-224, 100) : new FixVec2(224, -100));
     /// <summary>Where a starting watch tower stands: one each side of the way out of the base toward the middle.</summary>
     public static FixVec2 TowerStart(int player, int side)
     {
@@ -498,7 +511,7 @@ public sealed class World
     /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => FactoryCost };
+        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => WingCost(b.Makes) };
         foreach (var level in b.Levels)
             for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
@@ -605,7 +618,7 @@ public sealed class World
         if (makes != Kind.MobileBase && System.Array.IndexOf(FactoryKindsOf(p.Civ), makes) < 0) { why = "No wing makes that"; return false; }
         if (b == null || !IsBase(b) || b.Owner != player) { why = "Pick one of your bases"; return false; }
         if (b.Building > 0) { why = "The base is still setting up"; return false; }
-        if (p.Metal < FactoryCost) { why = "Not enough metal"; return false; }
+        if (p.Metal < WingCost(makes)) { why = "Not enough metal"; return false; }
         if (SlotsUsed(b) >= SlotsOf(b)) { why = $"No free wing spot ({SlotsOf(b)} on this base)"; return false; }
         if (FreeWingSlot(b) < 0) { why = "No room for another wing here"; return false; }
         return true;
@@ -1146,20 +1159,14 @@ public sealed class World
     FixVec2 NearestKnown(int player, FixVec2 from, bool hitsAir)
     {
         var me = Players[player];
-        bool storm = StormUp;
-        bool found = false;
-        // With the storm up the enemy is out of reach: anything known on the far side of it is ignored, and with
-        // nothing on this side the army waits in front of home (rather than piling up against the storm).
-        var best = storm ? me.HqPos + (Players[1 - player].HqPos - me.HqPos).WithLength(Fix.FromInt(28)) : Players[1 - player].HqPos;
-        var bestD = Fix.Zero;
+        var best = Players[1 - player].HqPos;   // (the enemy HQ at worst)
+        var bestD = (best - from).LengthSq;
         foreach (var (id, at) in me.Known)
         {
             if (!hitsAir && me.KnownFliers.Contains(id)) continue;   // (it can't shoot that: don't chase it)
-            if (storm && (InStorm(at) || (at.X.Raw > 0) != (me.HqPos.X.Raw > 0))) continue;
             var d = (at - from).LengthSq;
-            if (!found || d < bestD) { best = at; bestD = d; found = true; }
+            if (d < bestD) { best = at; bestD = d; }
         }
-        if (!storm && found && (Players[1 - player].HqPos - from).LengthSq < bestD) best = Players[1 - player].HqPos;
         return best;
     }
 
@@ -1182,7 +1189,7 @@ public sealed class World
                 PauseTicksLeft = PauseTicks;
                 break;
             case AddWing aw when CanAddWing(aw.Player, aw.BaseId, aw.Makes, out _):
-                p.Metal -= FactoryCost;
+                p.Metal -= WingCost(aw.Makes);
                 var onto = Find(aw.BaseId);
                 int wingSlot = FreeWingSlot(onto);
                 var wing = Spawn(Kind.Factory, aw.Player, WingSpot(onto, wingSlot), aw.Makes);
@@ -1546,14 +1553,8 @@ public sealed class World
         foreach (var (e, step) in _moves) Move(e, step);
     }
 
-    /// <summary>A step taken: fliers straight over anything, the rest sliding along water and cliffs; and while the
-    /// storm is up nothing of the players' goes into it.</summary>
-    void Move(Entity e, FixVec2 step)
-    {
-        var to = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);
-        if (e.Owner != Feral && StormUp && InStorm(to) && !InStorm(e.Pos)) return;
-        e.Pos = to;
-    }
+    /// <summary>A step taken: fliers straight over anything, the rest sliding along water and cliffs.</summary>
+    void Move(Entity e, FixVec2 step) => e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);
 
     void Reap()
     {

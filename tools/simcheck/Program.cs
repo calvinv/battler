@@ -59,6 +59,7 @@ if (args.Contains("map"))   // the open ground as text, 8 units a character: # s
     }
     return 0;
 }
+Console.WriteLine($"Map: {Map.Name}");
 if (!BaseTest() || !QueueTest()) return 1;
 return args.Contains("lan") ? LanTest() : ReplayTest();
 
@@ -78,8 +79,15 @@ bool BaseTest()
     w.Step(new Command[] { new Order(0, util.Id, Kind.MobileBase) });
     Entity truck = null;
     for (int t = 0; t < 1000 && truck == null; t++) { w.Step(Array.Empty<Command>()); truck = w.Entities.Find(e => e.Kind == Kind.MobileBase); }
-    int metalAt = Array.FindIndex(World.Deposits, d => d.X.ToInt() == -200);
-    var spot = World.Deposits[metalAt] + new FixVec2(0, 12);
+    // The nearest metal deposit out from home on player 0's side (guarded, as every one away from home is).
+    int metalAt = -1;
+    for (int d = 0; d < World.Deposits.Length; d++)
+    {
+        var dist = (World.Deposits[d] - hq0.Pos).Length.ToInt();
+        if (World.DepositResource[d] != Resource.Metal || dist < 40 || World.Deposits[d].X.Raw > 0) continue;
+        if (metalAt < 0 || dist < (World.Deposits[metalAt] - hq0.Pos).Length.ToInt()) metalAt = d;
+    }
+    var spot = World.Deposits[metalAt] + (World.Deposits[metalAt] - hq0.Pos).WithLength(Fix.FromInt(8));   // (just past it, clear of the HQ)
     w.Step(new Command[] { new MoveUnits(0, new[] { truck.Id }, spot) });
     for (int t = 0; t < 4000 && truck.HasWaypoint; t++) w.Step(Array.Empty<Command>());
     bool guarded = !w.CanDeploy(0, truck.Id, out _) && w.GuardNear(World.Deposits[metalAt]);
@@ -99,32 +107,24 @@ bool BaseTest()
 
     // Radar: an enemy tank 60 out from the HQ, where nothing of ours sees it.
     while (w.Tick % World.RadarTicks != World.RadarTicks - 1) w.Step(Array.Empty<Command>());   // (just before a sweep)
-    var sneak = w.Spawn(Kind.Tank, 1, hq0.Pos + new FixVec2(-10, -60));
+    var sneak = w.Spawn(Kind.Tank, 1, hq0.Pos + new FixVec2(-10, -55));
     w.Step(Array.Empty<Command>());
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
     bool ok = truck != null && guarded && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && StormTest();
+    return ok && WaveTest();
 }
 
-// The storm: a tank sent across the middle stops at its edge until the storm lifts. And the first feral wave comes in
-// from both edges a minute after the start.
-bool StormTest()
+// The first feral wave comes in from both edges a minute after the start.
+bool WaveTest()
 {
     var w = new World(3, new[] { Civ.Coalition, Civ.Coalition });
     var hqs = w.Entities.FindAll(e => e.Kind == Kind.Hq);
     w.Step(new Command[] { new AddWing(0, hqs[0].Id, Kind.Tank), new AddWing(1, hqs[1].Id, Kind.Tank) });
-    var tank = w.Spawn(Kind.Tank, 0, new FixVec2(-50, 0));
-    tank.HasWaypoint = true; tank.Waypoint = new FixVec2(50, 0);
-    int ferals = 0;
     for (int t = 0; t < World.FirstWaveTicks + 5; t++) w.Step(Array.Empty<Command>());
-    ferals = w.Entities.Count(e => e.Owner == World.Feral && e.Stats.IsUnit && Fix.Abs(e.Pos.X) > 200);
-    bool held = !World.InStorm(tank.Pos) && tank.Pos.X.ToInt() < 0;
-    while (w.StormUp) w.Step(Array.Empty<Command>());
-    for (int t = 0; t < 600; t++) w.Step(Array.Empty<Command>());
-    bool crossed = tank.Dead || tank.Pos.X.ToInt() > -30;
-    bool ok = held && crossed && ferals >= 6;
-    Console.WriteLine($"Storm test: held at x {tank.Pos.X} while it stood {held}, through after {crossed}; first wave {ferals} ferals at the edges: {(ok ? "OK" : "FAILED")}");
+    int ferals = w.Entities.Count(e => e.Owner == World.Feral && e.Stats.IsUnit && Fix.Abs(e.Pos.X) > World.MapHalfX - 20);
+    bool ok = ferals >= 6;
+    Console.WriteLine($"Wave test: first wave {ferals} ferals at the edges: {(ok ? "OK" : "FAILED")}");
     return ok;
 }
 

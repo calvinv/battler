@@ -59,6 +59,7 @@ public sealed class Ground
     /// <summary>How far out into the water a place is, square to the shore (negative on land: how far from it).</summary>
     public static Fix WaterDepth(FixVec2 p)
     {
+        if (Map.Test) return Fix.FromInt(-100);   // (the test map: no water)
         Fix Across(Func<Fix, Fix> shore)   // the shore's slope, to measure square to it rather than straight north
         {
             var m = (shore(p.X + 1) - shore(p.X - 1)) / 2;
@@ -89,6 +90,7 @@ public sealed class Ground
 
     static Fix Shape(int x, int z, FixVec2[] bases)
     {
+        if (Map.Test) return Fix.Zero;   // (the test map: flat dirt)
         // Gentle rolling ground: broad swells, little chop. The same turned round about the middle: each place takes
         // the average of the noise there and at its turned-round twin (taking one half's noise for both left a seam
         // down x = 0).
