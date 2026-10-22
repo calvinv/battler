@@ -671,6 +671,7 @@ public partial class Main : Node3D
         _viewHint.AddThemeConstantOverride("outline_size", 6);
         ui.AddChild(_viewHint);
         BuildMenu(ui);
+        BuildQueueBar(ui);
         BuildBuildMenu(ui);
     }
 
@@ -1381,6 +1382,7 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
         UpdateBuildMenu();
+        UpdateQueueBar();
         var menu = "[B] Build   [E] Pick scouts   [P] Pause   [Esc] Menu";
         var placingWhat = _placing switch
         {

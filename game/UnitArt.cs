@@ -177,7 +177,7 @@ public static class UnitArt
         _holoShader = null;
     }
 
-    static IEnumerable<MeshInstance3D> Meshes(Node n)
+    public static IEnumerable<MeshInstance3D> Meshes(Node n)
     {
         if (n is MeshInstance3D m) yield return m;
         foreach (var c in n.GetChildren())
