@@ -379,7 +379,7 @@ public partial class Main : Node3D
     {
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
-        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset();
+        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
         ClearFieldViews();
         _session = session;
         _me = session.LocalPlayer;
@@ -992,6 +992,8 @@ public partial class Main : Node3D
             if (s.Flight > 0) aimAt = to;   // shells burst on the ground
             _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner], s.Flight / (float)World.TicksPerSecond);   // a shell lands when the sim lands it
         }
+        foreach (var (at, owner, amount) in W.Salvaged)   // my salvage: a "+60" rising off the wreck
+            if (owner == _me) _salvageTexts.Add((ToV3(at), amount, 0f));
         return true;
     }
 
@@ -1118,6 +1120,7 @@ public partial class Main : Node3D
             _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
         DrawRadarBlips();
+        DrawSalvage();
         UpdateStorm();
         DrawFires();
         DrawPlacement();
@@ -1132,6 +1135,25 @@ public partial class Main : Node3D
         Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, _ => 2f,
     };
+
+    readonly List<(Vector3 At, int Amount, float Age)> _salvageTexts = new();
+    const float SalvageSeconds = 2.4f;
+
+    /// <summary>The salvage numbers: each rises off its wreck and fades out.</summary>
+    void DrawSalvage()
+    {
+        _overlay.Floats.Clear();
+        for (int i = _salvageTexts.Count - 1; i >= 0; i--)
+        {
+            var (at, amount, age) = _salvageTexts[i];
+            age += W.Paused ? 0 : _frameDt;
+            if (age > SalvageSeconds) { _salvageTexts.RemoveAt(i); continue; }
+            _salvageTexts[i] = (at, amount, age);
+            var p = at + Vector3.Up * (2.5f + age * 2.5f);
+            if (_camera.IsPositionBehind(p)) continue;
+            _overlay.Floats.Add((_camera.UnprojectPosition(p), $"+{amount}", 1 - age / SalvageSeconds));
+        }
+    }
 
     void DrawBarsAndSelection(float alpha)
     {
@@ -1311,7 +1333,7 @@ public partial class Main : Node3D
                     : "Unarmed eyes: it's scouting you.",
                 Kind.Extractor => World.DepositResource[e.Deposit] == Battler.Sim.Resource.Sulfur
                     ? $"Mines sulfur: +{World.SulfurBonusPercent}% damage for every explosive weapon\non your side, and napalm for mortars, artillery and crawlers."
-                    : $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second.",
+                    : $"Mines its deposit: +{World.ExtractorIncome} metal a second.",
                 Kind.MobileBase => e.Owner == _me
                     ? "A mobile base on the move: right-click to send it,\nF (or the button) to set it up where it stands."
                     : "A mobile base on the move: it means to set up nearby.",
@@ -1479,7 +1501,7 @@ public partial class Main : Node3D
             ? menu
             : $"Placing {placingWhat}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
-            $"Metal {me.Metal}   +{W.IncomeOf(_me) * World.TicksPerSecond}/s\n" +
+            $"Metal {me.Metal}   +{W.IncomeOf(_me)}/s   (and salvage: destroy things)\n" +
             building + "\n" +
             $"Army {W.ArmyCount(_me)}/{World.MaxArmyOf(MyCiv)}   units seen {myUnits} vs {theirUnits}\n" +
             (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +

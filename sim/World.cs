@@ -90,6 +90,7 @@ public sealed class Player
     public Civ Civ;
     public int Metal;
     public int PausesLeft;
+    public int Mined, Salvaged;   // metal earned so far: from the trickle and extractors, and from salvage
     public FixVec2 HqPos;
     /// <summary>Enemies this side has seen, by id, at where they were last seen (World.UpdateVision keeps it).</summary>
     public readonly SortedDictionary<int, FixVec2> Known = new();
@@ -116,10 +117,11 @@ public sealed class World
     public const int PauseTicks = 30 * TicksPerSecond;
     public const int PausesPerPlayer = 3;
     public const int StartMetal = 600;
-    // Resources (the user, 2026-10-20): a trickle of metal comes in regardless; the rest is mined from deposits by
-    // extractors, so expanding is how a side gets rich and the middle is worth fighting over.
-    public const int IncomePerTick = 1;
-    public const int ExtractorIncome = 1;   // per extractor, per tick
+    // Resources (the user, 2026-10-20): a trickle of metal comes in regardless, and extractors mine deposits. Slow, since
+    // 2026-10-22 (the user: "make the primary way to collect resources a battle, and resource gen slower"): most metal
+    // comes from salvage, what's destroyed paying whoever destroyed it (World.Salvage). Paid once a second.
+    public const int TrickleIncome = 3;     // per second
+    public const int ExtractorIncome = 3;   // per extractor, per second
     public const int ExtractorCost = 300;
     public static readonly Fix DepositRadius = 3;   // nothing else can be built this near a deposit's centre
     public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
@@ -147,7 +149,21 @@ public sealed class World
     // ferals. Killing them pays salvage.
     public const int Feral = 2;   // their owner number
     public const int WaveTicks = 90 * TicksPerSecond, FirstWaveTicks = 60 * TicksPerSecond, MaxFerals = 50;
-    public static int Salvage(Kind k) => k switch { Kind.Feral => 15, Kind.FeralBrute => 40, Kind.Derelict => 150, _ => 0 };
+    /// <summary>What destroying something pays whoever did it (ferals collect nothing): the scrap in it. Units are free
+    /// to build, so this is what a fight is worth; buildings pay about half their cost. Tuned so that, over a match,
+    /// salvage brings in more than mining.</summary>
+    public static int Salvage(Kind k) => k switch
+    {
+        Kind.Feral => 40, Kind.FeralBrute => 120, Kind.Derelict => 300,
+        Kind.Crawler or Kind.Drone or Kind.Scout => 40, Kind.LightTank or Kind.Spider => 70, Kind.Mortar or Kind.Piercer => 90,
+        Kind.Tank => 120, Kind.Artillery => 140, Kind.MobileBase => 300,
+        Kind.Factory => 250, Kind.Extractor => 150, Kind.Outpost => 300, Kind.Tower => 200, Kind.Hq => 0,
+        Kind.Turret or Kind.Flak => 120, Kind.Bombard => 200, Kind.Wall => 25,
+        _ => 0,
+    };
+
+    /// <summary>Salvage paid this tick, for the game to show (where, to whom, how much).</summary>
+    public readonly List<(FixVec2 At, int Owner, int Amount)> Salvaged = new();
     static readonly FixVec2[] WaveGates = { new(-272, -20), new(272, 20) };   // west and east edges, the map turned round
     public static readonly Fix GuardReach = 25;   // no base or extractor while a derelict stands this near
 
@@ -689,13 +705,13 @@ public sealed class World
         return true;
     }
 
-    /// <summary>Metal a player makes each tick: the trickle and their extractors.</summary>
+    /// <summary>Metal a player makes each second: the trickle and their extractors (salvage aside).</summary>
     public int IncomeOf(int player)
     {
         int n = 0;
         foreach (var e in Entities)
             if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && DepositResource[e.Deposit] == Resource.Metal) n++;   // (mining once built)
-        return IncomePerTick + ExtractorIncome * n;
+        return TrickleIncome + ExtractorIncome * n;
     }
 
     /// <summary>How many sulfur patches a player mines (built).</summary>
@@ -944,6 +960,7 @@ public sealed class World
     {
         Tick++;
         Shots.Clear();
+        Salvaged.Clear();
         if (Winner >= 0) return;
 
         if (!Started)
@@ -967,9 +984,12 @@ public sealed class World
             return;
         }
 
-        var income = new int[Players.Length];
-        for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
-        for (int i = 0; i < Players.Length; i++) Players[i].Metal += income[i];
+        if (Tick % TicksPerSecond == 0)
+        {
+            var income = new int[Players.Length];
+            for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
+            for (int i = 0; i < Players.Length; i++) { Players[i].Metal += income[i]; Players[i].Mined += income[i]; }
+        }
         BuyQueuedUpgrades();
         Construct();
         Produce();
@@ -1370,7 +1390,12 @@ public sealed class World
             if (alive && target.Hp <= 0 && by != null)   // the shot that finished it
             {
                 Credit(by);
-                if (target.Owner == Feral && by.Owner != Feral) Players[by.Owner].Metal += Salvage(target.Kind);   // salvage
+                if (by.Owner != Feral && by.Owner != target.Owner && Salvage(target.Kind) > 0)   // salvage
+                {
+                    Players[by.Owner].Metal += Salvage(target.Kind);
+                    Players[by.Owner].Salvaged += Salvage(target.Kind);
+                    Salvaged.Add((target.Pos, by.Owner, Salvage(target.Kind)));
+                }
             }
         }
         _hits.Clear();
@@ -1555,7 +1580,7 @@ public sealed class World
         Mix(Tick); Mix(Winner); Mix(PausedBy); Mix(PauseTicksLeft); Mix((long)Rng.State); Mix(Started ? 1 : 0); Mix(StartTick); Mix(WaveNumber);
         foreach (var p in Players)
         {
-            Mix(p.Metal); Mix(p.PausesLeft);
+            Mix(p.Metal); Mix(p.PausesLeft); Mix(p.Mined); Mix(p.Salvaged);
             foreach (var (id, at) in p.Known) { Mix(id); Mix(at.X.Raw); Mix(at.Z.Raw); }
             Mix(p.BlipTick); foreach (var b in p.Blips) { Mix(b.X.Raw); Mix(b.Z.Raw); }
         }

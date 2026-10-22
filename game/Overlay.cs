@@ -13,6 +13,8 @@ public partial class Overlay : Control
     public readonly List<(Vector2 Centre, int Sword, int Shield, int Rank)> Badges = new();
     /// <summary>Short text tags over things: a base's factory slots in use ("2/3").</summary>
     public readonly List<(Vector2 Centre, string Text, Color Colour)> Tags = new();
+    /// <summary>Floating numbers (salvage): where, the text, and how strong (fading 1 to 0).</summary>
+    public readonly List<(Vector2 Centre, string Text, float Strength)> Floats = new();
     /// <summary>Radar blips: where a hidden enemy unit was at the last sweep, and how strong (fading 1 to 0).</summary>
     public readonly List<(Vector2 Centre, float Strength)> Blips = new();
     /// <summary>The box being dragged to pick scouts, if any.</summary>
@@ -58,6 +60,14 @@ public partial class Overlay : Control
             var red = new Color(1f, 0.25f, 0.2f, 0.9f * strength);
             DrawCircle(c, 4.5f, red);
             DrawArc(c, 9f + 6f * (1 - strength), 0, Mathf.Tau, 20, red with { A = 0.6f * strength }, 1.5f);
+        }
+        foreach (var (c, text, strength) in Floats)
+        {
+            const int Size = 24;
+            var width = font.GetStringSize(text, HorizontalAlignment.Left, -1, Size).X;
+            var at = new Vector2(c.X - width / 2, c.Y);
+            DrawString(font, at + new Vector2(1.5f, 1.5f), text, HorizontalAlignment.Left, -1, Size, new Color(0, 0, 0, 0.8f * strength));
+            DrawString(font, at, text, HorizontalAlignment.Left, -1, Size, new Color(1f, 0.85f, 0.3f, strength));
         }
         if (Box is { } box)
         {
