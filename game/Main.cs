@@ -727,10 +727,9 @@ public partial class Main : Node3D
     {
         if (e.Stats.IsUnit)
         {
-            // A unit wears its upgrades as emblems on its deck (its levels are fixed when it's made).
-            var unit = UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
-            UnitArt.AddEmblems(unit, ModelOf(e.Kind), e.Level(Upgrade.Damage), e.Level(Upgrade.Armour));
-            return unit;
+            // (Damage/armour upgrades have no visual for now: the user, 2026-10-22, "they dont need a visual right
+            // now". UnitArt.AddEmblems still draws deck emblems if they come back.)
+            return UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
         }
         // Buildings (tools/art/model_buildings.py): each factory kind its own building; all face the enemy's side,
         // so units roll out of the door.
@@ -1122,10 +1121,9 @@ public partial class Main : Node3D
             var top = pos + Vector3.Up * TopOf(e.Kind);
             if (!Shown(e)) continue;
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
-            // Factories float a sword and shield; units wear theirs on the deck (UnitArt.AddEmblems), so only rank floats.
-            int sword = e.Stats.IsUnit ? 0 : e.Level(Upgrade.Damage), shield = e.Stats.IsUnit ? 0 : e.Level(Upgrade.Armour);
-            if ((sword > 0 || shield > 0 || e.Rank > 0) && !_camera.IsPositionBehind(top))
-                _overlay.Badges.Add((_camera.UnprojectPosition(top) - new Vector2(0, 14), sword, shield, e.Rank));
+            // Only veterancy floats over things (sword/shield upgrade badges are off for now, see MakeView).
+            if (e.Rank > 0 && !_camera.IsPositionBehind(top))
+                _overlay.Badges.Add((_camera.UnprojectPosition(top) - new Vector2(0, 14), 0, 0, e.Rank));
             // A bar only once it's been hurt (or while it's selected).
             if (e.Hp >= e.MaxHp && e.Id != _selected) continue;
             if (_camera.IsPositionBehind(top)) continue;
