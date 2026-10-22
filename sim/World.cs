@@ -431,7 +431,7 @@ public sealed class World
     public World(ulong seed, Civ[] civs = null)
     {
         Rng = new Rng(seed);
-        civs ??= new[] { Civ.Coalition, Civ.Lattice };
+        civs ??= new[] { Civ.Coalition, Civ.Coalition };   // (2026-10-22, the user: "lets focus on 1 civ": a mirror match while we test; the Lattice waits)
         Players = new Player[2];
         for (int i = 0; i < 2; i++)
         {
