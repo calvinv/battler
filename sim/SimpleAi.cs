@@ -97,7 +97,15 @@ public sealed class SimpleAi
         int extractors = mine.FindAll(e => e.Kind == Kind.Extractor).Count;
         if (wings < Math.Min(MaxWings, 3 + 2 * extractors))
         {
-            var onto = mine.Find(b => World.IsBase(b) && b.Building == 0 && w.SlotsUsed(b) < World.SlotsOf(b) && w.FreeWingSlot(b) >= 0);
+            // (sulfur hosts first: their units come out enhanced; then power plants, which halve the draw)
+            Entity onto = null;
+            foreach (var b in mine)
+            {
+                if (!World.IsWingHost(b) || b.Building > 0 || w.SlotsUsed(b) >= World.SlotsOf(b) || w.FreeWingSlot(b) < 0) continue;
+                int rank = b.Kind == Kind.Extractor && World.DepositResource[b.Deposit] == Resource.Sulfur ? 0 : b.Kind == Kind.PowerPlant ? 1 : 2;
+                int ontoRank = onto == null ? 9 : onto.Kind == Kind.Extractor && World.DepositResource[onto.Deposit] == Resource.Sulfur ? 0 : onto.Kind == Kind.PowerPlant ? 1 : 2;
+                if (rank < ontoRank) onto = b;
+            }
             if (onto != null)
             {
                 var makes = PickUnit(p.Civ);

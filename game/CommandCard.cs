@@ -174,7 +174,8 @@ public partial class Main
 
     string CardTitle(Entity e) => e.Kind switch
     {
-        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": structures" : $": build   (wings {W.SlotsUsed(e)}/{World.SlotsOf(e)})"),
+        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": structures" : e.Kind == Kind.Hq ? $": build   (wings {W.SlotsUsed(e)}/{World.SlotsOf(e)})" : ": build"),
+        Kind.Extractor or Kind.PowerPlant => $"{NameOf(e.Kind)}: wings {W.SlotsUsed(e)}/{World.SlotsOf(e)}",
         Kind.Factory => World.IsUtility(e) ? "Utility wing" : NameOf(e.Makes) + " wing",
         _ => NameOf(e.Kind),
     };
@@ -187,14 +188,14 @@ public partial class Main
         if (e.Building > 0 && e.Kind != Kind.MobileBase) { items.Add(SellItem(e)); return items.Where(i => i != null).ToList(); }
         switch (e.Kind)
         {
-            case Kind.Hq or Kind.Outpost:
-                if (_cardPage == "defences") DefenceItems(e, items);
+            case Kind.Hq or Kind.Outpost or Kind.Extractor or Kind.PowerPlant:
+                if (_cardPage == "defences" && World.IsBase(e)) DefenceItems(e, items);
                 else BaseItems(e, items);
                 break;
             case Kind.Factory when World.IsUtility(e):
                 var scout = World.ScoutKindOf(MyCiv);
                 items.Add(OrderItem(e, Key.C, scout, $"A {NameOf(scout).ToLowerInvariant()}: unarmed eyes" + (scout == Kind.Drone ? ", flies" : "") + $". Up to {World.MaxScouts}.\nRight-click to send it."));
-                items.Add(OrderItem(e, Key.G, Kind.MobileBase, $"Drive it out and set it up (F) where you want a base:\n{World.OutpostWings} wing spots, extractors within {World.BaseReach}, radar {World.OutpostRadar}.\nAt least {World.BaseSpacing} from any base. Up to {World.MaxBases} bases."));
+                items.Add(OrderItem(e, Key.G, Kind.MobileBase, $"Drive it out and set it up (F) where you want a base:\nextractors and power plants within {World.BaseReach}\n(wings go on those), radar {World.OutpostRadar}. At least {World.BaseSpacing} from any base. Up to {World.MaxBases} bases."));
                 items.Add(SellItem(e));
                 break;
             case Kind.Factory:
@@ -208,13 +209,13 @@ public partial class Main
                 UpgradeItems(e, items, true);
                 items.Add(SellItem(e));
                 break;
-            case Kind.Wall or Kind.Extractor or Kind.PowerPlant:
+            case Kind.Wall:
                 items.Add(SellItem(e));
                 break;
             case Kind.MobileBase:
                 bool can = W.CanDeploy(_me, e.Id, out var why);
                 items.Add(new CardItem(Key.F, "Set up", BuildingModel(Kind.Outpost, Kind.Hq, MyCiv), null, 0, "Set up here",
-                    $"Becomes a base where it stands, in {World.ConstructionTicks(Kind.Outpost) / World.TicksPerSecond} s:\n{World.OutpostWings} wing spots, extractors within {World.BaseReach}, radar {World.OutpostRadar}.",
+                    $"Becomes a base where it stands, in {World.ConstructionTicks(Kind.Outpost) / World.TicksPerSecond} s:\nextractors and power plants within {World.BaseReach}, radar {World.OutpostRadar}.",
                     can ? null : why, DeployOrPack));
                 break;
         }
@@ -224,7 +225,30 @@ public partial class Main
     static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H };
     static readonly Key[] LatticeWingKeys = { Key.C, Key.I, Key.K, Key.J, Key.F, Key.H };
 
+    /// <summary>A base's or a wing host's card: the wings it takes (the HQ, extractors, power plants), the
+    /// structures page (the HQ and set-up bases), pack up, sell.</summary>
     void BaseItems(Entity b, List<CardItem> items)
+    {
+        if (World.IsWingHost(b)) WingItems(b, items);
+        if (World.IsBase(b))
+            items.Add(new CardItem(Key.N, "Structures", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, 0, "Structures  \u25b8",
+                $"Extractors, power plants and defences, placed within {World.BaseReach} of a base.", W.Started ? null : "once the battle starts", () => _cardPage = "defences"));
+        if (b.Kind == Kind.Outpost)
+        {
+            bool can = W.CanPackUp(_me, b.Id, out var why);
+            items.Add(new CardItem(Key.Y, "Pack up", UnitModel(Kind.MobileBase, MyCiv), null, 0, "Pack up", "Folds the base back into a mobile base to move it.",
+                can ? null : why.ToLowerInvariant(), DeployOrPack));
+        }
+        items.Add(SellItem(b));
+    }
+
+    /// <summary>What a host's wings would be: the sulfur and power-plant bonuses in each popup.</summary>
+    string HostNote(Entity b) =>
+        b.Kind == Kind.Extractor && World.DepositResource[b.Deposit] == Battler.Sim.Resource.Sulfur
+            ? $"\nOn sulfur: its units hit {World.SulfurHitPercent - 100}% harder and set the ground burning."
+            : b.Kind == Kind.PowerPlant ? "\nOn a power plant: it draws half the power." : "";
+
+    void WingItems(Entity b, List<CardItem> items)
     {
         var kinds = World.FactoryKindsOf(MyCiv);
         var keys = MyCiv == Civ.Lattice ? LatticeWingKeys : CoalitionWingKeys;
@@ -233,22 +257,13 @@ public partial class Main
             var kind = kinds[i];
             W.CanAddWing(_me, b.Id, kind, out var why);
             items.Add(new CardItem(keys[i], NameOf(kind), UnitModel(kind, MyCiv), null, World.WingCost(kind), $"{NameOf(kind)} {(MyCiv == Civ.Lattice ? "nest" : "wing")}",
-                $"Built onto this base in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.\nPower draw {World.PowerDraw(kind)}  (you have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}).\n\n" + UnitStats(kind),
+                $"Built onto this in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.{HostNote(b)}\nPower draw {(b.Kind == Kind.PowerPlant ? World.PowerDraw(kind) / 2 : World.PowerDraw(kind))}  (you have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}).\n\n" + UnitStats(kind),
                 why?.ToLowerInvariant(), () => _session.Issue(new AddWing(_me, b.Id, kind))));
         }
         W.CanAddWing(_me, b.Id, Kind.MobileBase, out var uwhy);
         items.Add(new CardItem(Key.U, "Utility", BuildingModel(Kind.Factory, Kind.MobileBase, MyCiv), null, World.WingCost(Kind.MobileBase), MyCiv == Civ.Lattice ? "Utility nest" : "Utility wing",
             $"Builds scouts ({World.ScoutCost}) and mobile bases ({World.MobileBaseCost}) to order.\nMobile bases are how you expand.", uwhy?.ToLowerInvariant(),
             () => _session.Issue(new AddWing(_me, b.Id, Kind.MobileBase))));
-        items.Add(new CardItem(Key.N, "Structures", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, 0, "Structures  \u25b8",
-            $"Extractors, power plants and defences, placed within {World.BaseReach} of a base.", W.Started ? null : "once the battle starts", () => _cardPage = "defences"));
-        if (b.Kind == Kind.Outpost)
-        {
-            bool can = W.CanPackUp(_me, b.Id, out var why);
-            items.Add(new CardItem(Key.Y, "Pack up", UnitModel(Kind.MobileBase, MyCiv), null, 0, "Pack up", "Folds the base back into a mobile base to move it. Needs no wings on it.",
-                can ? null : why.ToLowerInvariant(), DeployOrPack));
-        }
-        items.Add(SellItem(b));
     }
 
     void DefenceItems(Entity b, List<CardItem> items)
@@ -322,7 +337,7 @@ public partial class Main
         bool armed = _sellArmed == e.Id && Time.GetTicksMsec() < _sellArmedUntil;
         int value = World.SellValue(e);
         return new CardItem(Key.Delete, "Sell", null, armed ? "Sure?\nSell" : $"Sell\n{value}", 0, armed ? "Press again to sell" : $"Sell for {value}",
-            $"{World.SellBackPercent}% back of the {World.SpentOn(e)} spent on it." + (World.IsBase(e) ? " Its wings go with it." : ""), W.Started ? null : "once the battle starts",
+            $"{World.SellBackPercent}% back of the {World.SpentOn(e)} spent on it." + (World.IsWingHost(e) ? " Its wings go with it." : ""), W.Started ? null : "once the battle starts",
             () =>
             {
                 if (armed) { _session.Issue(new Sell(_me, e.Id)); _sellArmed = -1; _selected = -1; }

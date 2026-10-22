@@ -246,9 +246,14 @@ bool BaseTest()
     var post = w.Entities.Find(e => e.Kind == Kind.Outpost && e.Owner == 0);
     while (post != null && post.Building > 0) w.Step(Array.Empty<Command>());
     bool canMine = w.CanPlaceExtractor(0, metalAt, out _);
-    w.Step(new Command[] { new AddWing(0, post?.Id ?? 0, Kind.LightTank) });
-    int wingsThere = post == null ? -1 : w.SlotsUsed(post);
-    if (post != null) post.Hp = 0;
+    // Wings go on the extractor there (the set-up base takes none); when the extractor falls its wing goes with it.
+    w.Step(new Command[] { new PlaceExtractor(0, metalAt) });
+    var rig = w.Entities.Find(e => e.Kind == Kind.Extractor && e.Owner == 0 && e.Deposit == metalAt);
+    if (rig != null) rig.Building = 0;
+    bool baseTakesNone = post == null || !w.CanAddWing(0, post.Id, Kind.LightTank, out _);
+    w.Step(new Command[] { new AddWing(0, rig?.Id ?? 0, Kind.LightTank) });
+    int wingsThere = rig == null || !baseTakesNone ? -1 : w.SlotsUsed(rig);
+    if (rig != null) rig.Hp = 0;
     w.Step(Array.Empty<Command>());
     w.Step(Array.Empty<Command>());
     int wingsLeft = w.Entities.Count(e => e.Kind == Kind.Factory && e.Owner == 0);
@@ -258,9 +263,34 @@ bool BaseTest()
     var sneak = w.Spawn(Kind.Tank, 1, hq0.Pos + new FixVec2(-10, -55));
     w.Step(Array.Empty<Command>());
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
-    bool ok = truck != null && guarded && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
+    bool ok = truck != null && guarded && canDeploy && post != null && canMine && baseTakesNone && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && (!World.FeralsOn || WaveTest()) && PowerTest();
+    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest();
+}
+
+// Resource hosts: a tank wing on a sulfur extractor makes enhanced tanks (harder hits, fires); one on a power plant
+// draws half the power.
+bool HostTest()
+{
+    var w = new World(5, new[] { Civ.Coalition, Civ.Coalition });
+    foreach (var p in w.Players) p.Metal = 100000;
+    var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+    var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
+    w.Step(new Command[] { new AddWing(0, hq.Id, Kind.LightTank), new AddWing(1, hq1.Id, Kind.LightTank) });
+    int sulfurAt = Array.FindIndex(World.DepositResource, r => r == Resource.Sulfur);
+    var pit = w.Spawn(Kind.Extractor, 0, World.Deposits[sulfurAt]);
+    pit.Deposit = sulfurAt; pit.Building = 0;
+    var plant = w.Spawn(Kind.PowerPlant, 0, World.Vents[0]);
+    plant.Vent = 0; plant.Building = 0;
+    w.Step(new Command[] { new AddWing(0, pit.Id, Kind.Tank), new AddWing(0, plant.Id, Kind.Artillery) });
+    var onSulfur = w.Entities.Find(e => e.Kind == Kind.Factory && e.BaseId == pit.Id);
+    var onPlant = w.Entities.Find(e => e.Kind == Kind.Factory && e.BaseId == plant.Id);
+    foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) f.Building = 0;
+    Entity tank = null;
+    for (int t = 0; t < 1200 && tank == null; t++) { w.Step(Array.Empty<Command>()); tank = w.Entities.Find(e => e.Kind == Kind.Tank && e.FactoryId == onSulfur?.Id); }
+    bool ok = onSulfur != null && onPlant != null && tank != null && tank.Enhanced && w.WingDraw(onPlant) == World.PowerDraw(Kind.Artillery) / 2;
+    Console.WriteLine($"Host test: sulfur wing {(onSulfur != null)}, its tank enhanced {tank?.Enhanced}, plant wing draws {(onPlant == null ? -1 : w.WingDraw(onPlant))} of {World.PowerDraw(Kind.Artillery)}: {(ok ? "OK" : "FAILED")}");
+    return ok;
 }
 
 // Power: three tank wings (drawing 6) on the HQ's 4 make their first tank in half as long again (45 s becomes

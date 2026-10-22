@@ -81,6 +81,7 @@ public sealed class Entity
     public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
     public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
     public Fitting Fitting;    // a factory: what it fits its units with; a unit: what it was made with
+    public bool Enhanced;      // a unit made by a wing on a sulfur extractor: hits harder and sets fires
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -150,7 +151,10 @@ public sealed class World
     // and set it up somewhere else"). The HQ takes five wings, a set-up mobile base (Kind.Outpost) three; a wing makes
     // one kind of unit, or (the utility wing) scouts and mobile bases to order. Extractors go near a base.
     // (The branching network this replaced is on the network-prototype branch.)
-    public const int HqWings = 5, OutpostWings = 3, MobileBaseCost = 500, MaxBases = 4;
+    // (2026-10-22, the user: "we expand out to resources and then build wings off those buildings": the HQ keeps three
+    // wing spots; every other wing goes on an extractor or a power plant, two each; mobile bases claim ground, no wings.)
+    public const int HqWings = 3, ResourceWings = 2, MobileBaseCost = 500, MaxBases = 4;
+    public const int SulfurHitPercent = 125;   // units from a wing on a sulfur extractor: hits this much harder, and they set fires
     public static readonly Fix BaseReach = 30, BaseSpacing = 40;
     // Radar (the user, 2026-10-22: "a radar that pings every 30s to show where units are in the fog so you can't get
     // cheesed"): each base sweeps its range every 30 s; hidden enemy units in it show as blips, and become known.
@@ -461,6 +465,7 @@ public sealed class World
             from.Levels.CopyTo(e.Levels, 0);
             e.FactoryId = from.Id;
             e.Fitting = from.Fitting == Fitting.Napalm && SulfurOf(owner) > 0 ? Fitting.Napalm : Fitting.Standard;
+            e.Enhanced = OnSulfur(from);
             // Its factory's own rally point; failing that the base's (the HQ's: the user, 2026-10-20, "main base
             // should have a way to rally").
             var rally = from.HasRally ? from : HqOf(owner) is { HasRally: true } hq ? hq : null;
@@ -609,8 +614,17 @@ public sealed class World
     /// <summary>A base: the HQ, or a mobile base set up (an Outpost). Wings are built onto it.</summary>
     public static bool IsBase(Entity e) => e.Kind is Kind.Hq or Kind.Outpost;
 
-    /// <summary>How many wings a base takes: the HQ five, a set-up mobile base three.</summary>
-    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqWings : OutpostWings;
+    /// <summary>What wings are built onto: the HQ, extractors and power plants.</summary>
+    public static bool IsWingHost(Entity e) => e.Kind is Kind.Hq or Kind.Extractor or Kind.PowerPlant;
+
+    /// <summary>How many wings a host takes: the HQ three, an extractor or power plant two.</summary>
+    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqWings : IsWingHost(b) ? ResourceWings : 0;
+
+    /// <summary>A wing on a sulfur extractor: its units come out enhanced.</summary>
+    public bool OnSulfur(Entity wing) => Find(wing.BaseId) is { Kind: Kind.Extractor } x && x.Deposit >= 0 && DepositResource[x.Deposit] == Resource.Sulfur;
+
+    /// <summary>A wing on a power plant: it draws half the power.</summary>
+    public bool OnPlant(Entity wing) => Find(wing.BaseId) is { Kind: Kind.PowerPlant };
 
     /// <summary>How many of a base's wing spots are taken.</summary>
     public int SlotsUsed(Entity b)
@@ -628,14 +642,20 @@ public sealed class World
     static readonly FixVec2[] HqWingSpots =
         { new(Fix.Ratio(548, 100), Fix.Ratio(-244, 100)), new(Fix.Ratio(401, 100), Fix.Ratio(446, 100)), new(-3, Fix.Ratio(520, 100)),
           new(Fix.Ratio(-587, 100), Fix.Ratio(-125, 100)), new(Fix.Ratio(-63, 100), Fix.Ratio(-597, 100)) };
-    static readonly FixVec2[] OutpostWingSpots =
-        { new(Fix.Ratio(475, 100), Fix.Ratio(-212, 100)), new(Fix.Ratio(-54, 100), Fix.Ratio(517, 100)), new(Fix.Ratio(-421, 100), Fix.Ratio(-306, 100)) };
+    static readonly Fix ResourceWingReach = Fix.Ratio(58, 10);   // a resource building's wings: this far either side of it
 
-    /// <summary>Where wing spot `slot` of base `b` is.</summary>
+    /// <summary>Where wing spot `slot` of host `b` is: round the HQ by the table; either side of an extractor or power
+    /// plant, square to the way to the middle of the map (so they sit beside it, clear of its deposit or vent).</summary>
     public static FixVec2 WingSpot(Entity b, int slot)
     {
-        var off = (b.Kind == Kind.Hq ? HqWingSpots : OutpostWingSpots)[slot];
-        return b.Owner == 0 ? b.Pos + off : b.Pos - off;
+        if (b.Kind == Kind.Hq)
+        {
+            var off = HqWingSpots[slot];
+            return b.Owner == 0 ? b.Pos + off : b.Pos - off;
+        }
+        var toMiddle = b.Pos.LengthSq.Raw == 0 ? new FixVec2(1, 0) : (-b.Pos).WithLength(Fix.One);
+        var side = new FixVec2(-toMiddle.Z, toMiddle.X) * ResourceWingReach;
+        return slot == 0 ? b.Pos + side : b.Pos - side;
     }
 
     /// <summary>The first free wing spot on a base that a wing fits in (on open ground, clear of other buildings than
@@ -670,10 +690,10 @@ public sealed class World
         var p = Players[player];
         var b = Find(baseId);
         if (makes != Kind.MobileBase && System.Array.IndexOf(FactoryKindsOf(p.Civ), makes) < 0) { why = "No wing makes that"; return false; }
-        if (b == null || !IsBase(b) || b.Owner != player) { why = "Pick one of your bases"; return false; }
-        if (b.Building > 0) { why = "The base is still setting up"; return false; }
+        if (b == null || !IsWingHost(b) || b.Owner != player) { why = "Wings go on your HQ, extractors or power plants"; return false; }
+        if (b.Building > 0) { why = "It's still being built"; return false; }
         if (p.Metal < WingCost(makes)) { why = "Not enough metal"; return false; }
-        if (SlotsUsed(b) >= SlotsOf(b)) { why = $"No free wing spot ({SlotsOf(b)} on this base)"; return false; }
+        if (SlotsUsed(b) >= SlotsOf(b)) { why = $"No free wing spot ({SlotsOf(b)} here)"; return false; }
         if (FreeWingSlot(b) < 0) { why = "No room for another wing here"; return false; }
         return true;
     }
@@ -820,9 +840,12 @@ public sealed class World
     {
         int n = 0;
         foreach (var e in Entities)
-            if (!e.Dead && e.Owner == player && e.Kind == Kind.Factory && e.Building == 0) n += PowerDraw(e.Makes);
+            if (!e.Dead && e.Owner == player && e.Kind == Kind.Factory && e.Building == 0) n += WingDraw(e);
         return n;
     }
+
+    /// <summary>What a wing draws: its unit's draw, halved on a power plant.</summary>
+    public int WingDraw(Entity wing) => OnPlant(wing) ? PowerDraw(wing.Makes) / 2 : PowerDraw(wing.Makes);
 
     /// <summary>Whether a wing gets a tick of work done: always with power to spare; short of power, it banks the
     /// supply each tick and works whenever it has banked the draw, so every wing slows to supply/draw.</summary>
@@ -1034,7 +1057,8 @@ public sealed class World
     {
         int d = e.Damage;
         if (e.Stats.Explosive) d = d * (100 + SulfurBonusPercent * SulfurOf(e.Owner)) / 100;
-        if (e.Fitting == Fitting.Napalm) d = d * NapalmHitPercent / 100;
+        if (e.Fitting == Fitting.Napalm && !e.Enhanced) d = d * NapalmHitPercent / 100;
+        if (e.Enhanced) d = d * SulfurHitPercent / 100;
         return d;
     }
 
@@ -1549,7 +1573,7 @@ public sealed class World
         {
             Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, 0));
             _hits.Add((target, Hurt(e, target, damage), e));
-            if (e.Fitting == Fitting.Napalm) AddFire(target.Pos, Fix.Ratio(15, 10), e);
+            if (e.Fitting == Fitting.Napalm || e.Enhanced) AddFire(target.Pos, Fix.Ratio(15, 10), e);
             return;
         }
 
@@ -1558,7 +1582,7 @@ public sealed class World
         // miss, it attacks ground where a unit is but if it's moving it misses").
         int flight = ShellFlightTicks(e.Pos, target.Pos);
         Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, flight));
-        _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = damage, Splash = s.Splash, By = e, TicksLeft = flight, Napalm = e.Fitting == Fitting.Napalm });
+        _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = damage, Splash = s.Splash, By = e, TicksLeft = flight, Napalm = e.Fitting == Fitting.Napalm || e.Enhanced });
     }
 
     /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>
@@ -1872,7 +1896,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.FlankTicks); Mix(e.PowerAcc); Mix(e.Vent);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.FlankTicks); Mix(e.PowerAcc); Mix(e.Enhanced ? 1 : 0); Mix(e.Vent);
             Mix(e.Orders.Count); foreach (var o in e.Orders) Mix(o);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);

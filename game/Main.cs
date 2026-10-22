@@ -1137,7 +1137,7 @@ public partial class Main : Node3D
         // Over each of my bases: its wing spots in use, "2/5" (amber when full).
         foreach (var b in W.Entities)
         {
-            if (b.Owner != _me || !World.IsBase(b) || b.Building > 0) continue;
+            if (b.Owner != _me || !World.IsWingHost(b) || b.Building > 0) continue;
             var over = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.6f);
             if (_camera.IsPositionBehind(over)) continue;
             int used = W.SlotsUsed(b), slots = World.SlotsOf(b);
@@ -1245,7 +1245,7 @@ public partial class Main : Node3D
                 Kind.Bomber => "Slow bombing runs: flies over a ground target, drops a\nheavy bomb with a wide blast, flies on and comes round.\nOnly anti-air can touch it.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
-                Kind.Hq => $"Lose it and you lose the match. Takes {World.HqWings} wings (B);\nits radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
+                Kind.Hq => $"Lose it and you lose the match. Takes {World.HqWings} wings (B), more go on extractors and plants;\nits radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
                 Kind.Tower => "Guards the base: long range and sight.",
                 Kind.Turret => "A gun emplacement: holds the ground round a base.",
                 Kind.Flak => "A quick gun that reaches fliers too; light against the ground.",
@@ -1255,7 +1255,7 @@ public partial class Main : Node3D
                 Kind.Feral => $"A feral scrapper: wild, quick, weak. Worth {World.Salvage(Kind.Feral)} metal as scrap.",
                 Kind.FeralBrute => $"A feral brute: wild, slow, tough. Worth {World.Salvage(Kind.FeralBrute)} metal as scrap.",
                 Kind.Derelict => $"An old turret gone feral, guarding the ground: no base or\nextractor within {World.GuardReach} till it's gone. Worth {World.Salvage(Kind.Derelict)} metal.",
-                Kind.Outpost => $"A mobile base, set up: takes {World.OutpostWings} wings (B), extractors within\n{World.BaseReach}, radar {World.OutpostRadar}. With no wings it can pack up and move.",
+                Kind.Outpost => $"A mobile base, set up: extractors and power plants within\n{World.BaseReach} (wings go on those), radar {World.OutpostRadar}. Can pack up and move.",
                 _ when World.IsUtility(e) => "Utility wing: builds scouts and mobile bases to order.",
                 _ => $"Wing: makes {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
@@ -1273,8 +1273,11 @@ public partial class Main : Node3D
             lines.Add($"High ground  +{Mathf.Min(e.Height.ToFloat(), 5f):0.#} sight, more range firing down");
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
-        if (World.IsBase(e) && e.Owner == _me)
+        if (World.IsWingHost(e) && e.Owner == _me)
             lines.Add($"Wings  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
+        if (e.Kind == Kind.Factory && W.OnSulfur(e)) lines.Add($"On sulfur: its units hit {World.SulfurHitPercent - 100}% harder and set fires");
+        if (e.Kind == Kind.Factory && W.OnPlant(e)) lines.Add("On a power plant: half the power draw");
+        if (s.IsUnit && e.Enhanced) lines.Add($"Sulfur-enhanced: hits {World.SulfurHitPercent - 100}% harder, sets fires");
         if (World.IsUtility(e) && e.Owner == _me && e.Orders.Count > 0)
             lines.Add($"Building  {string.Join(", ", e.Orders.Select(o => NameOf((Kind)o).ToLowerInvariant()))}   (next in {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s)");
         if (e.Kind == Kind.Factory && World.CanFitNapalm(e.Makes))
@@ -1284,7 +1287,7 @@ public partial class Main : Node3D
         if (e.Building > 0)
             lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
         else if (e.Kind == Kind.Factory && !World.IsUtility(e)) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
-        if (e.Kind == Kind.Factory && e.Owner == _me) lines.Add($"Power draw  {World.PowerDraw(e.Makes)}");
+        if (e.Kind == Kind.Factory && e.Owner == _me) lines.Add($"Power draw  {W.WingDraw(e)}");
         if (e.Kind == Kind.Factory && e.Owner == _me)
             lines.Add(e.HasRally ? "New units go to its flag first, then attack"
                 : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"
@@ -1445,7 +1448,7 @@ public partial class Main : Node3D
         var picked = W.Find(_selected);
         if (picked != null && picked.Owner == _me)
         {
-            if (World.IsBase(picked)) return picked;
+            if (World.IsWingHost(picked)) return picked;
             if (picked.Kind == Kind.Factory && W.Find(picked.BaseId) is { } home) return home;
         }
         return W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me);
