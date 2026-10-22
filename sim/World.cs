@@ -82,6 +82,9 @@ public sealed class Player
     public FixVec2 HqPos;
     /// <summary>Enemies this side has seen, by id, at where they were last seen (World.UpdateVision keeps it).</summary>
     public readonly SortedDictionary<int, FixVec2> Known = new();
+    /// <summary>Which of those fly: only units that can shoot up go after them (the user, 2026-10-22: a flying scout
+    /// was "distracting my tanks, they should ignore things they can't shoot").</summary>
+    public readonly HashSet<int> KnownFliers = new();
 }
 
 /// <summary>A shot fired this tick, kept for drawing tracers.</summary>
@@ -687,7 +690,11 @@ public sealed class World
         {
             int bit = 1 << p.Id;
             foreach (var e in Entities)
-                if (e.Owner != p.Id && !e.Dead && ((e.SeenBy & bit) != 0 || e.Kind == Kind.Hq)) p.Known[e.Id] = e.Pos;
+                if (e.Owner != p.Id && !e.Dead && ((e.SeenBy & bit) != 0 || e.Kind == Kind.Hq))
+                {
+                    p.Known[e.Id] = e.Pos;
+                    if (e.Stats.Flying) p.KnownFliers.Add(e.Id);
+                }
             _forget.Clear();
             foreach (var (id, at) in p.Known)
             {
@@ -702,7 +709,7 @@ public sealed class World
                     if ((at - mine.Pos).LengthSq <= reach * reach) { _forget.Add(id); break; }
                 }
             }
-            foreach (var id in _forget) p.Known.Remove(id);
+            foreach (var id in _forget) { p.Known.Remove(id); p.KnownFliers.Remove(id); }
         }
     }
 
@@ -790,12 +797,14 @@ public sealed class World
     }
 
     /// <summary>Where the nearest enemy this side knows of is (or was last seen).</summary>
-    FixVec2 NearestKnown(int player, FixVec2 from)
+    FixVec2 NearestKnown(int player, FixVec2 from, bool hitsAir)
     {
         var best = Players[1 - player].HqPos;
         var bestD = (best - from).LengthSq;
-        foreach (var (_, at) in Players[player].Known)
+        var me = Players[player];
+        foreach (var (id, at) in me.Known)
         {
+            if (!hitsAir && me.KnownFliers.Contains(id)) continue;   // (it can't shoot that: don't chase it)
             var d = (at - from).LengthSq;
             if (d < bestD) { best = at; bestD = d; }
         }
@@ -989,7 +998,7 @@ public sealed class World
                     if (e.Cooldown == 0) Fire(e, target);
                     continue;
                 }
-                if (s.IsUnit) _moves.Add((e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero)));
+                if (s.IsUnit) _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
             }
             else if (s.IsUnit)
             {
@@ -998,9 +1007,8 @@ public sealed class World
                 // (The user, 2026-10-19: "the rallied units should move there first and then to the nearest known or
                 // last seen enemy".) Close enough counts as there: a crowd can't all stand on the spot.
                 if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
-                var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos);
-                var away = goal - e.Pos;
-                _moves.Add((e, Drive(e, goal, s.Speed)));
+                var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos, s.HitsAir);
+                _moves.Add((e, FanOut(e, Drive(e, goal, s.Speed))));
             }
         }
         foreach (var (e, step) in _moves) e.Pos = e.Stats.Flying ? e.Pos + step : Slide(e.Pos, step);   // (fliers go over water)
@@ -1087,6 +1095,42 @@ public sealed class World
             if (best == null || d < bestD) { best = e; bestD = d; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// A step turned aside round friends in the way, so a group heading for a fight spreads into a line where all can
+    /// shoot instead of queueing behind each other in a clump (the user, 2026-10-22: "they need to try form up in a
+    /// line so they can all shoot, they just seem to get stuck in clusters"). A friend counts as in the way if it's
+    /// close ahead and near the line of travel; the unit steps off to whichever side the friend isn't on (ties by id,
+    /// so both machines agree), mostly sideways the closer the friend is.
+    /// </summary>
+    FixVec2 FanOut(Entity e, FixVec2 step)
+    {
+        if (e.Stats.Flying || step.LengthSq.Raw == 0) return step;
+        var len = step.Length;
+        var fwd = step * (Fix.One / len);                 // unit direction
+        var side = new FixVec2(-fwd.Z, fwd.X);            // its left
+        Fix sway = Fix.Zero;
+        foreach (var b in Entities)
+        {
+            if (b == e || b.Dead || b.Owner != e.Owner || !b.Stats.IsUnit || b.Stats.Flying) continue;
+            var d = b.Pos - e.Pos;
+            var gap = e.Stats.Radius + b.Stats.Radius;
+            var ahead = d.X * fwd.X + d.Z * fwd.Z;
+            if (ahead.Raw <= 0 || ahead > gap * 3) continue;
+            var across = d.X * side.X + d.Z * side.Z;
+            if (Fix.Abs(across) >= gap) continue;
+            // Nearer and more squarely in the way pushes harder.
+            var weight = (Fix.One - ahead / (gap * 3)) * (Fix.One - Fix.Abs(across) / gap);
+            int away = across.Raw > 0 ? -1 : across.Raw < 0 ? 1 : (e.Id < b.Id ? 1 : -1);
+            sway += away > 0 ? weight : -weight;
+        }
+        if (sway.Raw == 0) return step;
+        sway = Fix.Max(-Fix.One, Fix.Min(Fix.One, sway));
+        var turned = fwd * (Fix.One - Fix.Abs(sway) / 2) + side * sway;
+        if (turned.LengthSq.Raw == 0) return step;
+        turned = turned.WithLength(len);
+        return Nav.OpenAt(e.Pos + turned) ? turned : step;   // (no sidestepping into water or up a cliff)
     }
 
     /// <summary>Pushes overlapping units apart (and out of buildings) so they don't stack: every push is worked out
