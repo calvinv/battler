@@ -24,7 +24,7 @@ namespace Battler.Game;
 /// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
 /// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit (with --at N seconds, --wide for the whole map, --fight
 /// to close on the busiest fight, --frames N to play on N frames first, --placing [node] to hold a building under the
-/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu, --napalm to light fires in view).
+/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu, --napalm to light fires in view, --build to bring up the HQ's card, --hover N to show its button N's popup).
 /// </summary>
 public partial class Main : Node3D
 {
@@ -53,16 +53,12 @@ public partial class Main : Node3D
     PanelContainer _statsPanel;
     Label _stats;
     MeshInstance3D _selRing;
-    readonly Button[] _upgradeButtons = new Button[3];
-    Button _fittingButton;   // in the stats panel: a factory's fitting (napalm, with sulfur)   // in the stats panel, for my selected factory
-    Button _sellButton, _scoutButton, _truckButton, _deployButton, _cancelQueueButton;
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
     readonly List<Node3D> _depositViews = new();
     readonly Dictionary<int, Node3D> _padViews = new();   // per deposit with one: its outpost pad
     int _sellArmed = -1;          // the building a first click on Sell asked about
     ulong _sellArmedUntil;
-    Button _rallyButton;
     string _placeProblem;          // why the factory can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
@@ -157,7 +153,8 @@ public partial class Main : Node3D
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
-            if (args.Contains("--build")) SetBuildMenu(true);   // the build menu open
+            if (args.Contains("--build")) OpenBuildCard();   // the HQ's build card up
+            if (args.IndexOf("--hover") is int hv and >= 0 && hv + 1 < args.Count) _hover = int.Parse(args[hv + 1]);   // a card button's popup showing
             if (args.IndexOf("--view") is int vi and >= 0 && vi + 2 < args.Count)   // --view yawDegrees pitchDegrees: a turned view
             {
                 _yaw = Mathf.DegToRad(float.Parse(args[vi + 1]));
@@ -615,59 +612,6 @@ public partial class Main : Node3D
         var column = new VBoxContainer();
         column.AddThemeConstantOverride("separation", 6);
         column.AddChild(_stats);
-        for (int i = 0; i < _upgradeButtons.Length; i++)
-        {
-            var which = (Upgrade)i;
-            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-            b.AddThemeFontSizeOverride("font_size", 17);
-            b.Pressed += () => _session?.Issue(new UpgradeFactory(_me, _selected, which));
-            column.AddChild(b);
-            _upgradeButtons[i] = b;
-        }
-        _fittingButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _fittingButton.AddThemeFontSizeOverride("font_size", 17);
-        _fittingButton.Pressed += () =>
-        {
-            if (W.Find(_selected) is { Kind: Kind.Factory } f)
-                _session?.Issue(new SetFitting(_me, f.Id, f.Fitting == Fitting.Napalm ? Fitting.Standard : Fitting.Napalm));
-        };
-        column.AddChild(_fittingButton);
-        _cancelQueueButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _cancelQueueButton.AddThemeFontSizeOverride("font_size", 17);
-        _cancelQueueButton.Pressed += () => _session?.Issue(new CancelUpgrades(_me, _selected));
-        column.AddChild(_cancelQueueButton);
-        _rallyButton = new Button { Text = "Clear rally point", FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _rallyButton.AddThemeFontSizeOverride("font_size", 17);
-        _rallyButton.Pressed += () => _session?.Issue(new SetRally(_me, _selected, true, FixVec2.Zero));
-        column.AddChild(_rallyButton);
-        _sellButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _sellButton.AddThemeFontSizeOverride("font_size", 17);
-        _sellButton.Pressed += () =>
-        {
-            // Two clicks: the first asks, the second (within a few seconds, same building) sells.
-            if (_sellArmed == _selected && Time.GetTicksMsec() < _sellArmedUntil)
-            {
-                _session?.Issue(new Sell(_me, _selected));
-                _sellArmed = -1;
-                _selected = -1;
-            }
-            else { _sellArmed = _selected; _sellArmedUntil = Time.GetTicksMsec() + 3000; }
-        };
-        column.AddChild(_sellButton);
-        // The HQ builds scouts: one at a time on a button (or Q), or on its own with auto on.
-        _scoutButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _scoutButton.AddThemeFontSizeOverride("font_size", 17);
-        _scoutButton.Pressed += () => _session?.Issue(new Order(_me, _selected, World.ScoutKindOf(MyCiv)));
-        column.AddChild(_scoutButton);
-        _truckButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _truckButton.AddThemeFontSizeOverride("font_size", 17);
-        _truckButton.Pressed += () => _session?.Issue(new Order(_me, _selected, Kind.MobileBase));
-        column.AddChild(_truckButton);
-        // A mobile base: set up where it stands; a set-up one with no wings: pack up to move it.
-        _deployButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
-        _deployButton.AddThemeFontSizeOverride("font_size", 17);
-        _deployButton.Pressed += DeployOrPack;
-        column.AddChild(_deployButton);
         _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
@@ -691,7 +635,7 @@ public partial class Main : Node3D
         ui.AddChild(_viewHint);
         BuildMenu(ui);
         BuildQueueBar(ui);
-        BuildBuildMenu(ui);
+        BuildCommandCard(ui);
     }
 
     static StandardMaterial3D Unshaded(Color c) => new()
@@ -1204,12 +1148,6 @@ public partial class Main : Node3D
         _stats.Text = _scouts.Count > 1
             ? $"{_scouts.Count} scouts picked\nRight-click the ground to send them\n(Shift-click adds or drops one; Esc lets go)"
             : Describe(selected);
-        ShowUpgrades(selected);
-        ShowScoutButtons(selected);
-        ShowFitting(selected);
-        ShowDeploy(selected);
-        _rallyButton.Visible = selected.Kind is Kind.Factory or Kind.Hq && selected.Owner == _me && selected.HasRally;
-        ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
         _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
     }
@@ -1219,44 +1157,8 @@ public partial class Main : Node3D
     static readonly string[] DefenceTrack = { "Range", "Damage", "Armour" };
     static readonly string[] DefenceEffect = { "+2 range", "+25% damage", "+25% health" };
 
-    /// <summary>The Sell button, for my factories and outposts: 75% back of all it cost, upgrades included.</summary>
-    void ShowSell(Entity e)
-    {
-        _sellButton.Visible = W.CanSell(_me, e.Id, out _);
-        if (!_sellButton.Visible) return;
-        int value = World.SellValue(e);
-        bool armed = _sellArmed == e.Id && Time.GetTicksMsec() < _sellArmedUntil;
-        _sellButton.Text = armed ? $"Click again to sell for {value}" : $"Sell for {value}  ({World.SellBackPercent}% of {World.SpentOn(e)} spent)";
-        _sellButton.Modulate = armed ? new Color(1f, 0.6f, 0.5f) : Colors.White;
-        _sellButton.Disabled = !W.Started || W.Winner >= 0;
-    }
 
-    /// <summary>The fitting button, for my factories that can carry napalm.</summary>
-    void ShowFitting(Entity e)
-    {
-        _fittingButton.Visible = e.Kind == Kind.Factory && e.Owner == _me && World.CanFitNapalm(e.Makes);
-        if (!_fittingButton.Visible) return;
-        bool napalm = e.Fitting == Fitting.Napalm;
-        bool can = W.CanSetFitting(_me, e.Id, napalm ? Fitting.Standard : Fitting.Napalm, out var why);
-        _fittingButton.Text = napalm ? "Fitting: napalm   (switch back to standard)"
-            : "Fitting: standard   " + (can ? $"(switch to napalm: hits do {World.NapalmHitPercent}%, the ground burns)" : $"(napalm: {why.ToLowerInvariant()})");
-        _fittingButton.Disabled = !can || W.Winner >= 0;
-    }
 
-    /// <summary>A utility wing's buttons: order a scout, or a mobile base.</summary>
-    void ShowScoutButtons(Entity e)
-    {
-        bool util = World.IsUtility(e) && e.Owner == _me;
-        _scoutButton.Visible = _truckButton.Visible = util;
-        if (!util) return;
-        var scout = World.ScoutKindOf(MyCiv);
-        bool canScout = W.CanOrder(_me, e.Id, scout, out var whyNot);
-        _scoutButton.Text = $"Build a {NameOf(scout).ToLowerInvariant()} for {World.ScoutCost}  [Q]   ({W.ScoutCount(_me)}/{World.MaxScouts})" + (canScout ? "" : $"   ({whyNot.ToLowerInvariant()})");
-        _scoutButton.Disabled = !canScout || !W.Started || W.Winner >= 0;
-        bool canTruck = W.CanOrder(_me, e.Id, Kind.MobileBase, out whyNot);
-        _truckButton.Text = $"Build a mobile base for {World.MobileBaseCost}  [G]   ({W.BaseCount(_me)}/{World.MaxBases} bases)" + (canTruck ? "" : $"   ({whyNot.ToLowerInvariant()})");
-        _truckButton.Disabled = !canTruck || !W.Started || W.Winner >= 0;
-    }
 
     static string Clock(int ticks)
     {
@@ -1264,24 +1166,6 @@ public partial class Main : Node3D
         return $"{secs / 60}:{secs % 60:00}";
     }
 
-    /// <summary>The set-up / pack-up button: for a picked mobile base on the move, or a set-up one of mine.</summary>
-    void ShowDeploy(Entity e)
-    {
-        bool truck = e.Kind == Kind.MobileBase && e.Owner == _me, post = e.Kind == Kind.Outpost && e.Owner == _me;
-        _deployButton.Visible = truck || post;
-        if (truck)
-        {
-            bool can = W.CanDeploy(_me, e.Id, out var why);
-            _deployButton.Text = "Set up here  [F]" + (can ? "" : $"   ({why.ToLowerInvariant()})");
-            _deployButton.Disabled = !can || W.Winner >= 0;
-        }
-        else if (post)
-        {
-            bool can = W.CanPackUp(_me, e.Id, out var why);
-            _deployButton.Text = "Pack up to move it" + (can ? "" : $"   ({why.ToLowerInvariant()})");
-            _deployButton.Disabled = !can || W.Winner >= 0;
-        }
-    }
 
     /// <summary>F, or the button: picked mobile bases set up where they stand; a picked set-up base packs up.</summary>
     void DeployOrPack()
@@ -1293,32 +1177,6 @@ public partial class Main : Node3D
         if (W.Find(_selected) is { Kind: Kind.Outpost } post && W.CanPackUp(_me, post.Id, out _)) _session.Issue(new PackUp(_me, post.Id));
     }
 
-    /// <summary>The three upgrade buttons, for one of my factories only.</summary>
-    void ShowUpgrades(Entity e)
-    {
-        bool mine = e.Owner == _me && (e.Kind == Kind.Factory && !World.IsUtility(e) || e.Kind is Kind.Turret or Kind.Flak or Kind.Bombard);
-        for (int i = 0; i < _upgradeButtons.Length; i++)
-        {
-            var b = _upgradeButtons[i];
-            b.Visible = mine;
-            if (!mine) continue;
-            var which = (Upgrade)i;
-            int level = e.Level(which);
-            bool post = World.IsDefence(e.Kind);
-            var name = post ? DefenceTrack[i] : which.ToString();
-            var effect = post ? DefenceEffect[i] : UpgradeEffect[i];
-            // Clicking buys it now, or queues it if the metal isn't there (or others are queued first).
-            int queued = World.Queued(e, which), next = level + queued;
-            var waiting = queued > 0 ? $"   (+{queued} queued)" : "";
-            b.Text = next >= World.MaxUpgradeLevel
-                ? $"{name}  {level}/{World.MaxUpgradeLevel}{waiting}" + (queued == 0 ? "   (max)" : "")
-                : $"{name}  {level}/{World.MaxUpgradeLevel}{waiting}   "
-                  + (W.CanUpgrade(_me, e.Id, which, out _) ? "buy" : "queue") + $" for {World.UpgradeCost(next + 1)}:  {effect}";
-            b.Disabled = !W.CanQueueUpgrade(_me, e.Id, which, out _) || W.Winner >= 0;
-        }
-        _cancelQueueButton.Visible = mine && e.UpgradeQueue.Count > 0;
-        if (_cancelQueueButton.Visible) _cancelQueueButton.Text = $"Cancel {e.UpgradeQueue.Count} queued upgrade" + (e.UpgradeQueue.Count > 1 ? "s" : "");
-    }
 
     string Describe(Entity e)
     {
@@ -1492,7 +1350,7 @@ public partial class Main : Node3D
             if (e.Stats.IsUnit && Shown(e) && e.Owner != World.Feral) { if (e.Owner == _me) myUnits++; else theirUnits++; }   // (only enemies we can see)
             if (e.Kind == Kind.Hq) { if (e.Owner == _me) myHq = e.Hp; else theirHq = e.Hp; }
         }
-        UpdateBuildMenu();
+        UpdateCard();
         UpdateQueueBar();
         var menu = "[B] Build   [E] Pick scouts   [F] Set up / pack up   [P] Pause   [Esc] Menu";
         var placingWhat = _placing == Kind.Extractor ? $"an extractor (on a deposit within {World.BaseReach} of a base)"
@@ -1530,46 +1388,7 @@ public partial class Main : Node3D
         else _banner.Text = "";
     }
 
-    // ---- the build menu (the user, 2026-10-20: "b to pop open build and then you can hotkey each options and have a
-    // little menu in the middle show these options") ------------------------------------------------------------
-
-    /// <summary>One line of the build menu: its key, what it's called, what it costs, and what it is: a wing (making
-    /// What; Kind.MobileBase for the utility wing), an extractor to place, or a scout or mobile base to order at a
-    /// utility wing.</summary>
-    sealed record BuildOption(Key Key, string Name, int Cost, Kind What, BuildAction Action);
-    enum BuildAction { Wing, Extractor, Order, Defence }
-
-    static readonly BuildOption[] CoalitionOptions =
-    {
-        new(Key.L, "Light tank wing", World.FactoryCost, Kind.LightTank, BuildAction.Wing),
-        new(Key.T, "Tank wing", World.FactoryCost, Kind.Tank, BuildAction.Wing),
-        new(Key.M, "Mortar wing", World.FactoryCost, Kind.Mortar, BuildAction.Wing),
-        new(Key.A, "Artillery wing", World.FactoryCost, Kind.Artillery, BuildAction.Wing),
-        new(Key.U, "Utility wing (scouts, mobile bases)", World.FactoryCost, Kind.MobileBase, BuildAction.Wing),
-        new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
-        new(Key.C, "Scout (from a utility wing)", World.ScoutCost, Kind.Scout, BuildAction.Order),
-        new(Key.G, "Mobile base (from a utility wing)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
-        new(Key.Y, "Turret", World.TurretCost, Kind.Turret, BuildAction.Defence),
-        new(Key.F, "Flak (hits fliers)", World.FlakCost, Kind.Flak, BuildAction.Defence),
-        new(Key.O, "Bombard (long range)", World.BombardCost, Kind.Bombard, BuildAction.Defence),
-        new(Key.W, "Wall (place several; Esc to stop)", World.WallCost, Kind.Wall, BuildAction.Defence),
-    };
-
-    // The Lattice's (the user, 2026-10-21): crawlers, spiders, piercers (anti-armour); drones for scouts.
-    static readonly BuildOption[] LatticeOptions =
-    {
-        new(Key.C, "Crawler nest (swarm)", World.FactoryCost, Kind.Crawler, BuildAction.Wing),
-        new(Key.S, "Spider nest", World.FactoryCost, Kind.Spider, BuildAction.Wing),
-        new(Key.A, "Piercer nest (anti-armour)", World.FactoryCost, Kind.Piercer, BuildAction.Wing),
-        new(Key.U, "Utility nest (drones, mobile bases)", World.FactoryCost, Kind.MobileBase, BuildAction.Wing),
-        new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
-        new(Key.D, "Drone (flying scout, from a utility nest)", World.ScoutCost, Kind.Drone, BuildAction.Order),
-        new(Key.G, "Mobile base (from a utility nest)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
-        new(Key.Y, "Spike turret", World.TurretCost, Kind.Turret, BuildAction.Defence),
-        new(Key.F, "Flak spitter (hits fliers)", World.FlakCost, Kind.Flak, BuildAction.Defence),
-        new(Key.O, "Bombard mound (long range)", World.BombardCost, Kind.Bombard, BuildAction.Defence),
-        new(Key.W, "Scrap wall (place several; Esc to stop)", World.WallCost, Kind.Wall, BuildAction.Defence),
-    };
+    // ---- where builds and orders go (the command card, CommandCard.cs, uses these) ----------------------------
 
     /// <summary>The base a new wing goes onto: the picked base of mine (or the base of a picked wing), else the HQ.</summary>
     Entity WingTarget()
@@ -1586,96 +1405,6 @@ public partial class Main : Node3D
     /// <summary>The utility wing an order goes to: the picked one, else the first that's built.</summary>
     Entity OrderTarget() => W.Find(_selected) is { } picked && World.IsUtility(picked) && picked.Owner == _me ? picked : W.UtilityOf(_me);
 
-    BuildOption[] BuildOptions => MyCiv == Civ.Lattice ? LatticeOptions : CoalitionOptions;
-
-    Control _buildMenu;
-    readonly List<Button> _buildButtons = new();
-    bool _buildOpen;
-
-    void BuildBuildMenu(CanvasLayer ui)
-    {
-        _buildMenu = new CenterContainer { AnchorRight = 1, AnchorBottom = 1, Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
-        var panel = new PanelContainer();
-        panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0.07f, 0.08f, 0.1f, 0.9f), BorderColor = new Color(0.45f, 0.75f, 0.9f),
-            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
-            CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
-            ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 12, ContentMarginBottom = 12,
-        });
-        var column = new VBoxContainer();
-        column.AddThemeConstantOverride("separation", 4);
-        var title = new Label { Text = "Build", HorizontalAlignment = HorizontalAlignment.Center };
-        title.AddThemeFontSizeOverride("font_size", 22);
-        column.AddChild(title);
-        for (int i = 0; i < 12; i++)   // enough rows for any civ's menu; unused ones hidden
-        {
-            int at = i;
-            var b = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, CustomMinimumSize = new Vector2(460, 32) };
-            b.AddThemeFontSizeOverride("font_size", 18);
-            b.Pressed += () => { if (at < BuildOptions.Length) PickBuild(BuildOptions[at]); };
-            column.AddChild(b);
-            _buildButtons.Add(b);
-        }
-        var hint = new Label
-        {
-            Text = "Press a letter (or click).  B or Esc closes.\nWings go onto the picked base (or the HQ). Expand: a mobile base\nfrom a utility wing, driven out and set up (F), then extractors near it.",
-            HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.7f),
-        };
-        hint.AddThemeFontSizeOverride("font_size", 14);
-        column.AddChild(hint);
-        panel.AddChild(column);
-        _buildMenu.AddChild(panel);
-        ui.AddChild(_buildMenu);
-    }
-
-    void SetBuildMenu(bool open)
-    {
-        _buildOpen = open && W.Winner < 0;
-        _buildMenu.Visible = _buildOpen;
-        if (_buildOpen) _placing = null;
-    }
-
-    /// <summary>Why an option can't be had right now, or null if it can.</summary>
-    string BuildBlocked(BuildOption o)
-    {
-        if (W.Players[_me].Metal < o.Cost) return "not enough metal";
-        if (o.Action != BuildAction.Wing && !W.Started) return "once the battle starts";
-        string why = null;
-        if (o.Action == BuildAction.Wing && WingTarget() is { } b && !W.CanAddWing(_me, b.Id, o.What, out why)) return why.ToLowerInvariant();
-        if (o.Action == BuildAction.Order && (OrderTarget() is not { } u || !W.CanOrder(_me, u.Id, o.What, out why))) return (why ?? "needs a utility wing").ToLowerInvariant();
-        return null;
-    }
-
-    /// <summary>The buttons' text, each frame the menu is open: key, name, cost, and why not if it can't be had.</summary>
-    void UpdateBuildMenu()
-    {
-        if (!_buildOpen) return;
-        for (int i = 0; i < _buildButtons.Count; i++) _buildButtons[i].Visible = i < BuildOptions.Length;
-        for (int i = 0; i < BuildOptions.Length; i++)
-        {
-            var o = BuildOptions[i];
-            var blocked = BuildBlocked(o);
-            var onto = o.Action == BuildAction.Wing && WingTarget() is { Kind: Kind.Outpost } ? "  (onto the picked base)" : "";
-            _buildButtons[i].Text = $"[{o.Key}]   {o.Name}   {o.Cost}{onto}" + (blocked != null ? $"   ({blocked})" : "");
-            _buildButtons[i].Modulate = blocked == null ? Colors.White : new Color(1, 1, 1, 0.45f);
-        }
-    }
-
-    /// <summary>A wing goes straight onto its base; an extractor to place (the menu closes and the hologram follows
-    /// the mouse); a scout or mobile base ordered at once.</summary>
-    void PickBuild(BuildOption o)
-    {
-        if (BuildBlocked(o) is { } why && why != "not enough metal") return;   // (short of metal: order it anyway, it won't go)
-        SetBuildMenu(false);
-        switch (o.Action)
-        {
-            case BuildAction.Wing: _session.Issue(new AddWing(_me, WingTarget().Id, o.What)); break;
-            case BuildAction.Extractor: _placing = Kind.Extractor; break;
-            case BuildAction.Defence: _placing = o.What; break;
-            case BuildAction.Order: _session.Issue(new Order(_me, OrderTarget().Id, o.What)); break;
-        }
-    }
 
     // ---- the Escape menu (the user, 2026-10-20: "we need escape to pause") -----------------------------------------
 
@@ -1754,7 +1483,8 @@ public partial class Main : Node3D
             _viewHintUntil = Time.GetTicksMsec() + 20000;
             return;
         }
-        if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.V } && !_buildOpen) { ResetView(); return; }
+        if (ev is InputEventKey { Pressed: true, Echo: false } cardKey && cardKey.Keycode != Key.Escape | _cardPage != "main" && CardKey(cardKey.Keycode)) return;   // the command card's letters
+        if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.V }) { ResetView(); return; }
         if (ev is InputEventMouseButton mb && mb.Pressed)
         {
             if (mb.ButtonIndex == MouseButton.WheelUp) _distance = Mathf.Max(25, _distance * 0.9f);
@@ -1819,14 +1549,7 @@ public partial class Main : Node3D
         }
         else if (ev is InputEventMouseMotion motion && _dragFrom is { } start)
             _overlay.Box = start.DistanceTo(motion.Position) > 8 ? new Rect2(start, Vector2.Zero).Expand(motion.Position) : null;
-        else if (ev is InputEventKey bk && bk.Pressed && !bk.Echo && _buildOpen)
-        {
-            // The build menu has the keys while it's open: an option's letter picks it; B or Esc closes it.
-            if (bk.Keycode is Key.B or Key.Escape) SetBuildMenu(false);
-            else if (System.Array.Find(BuildOptions, o => o.Key == bk.Keycode) is { } option) PickBuild(option);
-            else if (bk.Keycode == Key.P) _session.Issue(new Pause(_me));
-        }
-        else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) SetBuildMenu(true);
+        else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) OpenBuildCard();
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
             if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0 && WingTarget() is { } onto)
@@ -1859,7 +1582,7 @@ public partial class Main : Node3D
     void MoveCamera(float dt)
     {
         var pan = Vector3.Zero;
-        bool letters = !_buildOpen;   // (while the build menu is open, A is artillery, not left)
+        bool letters = true;   // (the command card's letters keep clear of WASD)
         if ((letters && Input.IsKeyPressed(Key.W)) || Input.IsKeyPressed(Key.Up)) pan.Z -= 1;
         if ((letters && Input.IsKeyPressed(Key.S)) || Input.IsKeyPressed(Key.Down)) pan.Z += 1;
         if ((letters && Input.IsKeyPressed(Key.A)) || Input.IsKeyPressed(Key.Left)) pan.X -= 1;
