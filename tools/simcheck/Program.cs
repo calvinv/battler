@@ -32,6 +32,126 @@ if (args.Contains("battle"))   // how long a straight fight between equal groups
     }
     return 0;
 }
+if (args.Contains("crowd"))   // a big group of tanks marching out of a busy base to the enemy HQ: how well do they get there?
+{
+    int n = 30;
+    var w = new World(9, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
+    foreach (var p in w.Players) p.Metal = 100000;
+    var hq0 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+    var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
+    hq1.MaxHp = hq1.Hp = 10000000;   // (it never falls: this is about getting there)
+    foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower && e.Owner == 1)) t.Hp = 0;
+    for (int i = 0; i < 5; i++) w.Step(new Command[] { new AddWing(0, hq0.Id, i % 2 == 0 ? Kind.Tank : Kind.LightTank) });
+    foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) { f.Building = 0; f.Timer = 1000000; }
+    var tanks = new List<Entity>();
+    for (int i = 0; i < n; i++)   // round the base, among the wings, as they'd come out of them
+    {
+        var ang = i * 2.399;   // (a spiral)
+        var r = 9 + i * 0.5;
+        var at = hq0.Pos + new FixVec2(Fix.FromFloat((float)(Math.Cos(ang) * r)), Fix.FromFloat((float)(Math.Sin(ang) * r)));
+        tanks.Add(w.Spawn(Kind.Tank, 0, at));
+    }
+    var last = tanks.ConvertAll(t => t.Pos);
+    int stuckTotal = 0;
+    // Jitter: how often a moving tank's step swings more than 60 degrees from its last one (weaving, shoving).
+    var prevStep = tanks.ConvertAll(t => FixVec2.Zero);
+    var prevPos = tanks.ConvertAll(t => t.Pos);
+    long swings = 0, steps = 0;
+    for (int sec = 5; sec <= 150; sec += 5)
+    {
+        for (int t = 0; t < 50; t++)
+        {
+            w.Step(Array.Empty<Command>());
+            for (int i = 0; i < n; i++)
+            {
+                var step = tanks[i].Pos - prevPos[i];
+                prevPos[i] = tanks[i].Pos;
+                if (step.LengthSq < Fix.Ratio(1, 400)) { prevStep[i] = FixVec2.Zero; continue; }
+                if (prevStep[i].LengthSq.Raw > 0)
+                {
+                    steps++;
+                    var cos = (step.X * prevStep[i].X + step.Z * prevStep[i].Z) / (step.Length * prevStep[i].Length);
+                    if (cos < Fix.Ratio(1, 2)) swings++;
+                }
+                prevStep[i] = step;
+            }
+        }
+        int arrived = 0, stuck = 0;
+        float sumGap = 0;
+        for (int i = 0; i < n; i++)
+        {
+            var e = tanks[i];
+            var gap = (e.Pos - hq1.Pos).Length.ToFloat() - 3 - 1.3f;
+            sumGap += gap;
+            if (gap <= 8.5f) arrived++;
+            else if ((e.Pos - last[i]).Length.ToFloat() < 1f) stuck++;
+            last[i] = e.Pos;
+        }
+        stuckTotal += stuck;
+        float worst = 0;   // the deepest two tanks sink into each other, as a share of their width
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++)
+                worst = Math.Max(worst, 1 - (tanks[i].Pos - tanks[j].Pos).Length.ToFloat() / 2.6f);
+        Console.WriteLine($"t={sec,3}s  in range {arrived,2}/{n}  stuck {stuck,2}  mean gap {sumGap / n:0.0}  worst overlap {worst * 100:0}%");
+        if (arrived == n) break;
+    }
+    Console.WriteLine($"stuck-samples total {stuckTotal}   sharp swings {swings} of {steps} moving steps ({100.0 * swings / Math.Max(1, steps):0.0}%)");
+    return 0;
+}
+if (args.Contains("crowd2"))   // (1) 30 tanks sent to one rally point; (2) 30 v 30 tanks meeting head on
+{
+    // (1) The rally: how many are still shoving about there after they've had time to arrive?
+    {
+        var w = new World(9, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
+        foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower)) t.Hp = 0;
+        var tanks = new List<Entity>();
+        for (int i = 0; i < 30; i++)
+        {
+            var e = w.Spawn(Kind.Tank, 0, new FixVec2(-80 + (i % 6) * 3, -20 + (i / 6) * 3));
+            e.HasWaypoint = true; e.Waypoint = new FixVec2(-30, 0);
+            tanks.Add(e);
+        }
+        var last = tanks.ConvertAll(t => t.Pos);
+        for (int sec = 5; sec <= 60; sec += 5)
+        {
+            for (int t = 0; t < 50; t++) w.Step(Array.Empty<Command>());
+            int moving = 0, waiting = 0;
+            for (int i = 0; i < 30; i++) { if ((tanks[i].Pos - last[i]).Length.ToFloat() > 1f) moving++; if (tanks[i].HasWaypoint) waiting++; last[i] = tanks[i].Pos; }
+            Console.WriteLine($"rally t={sec,2}s  still moving {moving,2}/30  not there yet {waiting,2}/30");
+        }
+    }
+    // (2) The fight: how many of each side get to shoot, second by second?
+    {
+        var w = new World(9, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
+        foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower)) t.Hp = 0;
+        for (int i = 0; i < 30; i++)
+        {
+            w.Spawn(Kind.Tank, 0, new FixVec2(-60 + (i % 6) * 3, -8 + (i / 6) * 3));
+            w.Spawn(Kind.Tank, 1, new FixVec2(60 - (i % 6) * 3, 8 - (i / 6) * 3));
+        }
+        var fired = new[] { new HashSet<int>(), new HashSet<int>() };
+        for (int sec = 1; sec <= 120; sec++)
+        {
+            fired[0].Clear(); fired[1].Clear();
+            for (int t = 0; t < 10; t++) { w.Step(Array.Empty<Command>()); foreach (var sh in w.Shots) if (sh.Owner < 2) fired[sh.Owner].Add(sh.ShooterId); }
+            int a = w.Entities.Count(e => e.Kind == Kind.Tank && e.Owner == 0), b = w.Entities.Count(e => e.Kind == Kind.Tank && e.Owner == 1);
+            int InRange(int side)
+            {
+                int n = 0;
+                foreach (var u in w.Entities)
+                {
+                    if (u.Kind != Kind.Tank || u.Owner != side) continue;
+                    foreach (var o in w.Entities)
+                        if (o.Kind == Kind.Tank && o.Owner != side && (o.Pos - u.Pos).Length - u.Stats.Radius * 2 <= u.Stats.Range) { n++; break; }
+                }
+                return n;
+            }
+            if (sec % 5 == 0 || a == 0 || b == 0) Console.WriteLine($"fight t={sec,3}s  alive {a,2} v {b,2}   in range {InRange(0),2} v {InRange(1),2}   firing {fired[0].Count,2} v {fired[1].Count,2}");
+            if (a == 0 || b == 0) break;
+        }
+    }
+    return 0;
+}
 if (args.Contains("probe"))   // print the ground at a few places (for checking map shapes)
 {
     foreach (var (x, z) in new[] { (-126, -100), (-126, -60), (-200, -120), (0, -120), (0, 0), (126, 100), (-224, 100) })

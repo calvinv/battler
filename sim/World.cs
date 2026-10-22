@@ -70,6 +70,8 @@ public sealed class Entity
     public readonly List<int> UpgradeQueue = new();   // a factory or outpost: upgrades (by Upgrade) to buy, in order, once affordable
     public List<FixVec2> NavPath;      // a unit: corners to drive through to NavGoal (Nav), when there is no straight way
     public FixVec2 NavGoal;
+    public FixVec2 Heading;            // a ground unit: which way it's driving (World.Steer turns it a little at a time)
+    public int SwaySide;               // a ground unit going round friends: the side it chose (World.FanOut), kept while blocked
     public int NavTick;                // when that path was found
     public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
     public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
@@ -1391,7 +1393,7 @@ public sealed class World
                 _moves.Add((e, FanOut(e, Drive(e, goal, s.Speed))));
             }
         }
-        foreach (var (e, step) in _moves) Move(e, step);
+        foreach (var (e, step) in _moves) Move(e, Steer(e, step));
         foreach (var (target, damage, by) in _hits)
         {
             bool alive = target.Hp > 0;
@@ -1517,7 +1519,10 @@ public sealed class World
             int away = across.Raw > 0 ? -1 : across.Raw < 0 ? 1 : (e.Id < b.Id ? 1 : -1);
             sway += away > 0 ? weight : -weight;
         }
-        if (sway.Raw == 0) return step;
+        if (sway.Raw == 0) { e.SwaySide = 0; return step; }
+        // Keep to the side it chose while it's still blocked: flipping back and forth made a crowd weave.
+        if (e.SwaySide != 0 && (sway.Raw > 0 ? 1 : -1) != e.SwaySide) sway = e.SwaySide > 0 ? Fix.Abs(sway) : -Fix.Abs(sway);
+        e.SwaySide = sway.Raw > 0 ? 1 : -1;
         sway = Fix.Max(-Fix.One, Fix.Min(Fix.One, sway));
         var turned = fwd * (Fix.One - Fix.Abs(sway) / 2) + side * sway;
         if (turned.LengthSq.Raw == 0) return step;
@@ -1547,12 +1552,38 @@ public sealed class World
                 var len = Fix.Sqrt(lsq);
                 // Exactly on top of each other: split by id so both machines agree.
                 var dir = len.Raw == 0 ? new FixVec2(a.Id < b.Id ? -1 : 1, 0) : d;
-                var push = b.Stats.IsBuilding ? min - len : (min - len) / 2;
+                var push = b.Stats.IsBuilding ? min - len : (min - len) / 3;   // (friends ease apart over a few ticks: shoving them apart at once made a crowd shake)
                 total += dir.WithLength(push);
             }
             if (total.X.Raw != 0 || total.Z.Raw != 0) _moves.Add((a, total));
         }
         foreach (var (e, step) in _moves) Move(e, step);
+    }
+
+    static readonly Fix TurnCos = Fix.Ratio(866, 1000), TurnSin = Fix.Ratio(1, 2);   // at most 30 degrees a tick
+
+    /// <summary>
+    /// A ground unit's step, turned from the way it's already heading by at most 30 degrees a tick, and slowed by how far
+    /// it still has to turn (so it turns nearly on the spot rather than swinging wide). Without this a unit could flip
+    /// straight round from one tick to the next, and a crowd shoved and steered round each other visibly weaved (the user,
+    /// 2026-10-22: "large groups of tanks are very bad at pathing still": about one step in ten swung over 60 degrees).
+    /// </summary>
+    FixVec2 Steer(Entity e, FixVec2 step)
+    {
+        if (e.Stats.Flying || !e.Stats.IsUnit || step.LengthSq < Fix.Ratio(1, 10000)) return step;
+        var len = step.Length;
+        var want = step * (Fix.One / len);
+        var h = e.Heading;
+        if (h.LengthSq.Raw == 0) { e.Heading = want; return step; }
+        var cos = h.X * want.X + h.Z * want.Z;
+        if (cos >= TurnCos) { e.Heading = want; return step; }
+        var left = new FixVec2(-h.Z, h.X);
+        var toLeft = left.X * want.X + left.Z * want.Z;
+        var turned = h * TurnCos + left * (toLeft.Raw >= 0 ? TurnSin : -TurnSin);
+        turned = turned.WithLength(Fix.One);
+        e.Heading = turned;
+        var along = turned.X * want.X + turned.Z * want.Z;   // how well it now points the way it wants to go
+        return turned * (len * Fix.Max(Fix.Zero, along));
     }
 
     /// <summary>A step taken: fliers straight over anything, the rest sliding along water and cliffs.</summary>
@@ -1590,7 +1621,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide);
             Mix(e.Orders.Count); foreach (var o in e.Orders) Mix(o);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
