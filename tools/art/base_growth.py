@@ -98,14 +98,14 @@ def layout(stage):
 
 
 STAGES = [(1, "1  HQ ALONE"), (2, "2  THREE WINGS"), (3, "3  OUT TO OIL + POWER"), (4, "4  GROWN OUT, RING OF GUNS")]
-PROMPT = ("RTS game concept art, straight top-down aerial view of a gritty dieselpunk military base on bare brown dirt, "
-          "a fortified headquarters bunker in the middle with chimneys and a blue team-coloured roof, {extra}, riveted "
-          "olive drab steel buildings, sawtooth factory roofs, soot, rust, oil stains, tyre tracks in the dirt, "
-          "chunky readable shapes, painterly realism, high detail")
-EXTRA = {1: "nothing else yet, a few crates",
-         2: "three vehicle workshop halls joined to it by short roads, radiating outward",
-         3: "workshop halls around it, pipelines running out to an oil pumpjack and a smoking diesel power plant, each with its own workshops",
-         4: "rings of workshops, pipelines out to oil pumpjacks and power plants in every direction, sandbagged gun pits in a ring around the outside"}
+PROMPT = ("RTS game concept art, straight top-down aerial view of an unmanned automaton war factory that builds "
+          "itself, sprawling out from the middle across bare brown dirt, gritty dieselpunk, a furnace core in the middle "
+          "with smokestacks and a blue team-coloured roof, {extra}, riveted welded steel, girders, conveyors, soot, rust, "
+          "oil stains, tracks in the dirt, no people, chunky readable shapes, painterly realism, high detail")
+EXTRA = {1: "just the core, scaffolds and a crane starting to build",
+         2: "three assembly halls budding off the core on short conveyors, strange machines rolling out of their bays",
+         3: "assembly halls around it, pipelines running out to an oil pump and a smoking power plant that grow halls of their own, cranes building at the tips",
+         4: "rings of assembly halls, pipelines out in every direction to pumps and power plants, conveyors carrying new war machines outward, gun nests in a ring around the edge"}
 NEG = ("people, soldiers, text, watermark, letters, frame, border, perspective, horizon, sky, grass, trees, water, "
        "city, houses, blurry, cartoon, sci-fi, glowing, steampunk, brass")
 
