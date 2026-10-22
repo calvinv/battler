@@ -34,6 +34,7 @@ public sealed class Stats
     public bool AirOnly;      // and only fliers (the interceptor)
     public bool Armoured;     // heavy plate: anti-armour weapons do extra to it
     public int VsArmour = 100;   // percent of its damage it does to Armoured targets
+    public int VsAir = 100;      // percent of its damage it does to fliers
     public bool Explosive;    // shells, cannon and spikes: sulfur makes these hit harder
 
     public bool IsBuilding => Speed.Raw == 0;
@@ -75,6 +76,7 @@ public sealed class Entity
     public FixVec2 NavGoal;
     public FixVec2 Heading;            // a ground unit: which way it's driving (World.Steer turns it a little at a time)
     public int SwaySide;               // a ground unit going round friends: the side it chose (World.FanOut), kept while blocked
+    public int FlankTicks;             // a ground unit swinging round to a flank (World.ChaseRound): ticks it keeps at it
     public int NavTick;                // when that path was found
     public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
     public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
@@ -386,13 +388,13 @@ public sealed class World
         // runs)"), both civilisations ----
         // Ranger: a small, quick, fragile robot with small arms that reach fliers too: the cheap answer to everything.
         new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(36, 100), Range = 7, Aggro = 12, Vision = 10,
-                Damage = 4, Reload = 5, HitsAir = true, BuildTicks = 12 * TicksPerSecond },
+                Damage = 4, Reload = 5, HitsAir = true, VsAir = 100, BuildTicks = 12 * TicksPerSecond },   // (a bomber takes about 4 of them)
         // Flier: a fast interceptor that only fights other fliers; with none about it keeps over its army.
-        new() { MaxHp = 60, Radius = Fix.Ratio(9, 10), Speed = Fix.Ratio(70, 100), Range = 8, Aggro = 16, Vision = 14,
+        new() { MaxHp = 60, Radius = Fix.Ratio(9, 10), Speed = Fix.Ratio(95, 100), Range = 8, Aggro = 16, Vision = 14,
                 Damage = 6, Reload = 6, Flying = true, HitsAir = true, AirOnly = true, BuildTicks = 25 * TicksPerSecond },
-        // Bomber: slow; flies over a ground target, drops a heavy bomb with a wide blast, flies on and comes round again.
-        new() { MaxHp = 120, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(45, 100), Range = 2, Aggro = 18, Vision = 12,
-                Splash = 3, Damage = 60, Reload = 60, Flying = true, Explosive = true, BuildTicks = 40 * TicksPerSecond },
+        // Bomber: fast (the user, 2026-10-22: "bombers should be fast"; interceptors a little faster); flies over a ground target, drops a heavy bomb with a wide blast, flies on and comes round again.
+        new() { MaxHp = 150, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(80, 100), Range = 2, Aggro = 18, Vision = 12,
+                Splash = Fix.Ratio(25, 10), Damage = 45, Reload = 60, Flying = true, Explosive = true, BuildTicks = 40 * TicksPerSecond },
         // Power plant: a diesel generator house on a power vent; it powers the wings.
         new() { Armoured = true, MaxHp = 700, Radius = Fix.Ratio(18, 10), Vision = 8 },
     };
@@ -432,7 +434,7 @@ public sealed class World
             var hq = HqStart(i);
             Players[i] = new Player { Id = i, Civ = civs[i], Metal = StartMetal, PausesLeft = PausesPerPlayer, HqPos = hq };
             Spawn(Kind.Hq, i, hq);
-            foreach (var side in new[] { -10, 10 }) Spawn(Kind.Tower, i, TowerStart(i, side));
+            // (No starting watch towers since 2026-10-22, the user: "get rid of the 2 starting watch towers".)
         }
         if (FeralsOn) PlaceGuards();
     }
@@ -1482,12 +1484,20 @@ public sealed class World
             {
                 var gap = (target.Pos - e.Pos).Length - s.Radius - target.Stats.Radius;
                 var reach = RangeOf(e) + DownhillRange(e, target);   // firing down from a hill reaches further
+                if (e.Cooldown > 0 && s.IsUnit) reach += 1;   // (just fired: a nudge from a neighbour doesn't send it shuffling back in)
                 if (gap <= reach)
                 {
                     if (e.Cooldown == 0) Fire(e, WeakestInReach(e, target));
                     continue;
                 }
-                if (s.IsUnit) _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
+                if (s.IsUnit)
+                {
+                    // Behind friends already firing: swing out round the target to a flank, so the whole group gets
+                    // to shoot (the user, 2026-10-22: "some just sit behind the front line"). Otherwise close in, a
+                    // little inside its reach: closing to the very edge, it never caught anything moving away.
+                    if (ChaseRound(e, target, reach) is { } flank) _moves.Add((e, FanOut(e, Drive(e, flank, s.Speed))));
+                    else _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach + Fix.Ratio(1, 2)), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
+                }
             }
             else if (s.IsUnit && s.AirOnly)
                 _moves.Add((e, Drive(e, AirGoal(e), s.Speed)));
@@ -1552,9 +1562,13 @@ public sealed class World
         _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = damage, Splash = s.Splash, By = e, TicksLeft = flight, Napalm = e.Fitting == Fitting.Napalm });
     }
 
-    /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>    static int Hurt(Entity by, Entity to, int damage) => to.Stats.Armoured ? damage * by.Stats.VsArmour / 100 : damage;
     /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>
-    static int Hurt(Entity by, Entity to, int damage) => to.Stats.Armoured ? damage * by.Stats.VsArmour / 100 : damage;
+    static int Hurt(Entity by, Entity to, int damage)
+    {
+        if (to.Stats.Armoured) damage = damage * by.Stats.VsArmour / 100;
+        if (to.Stats.Flying) damage = damage * by.Stats.VsAir / 100;
+        return damage;
+    }
 
     /// <summary>How long a shell is in the air: 0.6 s, and 0.1 s for every 3 units it goes.</summary>
     public static int ShellFlightTicks(FixVec2 from, FixVec2 to) => 6 + (to - from).Length.ToInt() / 3;
@@ -1604,6 +1618,42 @@ public sealed class World
             if (best == null || d < bestD) { best = e; bestD = d; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// Where a ground unit out of reach of its target goes when friends stand between it and the target (it's behind the
+    /// line): a point on the ring round the target at its firing distance, about an eighth of a turn round from where it
+    /// is, to one side (the side it picked, kept while it's blocked). Recomputed every tick, it works its way round the
+    /// ring until it has a clear line, then closes in. Null when nothing's in the way.
+    /// </summary>
+    FixVec2? ChaseRound(Entity e, Entity target, Fix reach)
+    {
+        if (e.Stats.Flying) return null;
+        var line = target.Pos - e.Pos;
+        var len = line.Length;
+        if (len.Raw == 0) return null;
+        var dir = line * (Fix.One / len);
+        bool blocked = false;
+        foreach (var b in Entities)
+        {
+            if (b == e || b.Dead || b.Owner != e.Owner || !b.Stats.IsUnit || b.Stats.Flying) continue;
+            var d = b.Pos - e.Pos;
+            var ahead = d.X * dir.X + d.Z * dir.Z;
+            if (ahead.Raw <= 0 || ahead >= len) continue;
+            var across = Fix.Abs(d.X * dir.Z - d.Z * dir.X);
+            if (across < (e.Stats.Radius + b.Stats.Radius) * Fix.Ratio(3, 2)) { blocked = true; break; }
+        }
+        // Once it starts round it keeps going a second after the way clears (flicking between going round and going
+        // straight in made it weave).
+        if (blocked) e.FlankTicks = TicksPerSecond;
+        else if (e.FlankTicks > 0) e.FlankTicks--;
+        if (!blocked && e.FlankTicks == 0) return null;
+        if (e.SwaySide == 0) e.SwaySide = e.Id % 2 == 0 ? 1 : -1;
+        var from = -dir;
+        var round = new FixVec2(-from.Z, from.X) * Fix.FromInt(e.SwaySide);
+        var ring = reach + e.Stats.Radius + target.Stats.Radius - Fix.Ratio(1, 2);
+        var at = target.Pos + (from + round * Fix.Ratio(45, 100)).WithLength(ring);
+        return Nav.OpenAt(at) ? at : null;
     }
 
     /// <summary>Focus fire: of the enemies this one can shoot right now, the most damaged (ties: the nearest, then
@@ -1693,8 +1743,9 @@ public sealed class World
         foreach (var (e, step) in _moves) Move(e, step);
     }
 
-    /// <summary>Where an interceptor with nothing to fight goes: the nearest enemy flier its side knows of; failing
-    /// that, over its own army's front (the unit of its side nearest the enemy HQ); failing that, home.</summary>
+    /// <summary>Where an interceptor with nothing in reach goes (the user, 2026-10-22: "fliers should patrol your base
+    /// and go out and fight bombers"): after the nearest enemy flier its side knows of (radar finds them), wherever it
+    /// is; otherwise round and round over one of its side's bases, each on its own part of the circle.</summary>
     FixVec2 AirGoal(Entity e)
     {
         var me = Players[e.Owner];
@@ -1707,13 +1758,24 @@ public sealed class World
             if (best == null || d < bestD) { best = at; bestD = d; }
         }
         if (best is { } flier) return flier;
-        var enemyHq = Players[1 - e.Owner].HqPos;
-        Entity front = null;
-        foreach (var u in Entities)
-            if (!u.Dead && u.Owner == e.Owner && IsArmy(u.Kind) && !u.Stats.Flying
-                && (front == null || (u.Pos - enemyHq).LengthSq < (front.Pos - enemyHq).LengthSq)) front = u;
-        return front?.Pos ?? me.HqPos;
+        // Patrol: over the base nearest it, along a circle of PatrolRadius, a point ahead every few ticks.
+        Entity home = null;
+        foreach (var b in Entities)
+            if (!b.Dead && b.Owner == e.Owner && IsBase(b) && (home == null || (b.Pos - e.Pos).LengthSq < (home.Pos - e.Pos).LengthSq)) home = b;
+        if (home == null) return me.HqPos;
+        int step = (Tick / 15 + e.Id * 5) % PatrolCircle.Length;
+        return home.Pos + PatrolCircle[step] * PatrolRadius;
     }
+
+    static readonly Fix PatrolRadius = 18;
+    // Sixteen points round a unit circle (fixed point, the same on every machine).
+    static readonly FixVec2[] PatrolCircle =
+    {
+        new(1, 0), new(Fix.Ratio(924, 1000), Fix.Ratio(383, 1000)), new(Fix.Ratio(707, 1000), Fix.Ratio(707, 1000)), new(Fix.Ratio(383, 1000), Fix.Ratio(924, 1000)),
+        new(0, 1), new(Fix.Ratio(-383, 1000), Fix.Ratio(924, 1000)), new(Fix.Ratio(-707, 1000), Fix.Ratio(707, 1000)), new(Fix.Ratio(-924, 1000), Fix.Ratio(383, 1000)),
+        new(-1, 0), new(Fix.Ratio(-924, 1000), Fix.Ratio(-383, 1000)), new(Fix.Ratio(-707, 1000), Fix.Ratio(-707, 1000)), new(Fix.Ratio(-383, 1000), Fix.Ratio(-924, 1000)),
+        new(0, -1), new(Fix.Ratio(383, 1000), Fix.Ratio(-924, 1000)), new(Fix.Ratio(707, 1000), Fix.Ratio(-707, 1000)), new(Fix.Ratio(924, 1000), Fix.Ratio(-383, 1000)),
+    };
 
     static readonly Fix TurnCos = Fix.Ratio(866, 1000), TurnSin = Fix.Ratio(1, 2);   // at most 30 degrees a tick
 
@@ -1777,7 +1839,7 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.PowerAcc); Mix(e.Vent);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.FlankTicks); Mix(e.PowerAcc); Mix(e.Vent);
             Mix(e.Orders.Count); foreach (var o in e.Orders) Mix(o);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);

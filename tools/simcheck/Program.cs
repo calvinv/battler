@@ -35,7 +35,7 @@ if (args.Contains("battle"))   // how long a straight fight between equal groups
 if (args.Contains("matchups"))   // the cheap and air units against each other and the rest
 {
     foreach (var (ka, na, kb, nb) in new[] { (Kind.Ranger, 5, Kind.Ranger, 5), (Kind.Ranger, 5, Kind.LightTank, 3), (Kind.Flier, 5, Kind.Flier, 5),
-                                             (Kind.Bomber, 3, Kind.Tank, 5), (Kind.Ranger, 6, Kind.Bomber, 3), (Kind.Flier, 4, Kind.Bomber, 3) })
+                                             (Kind.Bomber, 3, Kind.Tank, 5), (Kind.Ranger, 3, Kind.Bomber, 1), (Kind.Ranger, 4, Kind.Bomber, 1), (Kind.Ranger, 5, Kind.Bomber, 1), (Kind.Flier, 2, Kind.Bomber, 2) })
     {
         var w = new World(3, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
         foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower)) t.Hp = 0;
@@ -50,8 +50,8 @@ if (args.Contains("matchups"))   // the cheap and air units against each other a
         while (t2++ < 1800)
         {
             w.Step(Array.Empty<Command>());
-            if (Environment.GetEnvironmentVariable("TRACE") == "1" && t2 % 10 == 0 && ka == Kind.Ranger && kb == Kind.Ranger && t2 < 200)
-                Console.WriteLine($"  t{t2}: " + string.Join("  ", w.Entities.FindAll(e => e.Kind == ka || e.Kind == kb).ConvertAll(e => $"p{e.Owner}({e.Pos.X.ToInt()},{e.Pos.Z.ToInt()}) {e.Hp}")));
+            if (Environment.GetEnvironmentVariable("TRACE") == "1" && t2 % 20 == 0 && ka == Kind.Ranger && kb == Kind.Bomber && na == 3 && t2 < 400)
+                Console.WriteLine($"  t{t2}: " + string.Join("  ", w.Entities.FindAll(e => e.Kind == ka || e.Kind == kb).ConvertAll(e => $"p{e.Owner}({e.Pos.X.ToInt()},{e.Pos.Z.ToInt()}) {e.Hp} cd{e.Cooldown} sh{w.Shots.Count}")));
             if (first < 0 && w.Entities.Exists(e => (e.Kind == ka || e.Kind == kb) && e.Hp < e.MaxHp)) first = w.Tick;
             int a = w.Entities.Count(e => e.Kind == ka && e.Owner == 0), b = w.Entities.Count(e => e.Kind == kb && e.Owner == 1);
             if (a == 0 || b == 0) { end = $"{(w.Tick - first) / (float)World.TicksPerSecond:0.0} s of fighting, {a} v {b} left"; break; }
@@ -148,13 +148,13 @@ if (args.Contains("crowd2"))   // (1) 30 tanks sent to one rally point; (2) 30 v
             Console.WriteLine($"rally t={sec,2}s  still moving {moving,2}/30  not there yet {waiting,2}/30");
         }
     }
-    // (2) The fight: how many of each side get to shoot, second by second?
+    // (2) The fight: how many of each side get to shoot, second by second? Player 0 has light tanks behind its tanks.
     {
         var w = new World(9, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
         foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower)) t.Hp = 0;
         for (int i = 0; i < 30; i++)
         {
-            w.Spawn(Kind.Tank, 0, new FixVec2(-60 + (i % 6) * 3, -8 + (i / 6) * 3));
+            w.Spawn(i < 15 ? Kind.Tank : Kind.LightTank, 0, new FixVec2(-60 + (i / 5) * 3, -8 + (i % 5) * 3));   // (tanks in front, light tanks behind)
             w.Spawn(Kind.Tank, 1, new FixVec2(60 - (i % 6) * 3, 8 - (i / 6) * 3));
         }
         var fired = new[] { new HashSet<int>(), new HashSet<int>() };
@@ -162,15 +162,15 @@ if (args.Contains("crowd2"))   // (1) 30 tanks sent to one rally point; (2) 30 v
         {
             fired[0].Clear(); fired[1].Clear();
             for (int t = 0; t < 10; t++) { w.Step(Array.Empty<Command>()); foreach (var sh in w.Shots) if (sh.Owner < 2) fired[sh.Owner].Add(sh.ShooterId); }
-            int a = w.Entities.Count(e => e.Kind == Kind.Tank && e.Owner == 0), b = w.Entities.Count(e => e.Kind == Kind.Tank && e.Owner == 1);
+            int a = w.Entities.Count(e => World.IsArmy(e.Kind) && e.Owner == 0), b = w.Entities.Count(e => World.IsArmy(e.Kind) && e.Owner == 1);
             int InRange(int side)
             {
                 int n = 0;
                 foreach (var u in w.Entities)
                 {
-                    if (u.Kind != Kind.Tank || u.Owner != side) continue;
+                    if (!World.IsArmy(u.Kind) || u.Owner != side) continue;
                     foreach (var o in w.Entities)
-                        if (o.Kind == Kind.Tank && o.Owner != side && (o.Pos - u.Pos).Length - u.Stats.Radius * 2 <= u.Stats.Range) { n++; break; }
+                        if (World.IsArmy(o.Kind) && o.Owner != side && (o.Pos - u.Pos).Length - u.Stats.Radius - o.Stats.Radius <= u.Stats.Range) { n++; break; }
                 }
                 return n;
             }
