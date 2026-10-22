@@ -206,6 +206,27 @@ def l_node():
     hexagon(0, 0, 1.2, 8.6, 9.6, "ember", r1=0.8, sides=6)                              # its eye
 
 
+
+def l_mobilebase():
+    """A Lattice mobile base: a long scrap carapace carried on six legs, the nest it will become folded on its back as
+    a hump of plates, a cluster of eyes at the front."""
+    plate(-9.0, 9.0, -4.6, 4.6, 4.0, 7.6, "plate", inset=1.0, front=1.4, back=1.0)       # the carapace
+    plate(-6.6, 4.4, -3.6, 3.6, 7.6, 10.2, "steel", inset=1.0, front=0.6, back=0.6)        # the folded nest
+    plate(-5.4, 3.2, -2.6, 2.6, 10.2, 10.5, "paint", inset=0.3)
+    for i, a in enumerate((-6.0, 0.0, 6.0)):
+        for s in (1, -1):
+            leg((a, s * 4.2, 5.4), (a + 1.0, s * 8.0, 8.0), (a + 1.6, s * 10.0, 0.0), 0.6)
+    eyes(9.1, 0.0, 5.4, 4, 0.34, 0.8)
+    hexagon(0, 0, 2.6, 2.4, 4.0, "dark", r1=2.0, sides=6)
+    hexagon(0, 0, 1.6, 2.2, 2.4, "ember", sides=6)                                      # glow underneath
+
+
+def l_factory_mobilebase():
+    """The Lattice's utility nest: the nest ring with a fat brood pod on the crane, where drones and mobile bases are
+    grown."""
+    nest(lambda: [hexagon(1.0, 0, 2.2, 4.0, 7.0, "steel", r1=1.6, sides=6), eyes(3.0, 0, 6.0, 3, 0.3)])
+
+
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()

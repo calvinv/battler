@@ -57,18 +57,18 @@ public static class Wire
     {
         switch (c)
         {
-            case PlaceFactory pf: w.Write((byte)1); w.Write((byte)pf.Player); w.Write(pf.Pos.X.Raw); w.Write(pf.Pos.Z.Raw); w.Write((byte)pf.Makes); break;
+            case AddWing aw: w.Write((byte)1); w.Write((byte)aw.Player); w.Write(aw.BaseId); w.Write((byte)aw.Makes); break;
             case Pause: w.Write((byte)2); w.Write((byte)c.Player); break;
             case Resume: w.Write((byte)3); w.Write((byte)c.Player); break;
             case UpgradeFactory uf: w.Write((byte)4); w.Write((byte)uf.Player); w.Write(uf.FactoryId); w.Write((byte)uf.Which); break;
             case SetRally sr: w.Write((byte)5); w.Write((byte)sr.Player); w.Write(sr.FactoryId); w.Write(sr.Clear); w.Write(sr.Pos.X.Raw); w.Write(sr.Pos.Z.Raw); break;
-            case PlaceOutpost po: w.Write((byte)6); w.Write((byte)po.Player); w.Write(po.Deposit); break;
+            case Deploy dp: w.Write((byte)6); w.Write((byte)dp.Player); w.Write(dp.UnitId); break;
             case Sell se: w.Write((byte)7); w.Write((byte)se.Player); w.Write(se.BuildingId); break;
             case PlaceExtractor pe: w.Write((byte)8); w.Write((byte)pe.Player); w.Write(pe.Deposit); break;
             case QueueScout: w.Write((byte)9); w.Write((byte)c.Player); break;
-            case SetAutoScout sa: w.Write((byte)10); w.Write((byte)sa.Player); w.Write(sa.On); break;
+            case PackUp pu: w.Write((byte)10); w.Write((byte)pu.Player); w.Write(pu.BaseId); break;
             case CancelUpgrades cu: w.Write((byte)12); w.Write((byte)cu.Player); w.Write(cu.BuildingId); break;
-            case PlaceNode pn: w.Write((byte)13); w.Write((byte)pn.Player); w.Write(pn.Pos.X.Raw); w.Write(pn.Pos.Z.Raw); break;
+            case Order od: w.Write((byte)13); w.Write((byte)od.Player); w.Write(od.WingId); w.Write((byte)od.What); break;
             case SetFitting sf: w.Write((byte)14); w.Write((byte)sf.Player); w.Write(sf.FactoryId); w.Write((byte)sf.Fitting); break;
             case MoveUnits mu:
                 w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
@@ -84,19 +84,19 @@ public static class Wire
         int player = r.ReadByte();
         return type switch
         {
-            1 => new PlaceFactory(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64())), (Kind)r.ReadByte()),
+            1 => new AddWing(player, r.ReadInt32(), (Kind)r.ReadByte()),
             2 => new Pause(player),
             3 => new Resume(player),
             4 => new UpgradeFactory(player, r.ReadInt32(), (Upgrade)r.ReadByte()),
             5 => new SetRally(player, r.ReadInt32(), r.ReadBoolean(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
-            6 => new PlaceOutpost(player, r.ReadInt32()),
+            6 => new Deploy(player, r.ReadInt32()),
             7 => new Sell(player, r.ReadInt32()),
             8 => new PlaceExtractor(player, r.ReadInt32()),
             9 => new QueueScout(player),
-            10 => new SetAutoScout(player, r.ReadBoolean()),
+            10 => new PackUp(player, r.ReadInt32()),
             11 => ReadMove(player, r),
             12 => new CancelUpgrades(player, r.ReadInt32()),
-            13 => new PlaceNode(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
+            13 => new Order(player, r.ReadInt32(), (Kind)r.ReadByte()),
             14 => new SetFitting(player, r.ReadInt32(), (Fitting)r.ReadByte()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };

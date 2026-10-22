@@ -130,5 +130,26 @@ def spider():
     finish_realistic("spider", 24.0)
 
 
+
+def mobilebase():
+    """Mobile base (the user, 2026-10-22: "you can move a mobile base like a scout and set it up somewhere else"): a
+    big slow tracked carrier, the base folded on its back: a stacked deck, a radar dish laid flat, a crane boom along
+    its spine. Unarmed."""
+    k.begin(0.0)
+    for s in (1, -1):
+        tracks(s, 5.0, 7.4, -10.5, 10.5, 3.2)
+    plate(-11.2, 11.6, -6.2, 6.2, 1.4, 5.4, "steel", inset=0.6, front=2.6, back=1.0)        # the hull
+    plate(-9.6, 5.0, -5.4, 5.4, 5.4, 8.6, "plate", inset=0.8, front=0.8, back=0.5)           # the folded base
+    plate(-8.4, 3.8, -4.2, 4.2, 8.6, 8.9, "paint", inset=0.2)
+    hexagon(7.4, 0, 2.6, 5.4, 6.4, "mid", r1=2.2, sides=8)                                  # the folded dish
+    hexagon(7.4, 0, 2.2, 6.4, 6.7, "steel", r1=1.2, sides=8)
+    tube_between((-9.0, -3.2, 9.4), (4.0, -3.2, 9.4), 0.45, "dark", 8)                      # crane boom on the deck
+    k.box(-9.8, -8.4, -4.0, -2.4, 8.6, 10.2, "hazard")
+    for s in (1, -1):
+        k.box(-9.0, 4.4, s * 5.45 - 0.08, s * 5.45 + 0.08, 6.6, 7.0, "glow")                  # lit strip down each side
+        k.box(-11.6, -10.4, s * 3.5 - 0.9, s * 3.5 + 0.9, 2.0, 4.6, "dark")                  # stowed outriggers
+    finish_realistic("mobilebase", 42.0, serial="22")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar, "spider": spider}[which]()
+{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar, "spider": spider, "mobilebase": mobilebase}[which]()

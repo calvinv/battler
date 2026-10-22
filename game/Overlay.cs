@@ -13,6 +13,8 @@ public partial class Overlay : Control
     public readonly List<(Vector2 Centre, int Sword, int Shield, int Rank)> Badges = new();
     /// <summary>Short text tags over things: a base's factory slots in use ("2/3").</summary>
     public readonly List<(Vector2 Centre, string Text, Color Colour)> Tags = new();
+    /// <summary>Radar blips: where a hidden enemy unit was at the last sweep, and how strong (fading 1 to 0).</summary>
+    public readonly List<(Vector2 Centre, float Strength)> Blips = new();
     /// <summary>The box being dragged to pick scouts, if any.</summary>
     public Rect2? Box;
 
@@ -49,6 +51,13 @@ public partial class Overlay : Control
             DrawRect(pill, new Color(0.04f, 0.05f, 0.07f, 0.8f));
             DrawRect(pill, colour, false, 1.5f);
             DrawString(font, new Vector2(c.X - width / 2, c.Y + 6), text, HorizontalAlignment.Left, -1, Size, colour);
+        }
+        // Radar blips: a red dot in a ring, fading as the sweep gets older.
+        foreach (var (c, strength) in Blips)
+        {
+            var red = new Color(1f, 0.25f, 0.2f, 0.9f * strength);
+            DrawCircle(c, 4.5f, red);
+            DrawArc(c, 9f + 6f * (1 - strength), 0, Mathf.Tau, 20, red with { A = 0.6f * strength }, 1.5f);
         }
         if (Box is { } box)
         {

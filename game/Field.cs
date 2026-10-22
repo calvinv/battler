@@ -5,149 +5,51 @@ using Godot;
 namespace Battler.Game;
 
 /// <summary>
-/// Drawing the base networks, the sulfur patches and napalm fires (the user, 2026-10-22: "a base is like a single
-/// structure that branches out ... a sulfur patch that could increase explosive damage ... or give you access to
-/// napalm").
-///   - Each link between two nodes (or a node and its HQ) is a conduit along the ground: the Coalition's a steel pipe
-///     on little stands with a lit strip along its top; the Lattice's a low rusty tendril with an amber vein. The strip
-///     goes dark when no power runs through it.
-///   - Sulfur patches are clusters of yellow crystals.
-///   - Napalm burns as a glowing patch with flames licking up, dying down as it burns out.
+/// Things drawn on the field rather than as units or buildings:
+///   - sulfur patches, clusters of yellow crystals (the user, 2026-10-22: "a sulfur patch that could increase explosive
+///     damage ... or give you access to napalm");
+///   - napalm burning as a glowing patch with flames licking up, dying down as it burns out;
+///   - the radar (the user, 2026-10-22: "a radar that pings every 30s to show where units are in the fog"): a ring
+///     sweeping out from each of my bases as it pings, and a red blip where each hidden enemy unit was, fading out.
 /// </summary>
 public partial class Main
 {
-    Node3D _conduits;
-    readonly Dictionary<(int, int), (MeshInstance3D Mesh, bool Lit)> _links = new();
-    StandardMaterial3D _pipeMat, _tendrilMat, _stripLit, _stripDark, _veinLit, _veinDark;
-
-    void ClearNetworkViews()
+    void ClearFieldViews()
     {
-        foreach (var l in _links.Values) l.Mesh.QueueFree();
-        _links.Clear();
         foreach (var f in _fireViews) f.QueueFree();
         _fireViews.Clear();
     }
 
-    void DrawNetwork()
+    // ---- radar -----------------------------------------------------------------------------------------------
+
+    const float BlipSeconds = 10f, SweepSeconds = 2.5f;
+
+    /// <summary>Seconds since my side's last radar sweep (-1 before the first).</summary>
+    float SinceSweep => W.Players[_me].BlipTick < 0 ? -1 : (W.Tick - W.Players[_me].BlipTick) / (float)World.TicksPerSecond;
+
+    /// <summary>The fading blips, for the overlay to draw: where, and how strong (1 at the sweep, 0 when gone).</summary>
+    void DrawRadarBlips()
     {
-        if (_conduits == null)
+        _overlay.Blips.Clear();
+        float since = SinceSweep;
+        if (since < 0 || since > BlipSeconds) return;
+        float strength = 1 - since / BlipSeconds;
+        foreach (var at in W.Players[_me].Blips)
         {
-            _conduits = new Node3D();
-            AddChild(_conduits);
-            _pipeMat = new StandardMaterial3D { AlbedoColor = new Color(0.46f, 0.47f, 0.46f), Metallic = 0.5f, Roughness = 0.55f };
-            _tendrilMat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.32f, 0.18f), Metallic = 0.3f, Roughness = 0.75f };
-            _stripLit = Glow(new Color(0.45f, 0.9f, 1f), 2.2f);
-            _veinLit = Glow(new Color(1f, 0.6f, 0.15f), 3.0f);
-            _stripDark = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.13f, 0.14f), Roughness = 0.7f };
-            _veinDark = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.1f, 0.08f), Roughness = 0.8f };
-        }
-        var keep = new HashSet<(int, int)>();
-        foreach (var (a, b) in W.Links)
-        {
-            var ea = W.Find(a);
-            var eb = W.Find(b);
-            if (ea == null || eb == null || !Shown(ea) || !Shown(eb)) continue;
-            bool lit = ea.Powered && eb.Powered && ea.Building == 0 && eb.Building == 0;
-            bool lattice = W.Players[ea.Owner].Civ == Civ.Lattice;
-            keep.Add((a, b));
-            if (!_links.TryGetValue((a, b), out var link))
-            {
-                link = (new MeshInstance3D { Mesh = Conduit(ea, eb, lattice) }, !lit);
-                _conduits.AddChild(link.Mesh);
-                // Trees in its way come down as it's laid.
-                var from = ToV3(ea.Pos);
-                var along = ToV3(eb.Pos) - from;
-                for (float t = 0; t <= 1; t += 1.5f / Mathf.Max(along.Length(), 1.5f))
-                    _forest.Trample(from + along * t, along.Normalized(), 0.6f);
-            }
-            if (link.Lit != lit)
-                link.Mesh.SetSurfaceOverrideMaterial(1, lattice ? (lit ? _veinLit : _veinDark) : (lit ? _stripLit : _stripDark));
-            link.Mesh.SetSurfaceOverrideMaterial(0, lattice ? _tendrilMat : _pipeMat);
-            _links[(a, b)] = (link.Mesh, lit);
-        }
-        var gone = new List<(int, int)>();
-        foreach (var key in _links.Keys) if (!keep.Contains(key)) gone.Add(key);
-        foreach (var key in gone)
-        {
-            _links[key].Mesh.QueueFree();
-            _links.Remove(key);
+            var p = ToV3(at);
+            p.Y = _terrain.HeightAt(p.X, p.Z) + 1;
+            if (!_camera.IsPositionBehind(p)) _overlay.Blips.Add((_camera.UnprojectPosition(p), strength));
         }
     }
 
-    static StandardMaterial3D Glow(Color c, float energy) => new()
+    /// <summary>The sweep: a ring running out from each of my bases to its radar reach, just after a ping.</summary>
+    void SweepRings(System.Action<FixVec2, float> circle)
     {
-        AlbedoColor = c * 0.4f, EmissionEnabled = true, Emission = c, EmissionEnergyMultiplier = energy, Roughness = 0.4f,
-    };
-
-    /// <summary>The conduit between two nodes: a tube following the ground between their edges (surface 0), with a thin
-    /// strip along its top (surface 1) that lights up with power. The Coalition's stands on little posts.</summary>
-    ArrayMesh Conduit(Entity a, Entity b, bool lattice)
-    {
-        var from = ToV3(a.Pos);
-        var to = ToV3(b.Pos);
-        var dir = (to - from).Normalized();
-        from += dir * (a.Stats.Radius.ToFloat() * 0.8f);
-        to -= dir * (b.Stats.Radius.ToFloat() * 0.8f);
-        float length = from.DistanceTo(to);
-        int n = Mathf.Max(2, (int)(length / 1.2f));
-        float lift = lattice ? 0.3f : 0.48f, r = lattice ? 0.3f : 0.17f;
-        var side = dir.Cross(Vector3.Up).Normalized();
-        var points = new List<Vector3>();
-        for (int i = 0; i <= n; i++)
-        {
-            float t = i / (float)n;
-            var p = from.Lerp(to, t);
-            if (lattice) p += side * Mathf.Sin(t * Mathf.Pi * 3 + a.Id) * 0.35f * Mathf.Sin(t * Mathf.Pi);   // (a tendril wanders)
-            p.Y = _terrain.HeightAt(p.X, p.Z) + lift;
-            points.Add(p);
-        }
-        var mesh = new ArrayMesh();
-        var st = new SurfaceTool();
-        st.Begin(Mesh.PrimitiveType.Triangles);
-        Tube(st, points, r, lattice ? 6 : 8);
-        if (!lattice)   // posts holding the pipe up, every few metres
-            for (int i = 1; i < points.Count - 1; i += 4)
-            {
-                var top = points[i];
-                Tube(st, new List<Vector3> { top with { Y = top.Y - lift - 0.1f }, top }, 0.07f, 4);
-            }
-        st.GenerateNormals();
-        st.Commit(mesh);
-        var strip = new List<Vector3>();
-        foreach (var p in points) strip.Add(p + Vector3.Up * r * 0.85f);
-        st.Begin(Mesh.PrimitiveType.Triangles);
-        Tube(st, strip, r * 0.32f, 4);
-        st.GenerateNormals();
-        st.Commit(mesh);
-        return mesh;
-    }
-
-    /// <summary>A tube of `sides` faces along `points`.</summary>
-    static void Tube(SurfaceTool st, List<Vector3> points, float r, int sides)
-    {
-        var rings = new List<Vector3[]>();
-        for (int i = 0; i < points.Count; i++)
-        {
-            var t = (points[Mathf.Min(i + 1, points.Count - 1)] - points[Mathf.Max(i - 1, 0)]).Normalized();
-            var up = Mathf.Abs(t.Dot(Vector3.Up)) > 0.95f ? Vector3.Right : Vector3.Up;
-            var u = t.Cross(up).Normalized();
-            var v = u.Cross(t).Normalized();
-            var ring = new Vector3[sides];
-            for (int k = 0; k < sides; k++)
-            {
-                float ang = Mathf.Tau * k / sides;
-                ring[k] = points[i] + (u * Mathf.Cos(ang) + v * Mathf.Sin(ang)) * r;
-            }
-            rings.Add(ring);
-        }
-        for (int i = 0; i + 1 < rings.Count; i++)
-            for (int k = 0; k < sides; k++)
-            {
-                int k2 = (k + 1) % sides;
-                var a = rings[i][k]; var b = rings[i][k2]; var c = rings[i + 1][k]; var d = rings[i + 1][k2];
-                st.AddVertex(a); st.AddVertex(c); st.AddVertex(b);
-                st.AddVertex(b); st.AddVertex(c); st.AddVertex(d);
-            }
+        float since = SinceSweep;
+        if (since < 0 || since > SweepSeconds) return;
+        foreach (var b in W.Entities)
+            if (b.Owner == _me && World.IsBase(b) && b.Building == 0)
+                circle(b.Pos, World.RadarOf(b).ToFloat() * since / SweepSeconds);
     }
 
     // ---- sulfur ----------------------------------------------------------------------------------------------

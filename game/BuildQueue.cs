@@ -9,7 +9,7 @@ namespace Battler.Game;
 /// things queued along the bottom"): one tile per thing of mine on the way, with its picture, a bar of how far along
 /// it is, and a line under it.
 ///   - buildings going up (seconds left)
-///   - scouts paid for at the HQ (how many)
+///   - scouts and mobile bases ordered at a utility wing
 ///   - upgrades waiting at a building for the metal (what, and the cost)
 ///   - what the factories are making, one tile per kind (how many factories; "army full" at the cap)
 /// Clicking a tile picks that building and looks at it.
@@ -114,13 +114,14 @@ public partial class Main
                     $"{Mathf.CeilToInt(e.Building / (float)tps)} s", e.Id, BarBuild, "Going up: " + Describe(e.Kind, e.Makes)));
                 continue;
             }
-            if (e.Kind == Kind.Hq && e.ScoutQueue > 0)
-            {
-                var scout = World.ScoutKindOf(civ);
-                int ticks = World.StatsFor[(int)scout].BuildTicks;
-                list.Add(new Queued(ModelOf(scout), 1f - e.Timer / (float)ticks, e.ScoutQueue > 1 ? "x" + e.ScoutQueue : "",
-                    $"{Mathf.CeilToInt(e.Timer / (float)tps)} s", e.Id, BarMake, NameOf(scout) + " at the HQ"));
-            }
+            if (World.IsUtility(e))   // what's ordered: the one being built, then the rest waiting
+                for (int i = 0; i < e.Orders.Count; i++)
+                {
+                    var what = (Kind)e.Orders[i];
+                    int ticks = World.StatsFor[(int)what].BuildTicks;
+                    list.Add(new Queued(UnitModel(what, civ), i == 0 ? 1f - e.Timer / (float)ticks : 0, "",
+                        i == 0 ? $"{Mathf.CeilToInt(e.Timer / (float)tps)} s" : "waiting", e.Id, BarMake, NameOf(what) + " at a utility wing"));
+                }
             for (int i = 0; i < e.UpgradeQueue.Count; i++)
             {
                 var which = (Upgrade)e.UpgradeQueue[i];
@@ -132,7 +133,7 @@ public partial class Main
                 list.Add(new Queued(BuildingModel(e.Kind, e.Makes, civ), ready, "+" + names[(int)which][0] + level,
                     $"{names[(int)which]} {cost}", e.Id, BarWait, $"{names[(int)which]} {level} queued, waiting for {cost} metal"));
             }
-            if (e.Kind == Kind.Factory)
+            if (e.Kind == Kind.Factory && !World.IsUtility(e))
             {
                 float done = full ? 0 : 1f - e.Timer / (float)World.BuildTicksOf(e);
                 making.TryGetValue(e.Makes, out var m);

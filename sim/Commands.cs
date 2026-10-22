@@ -6,8 +6,9 @@ namespace Battler.Sim;
 /// </summary>
 public abstract record Command(int Player);
 
-/// <summary>A factory at Pos that makes Makes (one of World.FactoryKinds).</summary>
-public sealed record PlaceFactory(int Player, FixVec2 Pos, Kind Makes) : Command(Player);
+/// <summary>A wing built onto one of the player's bases, making Makes (one of their fighting units, or
+/// Kind.MobileBase for a utility wing, which makes scouts and mobile bases to order).</summary>
+public sealed record AddWing(int Player, int BaseId, Kind Makes) : Command(Player);
 
 /// <summary>Starts one of the player's tactical pauses.</summary>
 public sealed record Pause(int Player) : Command(Player);
@@ -21,8 +22,11 @@ public sealed record UpgradeFactory(int Player, int FactoryId, Upgrade Which) : 
 /// <summary>Where a factory's units gather before attacking; for the HQ, the whole base's (Clear: none, so they attack).</summary>
 public sealed record SetRally(int Player, int FactoryId, bool Clear, FixVec2 Pos) : Command(Player);
 
-/// <summary>Builds an outpost (a sub-base: factories can be built near it) on the pad beside deposit Deposit, which the player mines.</summary>
-public sealed record PlaceOutpost(int Player, int Deposit) : Command(Player);
+/// <summary>Sets up one of the player's mobile bases where it stands.</summary>
+public sealed record Deploy(int Player, int UnitId) : Command(Player);
+
+/// <summary>Packs up one of the player's set-up mobile bases (one with no wings) to move it.</summary>
+public sealed record PackUp(int Player, int BaseId) : Command(Player);
 
 /// <summary>Sells one of the player's factories or outposts for World.SellBackPercent of all it cost, upgrades included.</summary>
 public sealed record Sell(int Player, int BuildingId) : Command(Player);
@@ -30,20 +34,17 @@ public sealed record Sell(int Player, int BuildingId) : Command(Player);
 /// <summary>Builds an extractor on one of World.Deposits.</summary>
 public sealed record PlaceExtractor(int Player, int Deposit) : Command(Player);
 
-/// <summary>Pays for a scout; the HQ builds it.</summary>
+/// <summary>Pays for a scout at the player's first utility wing.</summary>
 public sealed record QueueScout(int Player) : Command(Player);
 
-/// <summary>Whether the HQ keeps building scouts by itself.</summary>
-public sealed record SetAutoScout(int Player, bool On) : Command(Player);
+/// <summary>Pays for a scout or a mobile base (What) at one of the player's utility wings.</summary>
+public sealed record Order(int Player, int WingId, Kind What) : Command(Player);
 
-/// <summary>Sends some of the player's scouts to Pos (they spread out round it).</summary>
+/// <summary>Sends some of the player's scouts and mobile bases to Pos (they spread out round it).</summary>
 public sealed record MoveUnits(int Player, int[] Ids, FixVec2 Pos) : Command(Player);
 
 /// <summary>Drops all the upgrades queued at one of the player's buildings.</summary>
 public sealed record CancelUpgrades(int Player, int BuildingId) : Command(Player);
-
-/// <summary>Grows the player's network: a node at Pos, linked to one of theirs within World.LinkReach.</summary>
-public sealed record PlaceNode(int Player, FixVec2 Pos) : Command(Player);
 
 /// <summary>What one of the player's factories fits its units with from now on (napalm needs sulfur).</summary>
 public sealed record SetFitting(int Player, int FactoryId, Fitting Fitting) : Command(Player);

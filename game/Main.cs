@@ -55,7 +55,7 @@ public partial class Main : Node3D
     MeshInstance3D _selRing;
     readonly Button[] _upgradeButtons = new Button[3];
     Button _fittingButton;   // in the stats panel: a factory's fitting (napalm, with sulfur)   // in the stats panel, for my selected factory
-    Button _sellButton, _scoutButton, _autoButton, _cancelQueueButton;
+    Button _sellButton, _scoutButton, _truckButton, _deployButton, _cancelQueueButton;
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
     readonly List<Node3D> _depositViews = new();
@@ -380,7 +380,7 @@ public partial class Main : Node3D
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
         _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset();
-        ClearNetworkViews();
+        ClearFieldViews();
         _session = session;
         _me = session.LocalPlayer;
         _acc = 0;
@@ -410,32 +410,27 @@ public partial class Main : Node3D
             }
             ring.SurfaceEnd();
         }
-        bool placingFactory = _placing is { } pk && World.IsArmy(pk);
-        if (placingFactory || _placing == null) Circle(World.HqStart(_me), World.BuildRadius.ToFloat());
+        bool pickedTruck = _scouts.Any(id => W.Find(id) is { Kind: Kind.MobileBase });
         foreach (var e in W.Entities)
         {
-            if (e.Owner != _me) continue;
-            // Placing a factory: a ring round each powered node with a spot free.
-            if (placingFactory && e.Kind == Kind.Node && e.Building == 0 && e.Powered && W.SlotsUsed(e) < World.SlotsOf(e))
-                Circle(e.Pos, World.NodeHostReach.ToFloat());
-            // Placing a node: a line to each node it would link to.
-            if (_placing == Kind.Node && _mouseGround is { } m && e.Kind is Kind.Hq or Kind.Node && World.CouldLink(ToFix(m), e))
-                Line(e.Pos, ToFix(m));
-            if (!World.IsScout(e.Kind)) continue;
-            // Placing an extractor: how near each scout it must go.
-            if (_placing == Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
-            // A picked scout: a ring round it, and where it's going.
+            // Placing an extractor: how far round each of my bases one can go.
+            if (_placing == Kind.Extractor && e.Owner == _me && World.IsBase(e) && e.Building == 0) Circle(e.Pos, World.BaseReach.ToFloat());
+            // A mobile base picked: round every base, where it can't set up.
+            if (pickedTruck && World.IsBase(e) && Shown(e)) Circle(e.Pos, World.BaseSpacing.ToFloat());
+            if (e.Owner != _me || !World.IsSteered(e.Kind)) continue;
+            // A picked scout or mobile base: a ring round it, and where it's going.
             if (_scouts.Contains(e.Id))
             {
                 Circle(e.Pos, 1.3f);
                 if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
             }
         }
-        // Placing an extractor: a ring round each free deposit my network reaches.
+        // Placing an extractor: a ring round each free deposit in reach.
         if (_placing == Kind.Extractor)
             for (int d = 0; d < World.Deposits.Length; d++)
-                if (W.ExtractorOn(d) == null && W.NetworkNear(_me, World.Deposits[d], World.ExtractorReach, false) != null)
+                if (W.ExtractorOn(d) == null && W.BaseNear(_me, World.Deposits[d], World.BaseReach) != null)
                     Circle(World.Deposits[d], 3.4f);
+        SweepRings(Circle);   // the radar, just after it pings
         void Line(FixVec2 from, FixVec2 to)
         {
             ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, _ringMat);
@@ -659,12 +654,17 @@ public partial class Main : Node3D
         // The HQ builds scouts: one at a time on a button (or Q), or on its own with auto on.
         _scoutButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
         _scoutButton.AddThemeFontSizeOverride("font_size", 17);
-        _scoutButton.Pressed += () => _session?.Issue(new QueueScout(_me));
+        _scoutButton.Pressed += () => _session?.Issue(new Order(_me, _selected, World.ScoutKindOf(MyCiv)));
         column.AddChild(_scoutButton);
-        _autoButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left, ToggleMode = true };
-        _autoButton.AddThemeFontSizeOverride("font_size", 17);
-        _autoButton.Toggled += on => { if (W.Find(_selected) is { Kind: Kind.Hq } hq && hq.AutoScout != on) _session?.Issue(new SetAutoScout(_me, on)); };
-        column.AddChild(_autoButton);
+        _truckButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _truckButton.AddThemeFontSizeOverride("font_size", 17);
+        _truckButton.Pressed += () => _session?.Issue(new Order(_me, _selected, Kind.MobileBase));
+        column.AddChild(_truckButton);
+        // A mobile base: set up where it stands; a set-up one with no wings: pack up to move it.
+        _deployButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _deployButton.AddThemeFontSizeOverride("font_size", 17);
+        _deployButton.Pressed += DeployOrPack;
+        column.AddChild(_deployButton);
         _statsPanel.AddChild(column);
         ui.AddChild(_statsPanel);
         _hud = new Label { Position = new Vector2(16, 12) };
@@ -729,15 +729,18 @@ public partial class Main : Node3D
     }
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
+    /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
+    static string UnitModel(Kind k, Civ civ) => k == Kind.MobileBase && civ == Civ.Lattice ? "l_mobilebase" : ModelOf(k);
+
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
     /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
     static string BuildingModel(Kind kind, Kind makes, Civ civ) =>
-        kind == Kind.Factory ? "factory_" + ModelOf(makes) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
+        kind == Kind.Factory ? (makes == Kind.MobileBase && civ == Civ.Lattice ? "l_" : "") + "factory_" + ModelOf(makes) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
 
     Civ MyCiv => W.Players[_me].Civ;
 
     /// <summary>A kind as the player reads it.</summary>
-    static string NameOf(Kind k) => k switch { Kind.LightTank => "Light tank", Kind.Hq => "HQ", _ => k.ToString() };
+    static string NameOf(Kind k) => k switch { Kind.LightTank => "Light tank", Kind.Hq => "HQ", Kind.MobileBase => "Mobile base", Kind.Outpost => "Base", _ => k.ToString() };
 
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
     Node3D MakeView(Entity e)
@@ -746,15 +749,16 @@ public partial class Main : Node3D
         {
             // (Damage/armour upgrades have no visual for now: the user, 2026-10-22, "they dont need a visual right
             // now". UnitArt.AddEmblems still draws deck emblems if they come back.)
-            return UnitArt.Make(ModelOf(e.Kind), TeamColor[e.Owner]);
+            return UnitArt.Make(UnitModel(e.Kind, W.Players[e.Owner].Civ), TeamColor[e.Owner]);
         }
-        // Buildings (tools/art/model_buildings.py): each factory kind its own building; all face the enemy's side,
-        // so units roll out of the door.
+        // Buildings (tools/art/model_buildings.py): each wing kind its own building; the rest face the enemy's side.
         var name = BuildingModel(e.Kind, e.Makes, W.Players[e.Owner].Civ);
         bool rising = e.Building > 0;
         var building = rising ? UnitArt.MakeBuilding(name, TeamColor[e.Owner]) : UnitArt.Make(name, TeamColor[e.Owner]);
         if (rising) _rising.Add(e.Id);
-        building.Basis = Basis.LookingAt(TowardEnemy(e.Owner), Vector3.Up);
+        // A wing faces out from its base, its door where its units roll out (World.DoorOf).
+        var facing = e.Kind == Kind.Factory && W.Find(e.BaseId) is { } home ? (ToV3(e.Pos) - ToV3(home.Pos)) with { Y = 0 } : TowardEnemy(e.Owner);
+        building.Basis = Basis.LookingAt(facing.LengthSquared() > 0.01f ? facing.Normalized() : TowardEnemy(e.Owner), Vector3.Up);
         return building;
     }
 
@@ -1102,7 +1106,7 @@ public partial class Main : Node3D
         for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
             _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
-        DrawNetwork();
+        DrawRadarBlips();
         DrawFires();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
@@ -1121,20 +1125,10 @@ public partial class Main : Node3D
         _overlay.Bars.Clear();
         _overlay.Badges.Clear();
         _overlay.Tags.Clear();
-        // Over each of my bases: its factory spots in use, "2/3" (amber when full), while placing a factory; and over
-        // anything of mine cut off from the network, "NO POWER".
-        bool placingFactory = _placing is { } pk && World.IsArmy(pk);
+        // Over each of my bases: its wing spots in use, "2/5" (amber when full).
         foreach (var b in W.Entities)
         {
-            if (b.Owner != _me || !b.Stats.IsBuilding) continue;
-            if (!b.Powered && b.Kind is Kind.Factory or Kind.Extractor or Kind.Node)
-            {
-                var top = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.2f);
-                if (!_camera.IsPositionBehind(top))
-                    _overlay.Tags.Add((_camera.UnprojectPosition(top) - new Vector2(0, 30), "NO POWER", new Color(1f, 0.35f, 0.3f)));
-                continue;
-            }
-            if (!placingFactory || !World.IsBase(b) || b.Building > 0) continue;
+            if (b.Owner != _me || !World.IsBase(b) || b.Building > 0) continue;
             var over = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.6f);
             if (_camera.IsPositionBehind(over)) continue;
             int used = W.SlotsUsed(b), slots = World.SlotsOf(b);
@@ -1178,6 +1172,7 @@ public partial class Main : Node3D
         ShowUpgrades(selected);
         ShowScoutButtons(selected);
         ShowFitting(selected);
+        ShowDeploy(selected);
         _rallyButton.Visible = selected.Kind is Kind.Factory or Kind.Hq && selected.Owner == _me && selected.HasRally;
         ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
@@ -1213,18 +1208,48 @@ public partial class Main : Node3D
         _fittingButton.Disabled = !can || W.Winner >= 0;
     }
 
-    /// <summary>My HQ's scout buttons: build one now, and auto-build.</summary>
+    /// <summary>A utility wing's buttons: order a scout, or a mobile base.</summary>
     void ShowScoutButtons(Entity e)
     {
-        bool hq = e.Kind == Kind.Hq && e.Owner == _me;
-        _scoutButton.Visible = _autoButton.Visible = hq;
-        if (!hq) return;
-        int have = W.ScoutCount(_me);
-        _scoutButton.Text = $"Build a {(MyCiv == Civ.Lattice ? "drone" : "scout")} for {World.ScoutCost}  [Q]   ({have}/{World.MaxScouts}" + (e.ScoutQueue > 0 ? $", {e.ScoutQueue} coming)" : ")");
-        _scoutButton.Disabled = !W.CanQueueScout(_me, out _) || !W.Started || W.Winner >= 0;
-        _autoButton.SetPressedNoSignal(e.AutoScout);
-        _autoButton.Text = e.AutoScout ? "Auto-build scouts: ON  (keeps you at " + World.MaxScouts + ")" : "Auto-build scouts: off";
-        _autoButton.Disabled = W.Winner >= 0;
+        bool util = World.IsUtility(e) && e.Owner == _me;
+        _scoutButton.Visible = _truckButton.Visible = util;
+        if (!util) return;
+        var scout = World.ScoutKindOf(MyCiv);
+        bool canScout = W.CanOrder(_me, e.Id, scout, out var whyNot);
+        _scoutButton.Text = $"Build a {NameOf(scout).ToLowerInvariant()} for {World.ScoutCost}  [Q]   ({W.ScoutCount(_me)}/{World.MaxScouts})" + (canScout ? "" : $"   ({whyNot.ToLowerInvariant()})");
+        _scoutButton.Disabled = !canScout || !W.Started || W.Winner >= 0;
+        bool canTruck = W.CanOrder(_me, e.Id, Kind.MobileBase, out whyNot);
+        _truckButton.Text = $"Build a mobile base for {World.MobileBaseCost}  [G]   ({W.BaseCount(_me)}/{World.MaxBases} bases)" + (canTruck ? "" : $"   ({whyNot.ToLowerInvariant()})");
+        _truckButton.Disabled = !canTruck || !W.Started || W.Winner >= 0;
+    }
+
+    /// <summary>The set-up / pack-up button: for a picked mobile base on the move, or a set-up one of mine.</summary>
+    void ShowDeploy(Entity e)
+    {
+        bool truck = e.Kind == Kind.MobileBase && e.Owner == _me, post = e.Kind == Kind.Outpost && e.Owner == _me;
+        _deployButton.Visible = truck || post;
+        if (truck)
+        {
+            bool can = W.CanDeploy(_me, e.Id, out var why);
+            _deployButton.Text = "Set up here  [F]" + (can ? "" : $"   ({why.ToLowerInvariant()})");
+            _deployButton.Disabled = !can || W.Winner >= 0;
+        }
+        else if (post)
+        {
+            bool can = W.CanPackUp(_me, e.Id, out var why);
+            _deployButton.Text = "Pack up to move it" + (can ? "" : $"   ({why.ToLowerInvariant()})");
+            _deployButton.Disabled = !can || W.Winner >= 0;
+        }
+    }
+
+    /// <summary>F, or the button: picked mobile bases set up where they stand; a picked set-up base packs up.</summary>
+    void DeployOrPack()
+    {
+        if (W.Winner >= 0) return;
+        foreach (var id in _scouts.OrderBy(id => id))
+            if (W.Find(id) is { Kind: Kind.MobileBase } t && W.CanDeploy(_me, t.Id, out _)) _session.Issue(new Deploy(_me, t.Id));
+        if (W.Find(_selected) is { Kind: Kind.MobileBase } one && !_scouts.Contains(one.Id) && W.CanDeploy(_me, one.Id, out _)) _session.Issue(new Deploy(_me, one.Id));
+        if (W.Find(_selected) is { Kind: Kind.Outpost } post && W.CanPackUp(_me, post.Id, out _)) _session.Issue(new PackUp(_me, post.Id));
     }
 
     /// <summary>The three upgrade buttons, for one of my factories only.</summary>
@@ -1259,7 +1284,7 @@ public partial class Main : Node3D
         var s = e.Stats;
         var lines = new List<string>
         {
-            $"{NameOf(e.Kind)}  ({(e.Owner == _me ? "yours" : "enemy")})",
+            $"{(World.IsUtility(e) ? "Utility wing" : e.Kind == Kind.Factory ? NameOf(e.Makes) + " wing" : NameOf(e.Kind))}  ({(e.Owner == _me ? "yours" : "enemy")})",
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
@@ -1268,7 +1293,9 @@ public partial class Main : Node3D
                 Kind.Extractor => World.DepositResource[e.Deposit] == Battler.Sim.Resource.Sulfur
                     ? $"Mines sulfur: +{World.SulfurBonusPercent}% damage for every explosive weapon\non your side, and napalm for mortars, artillery and crawlers."
                     : $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second.",
-                Kind.Node => $"Part of the network: carries power on to nodes within {World.LinkReach},\nand takes {World.NodeSlots} factories beside it. Lose it and what's past it stops.",
+                Kind.MobileBase => e.Owner == _me
+                    ? "A mobile base on the move: right-click to send it,\nF (or the button) to set it up where it stands."
+                    : "A mobile base on the move: it means to set up nearby.",
                 Kind.Tank => "Tough all-rounder.",
                 Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
                 Kind.Spider => "A four-legged walker: quick, lightly armoured, a twin\nlaser firing three times a second, little each shot.",
@@ -1279,10 +1306,11 @@ public partial class Main : Node3D
                     : "A flying scout: it's watching you.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
-                Kind.Hq => "Lose it and you lose the match.",
+                Kind.Hq => $"Lose it and you lose the match. Takes {World.HqWings} wings (B);\nits radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
                 Kind.Tower => "Guards the base: long range and sight.",
-                Kind.Outpost => "A sub-base: build factories inside its ring.",
-                _ => $"Makes: {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
+                Kind.Outpost => $"A mobile base, set up: takes {World.OutpostWings} wings (B), extractors within\n{World.BaseReach}, radar {World.OutpostRadar}. With no wings it can pack up and move.",
+                _ when World.IsUtility(e) => "Utility wing: builds scouts and mobile bases to order.",
+                _ => $"Wing: makes {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
             },
             $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
         };
@@ -1299,25 +1327,23 @@ public partial class Main : Node3D
         if (s.IsUnit && (e.Level(Upgrade.Damage) > 0 || e.Level(Upgrade.Armour) > 0))
             lines.Add($"Upgraded  damage {e.Level(Upgrade.Damage)}/3, armour {e.Level(Upgrade.Armour)}/3");
         if (World.IsBase(e) && e.Owner == _me)
-            lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
-        if (e.Kind == Kind.Hq && e.Owner == _me && e.ScoutQueue > 0)
-            lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
-        if (e.Owner == _me && s.IsBuilding && !e.Powered && e.Kind is Kind.Factory or Kind.Extractor or Kind.Node)
-            lines.Add("NO POWER: cut off from your network");
+            lines.Add($"Wings  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
+        if (World.IsUtility(e) && e.Owner == _me && e.Orders.Count > 0)
+            lines.Add($"Building  {string.Join(", ", e.Orders.Select(o => NameOf((Kind)o).ToLowerInvariant()))}   (next in {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s)");
         if (e.Kind == Kind.Factory && World.CanFitNapalm(e.Makes))
             lines.Add($"Fitting  {e.Fitting}" + (e.Fitting == Fitting.Napalm && W.SulfurOf(e.Owner) == 0 ? "  (no sulfur: standard for now)" : ""));
         if (s.IsUnit && e.Fitting == Fitting.Napalm)
             lines.Add("Napalm: hits leave the ground burning");
         if (e.Building > 0)
             lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
-        else if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        else if (e.Kind == Kind.Factory && !World.IsUtility(e)) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
         if (e.Kind == Kind.Factory && e.Owner == _me)
             lines.Add(e.HasRally ? "New units go to its flag first, then attack"
                 : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"
                 : "Units attack  (right-click the ground to set a rally point)");
         if (e.Kind == Kind.Hq && e.Owner == _me)
-            lines.Add(e.HasRally ? "Base rally: new scouts, and units from factories\nwithout their own flag, gather at the flag"
-                                 : "Right-click the ground to set a base rally point\n(for scouts, and factories without their own)");
+            lines.Add(e.HasRally ? "Base rally: units from wings without their own flag\ngather at the flag"
+                                 : "Right-click the ground to set a base rally point\n(for wings without their own)");
         return string.Join("\n", lines);
     }
 
@@ -1351,11 +1377,10 @@ public partial class Main : Node3D
                 ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
                 if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
             }
-            else if (_placing == Kind.Node) ok = W.CanPlaceNode(_me, ToFix(at), out _placeProblem);
-            else ok = W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
+            else ok = false;
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = BuildingModel(_placing.Value is Kind.Node or Kind.Extractor ? _placing.Value : Kind.Factory, _placing.Value, MyCiv);
+            var name = BuildingModel(Kind.Extractor, Kind.Hq, MyCiv);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
@@ -1367,14 +1392,9 @@ public partial class Main : Node3D
         if (_placeModel != null) _placeModel.Visible = _ghost.Visible;
         _ghost.Visible = false;   // (the plain box is only the fallback now)
 
-        // Factories and outposts ordered during a pause, waiting for it to end.
-        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceNode or PlaceExtractor)
-            .Select(c => c switch
-            {
-                PlaceFactory pf => (BuildingModel(Kind.Factory, pf.Makes, MyCiv), pf.Pos),
-                PlaceExtractor pe => (BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), World.Deposits[pe.Deposit]),
-                _ => (BuildingModel(Kind.Node, Kind.Hq, MyCiv), ((PlaceNode)c).Pos),
-            }).ToList();
+        // Extractors ordered during a pause, waiting for it to end.
+        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceExtractor)
+            .Select(c => (BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), World.Deposits[((PlaceExtractor)c).Deposit])).ToList();
         if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
             foreach (var g in _heldGhosts) g.QueueFree();
@@ -1426,14 +1446,8 @@ public partial class Main : Node3D
         }
         UpdateBuildMenu();
         UpdateQueueBar();
-        var menu = "[B] Build   [E] Pick scouts   [P] Pause   [Esc] Menu";
-        var placingWhat = _placing switch
-        {
-            Kind.Node => $"a node (within {World.LinkReach} of your network)",
-            Kind.Extractor => "an extractor (on a deposit your network reaches)",
-            Kind kind => NameOf(kind) + " factory",
-            null => "",
-        };
+        var menu = "[B] Build   [E] Pick scouts   [F] Set up / pack up   [P] Pause   [Esc] Menu";
+        var placingWhat = _placing == Kind.Extractor ? $"an extractor (on a deposit within {World.BaseReach} of a base)" : "";
         var building = _placing == null
             ? menu
             : $"Placing {placingWhat}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
@@ -1454,8 +1468,8 @@ public partial class Main : Node3D
             _banner.Text = (W.Winner == _me ? "Victory" : "Defeat") + (_session is LocalSession ? "  -  R to play again" : "");
         else if (!W.Started)
             _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
-                ? "Waiting for the enemy to place their first factory..."
-                : "Place your first factory: press B, pick one, then click near your HQ\nThe battle starts once both sides have one";
+                ? "Waiting for the enemy to build their first wing..."
+                : "Build your first wing: press B and pick one (it goes onto your HQ)\nThe battle starts once both sides have one";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
@@ -1468,31 +1482,50 @@ public partial class Main : Node3D
     // ---- the build menu (the user, 2026-10-20: "b to pop open build and then you can hotkey each options and have a
     // little menu in the middle show these options") ------------------------------------------------------------
 
-    /// <summary>One line of the build menu: its key, what it's called, what it costs, and what picking it does
-    /// (a building to place, or Place null for a scout from the HQ).</summary>
-    sealed record BuildOption(Key Key, string Name, int Cost, Kind? Place);
+    /// <summary>One line of the build menu: its key, what it's called, what it costs, and what it is: a wing (making
+    /// What; Kind.MobileBase for the utility wing), an extractor to place, or a scout or mobile base to order at a
+    /// utility wing.</summary>
+    sealed record BuildOption(Key Key, string Name, int Cost, Kind What, BuildAction Action);
+    enum BuildAction { Wing, Extractor, Order }
 
     static readonly BuildOption[] CoalitionOptions =
     {
-        new(Key.L, "Light tank factory", World.FactoryCost, Kind.LightTank),
-        new(Key.T, "Tank factory", World.FactoryCost, Kind.Tank),
-        new(Key.M, "Mortar factory", World.FactoryCost, Kind.Mortar),
-        new(Key.A, "Artillery factory", World.FactoryCost, Kind.Artillery),
-        new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
-        new(Key.N, "Conduit node (grows your network)", World.NodeCost, Kind.Node),
-        new(Key.C, "Scout (built at the HQ)", World.ScoutCost, null),
+        new(Key.L, "Light tank wing", World.FactoryCost, Kind.LightTank, BuildAction.Wing),
+        new(Key.T, "Tank wing", World.FactoryCost, Kind.Tank, BuildAction.Wing),
+        new(Key.M, "Mortar wing", World.FactoryCost, Kind.Mortar, BuildAction.Wing),
+        new(Key.A, "Artillery wing", World.FactoryCost, Kind.Artillery, BuildAction.Wing),
+        new(Key.U, "Utility wing (scouts, mobile bases)", World.FactoryCost, Kind.MobileBase, BuildAction.Wing),
+        new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
+        new(Key.C, "Scout (from a utility wing)", World.ScoutCost, Kind.Scout, BuildAction.Order),
+        new(Key.G, "Mobile base (from a utility wing)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
     };
 
     // The Lattice's (the user, 2026-10-21): crawlers, spiders, piercers (anti-armour); drones for scouts.
     static readonly BuildOption[] LatticeOptions =
     {
-        new(Key.C, "Crawler nest (swarm)", World.FactoryCost, Kind.Crawler),
-        new(Key.S, "Spider nest", World.FactoryCost, Kind.Spider),
-        new(Key.A, "Piercer nest (anti-armour)", World.FactoryCost, Kind.Piercer),
-        new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
-        new(Key.N, "Tendril node (grows your network)", World.NodeCost, Kind.Node),
-        new(Key.D, "Drone (flying scout, built at the HQ)", World.ScoutCost, null),
+        new(Key.C, "Crawler nest (swarm)", World.FactoryCost, Kind.Crawler, BuildAction.Wing),
+        new(Key.S, "Spider nest", World.FactoryCost, Kind.Spider, BuildAction.Wing),
+        new(Key.A, "Piercer nest (anti-armour)", World.FactoryCost, Kind.Piercer, BuildAction.Wing),
+        new(Key.U, "Utility nest (drones, mobile bases)", World.FactoryCost, Kind.MobileBase, BuildAction.Wing),
+        new(Key.X, "Extractor (on a deposit near a base)", World.ExtractorCost, Kind.Extractor, BuildAction.Extractor),
+        new(Key.D, "Drone (flying scout, from a utility nest)", World.ScoutCost, Kind.Drone, BuildAction.Order),
+        new(Key.G, "Mobile base (from a utility nest)", World.MobileBaseCost, Kind.MobileBase, BuildAction.Order),
     };
+
+    /// <summary>The base a new wing goes onto: the picked base of mine (or the base of a picked wing), else the HQ.</summary>
+    Entity WingTarget()
+    {
+        var picked = W.Find(_selected);
+        if (picked != null && picked.Owner == _me)
+        {
+            if (World.IsBase(picked)) return picked;
+            if (picked.Kind == Kind.Factory && W.Find(picked.BaseId) is { } home) return home;
+        }
+        return W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me);
+    }
+
+    /// <summary>The utility wing an order goes to: the picked one, else the first that's built.</summary>
+    Entity OrderTarget() => W.Find(_selected) is { } picked && World.IsUtility(picked) && picked.Owner == _me ? picked : W.UtilityOf(_me);
 
     BuildOption[] BuildOptions => MyCiv == Civ.Lattice ? LatticeOptions : CoalitionOptions;
 
@@ -1527,7 +1560,7 @@ public partial class Main : Node3D
         }
         var hint = new Label
         {
-            Text = "Press a letter (or click).  B or Esc closes.\nExpand: scout a deposit, put an extractor on it, then an outpost on its pad.",
+            Text = "Press a letter (or click).  B or Esc closes.\nWings go onto the picked base (or the HQ). Expand: a mobile base\nfrom a utility wing, driven out and set up (F), then extractors near it.",
             HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.7f),
         };
         hint.AddThemeFontSizeOverride("font_size", 14);
@@ -1548,9 +1581,10 @@ public partial class Main : Node3D
     string BuildBlocked(BuildOption o)
     {
         if (W.Players[_me].Metal < o.Cost) return "not enough metal";
-        if (o.Place is Kind.Node or Kind.Extractor || o.Place == null)
-            if (!W.Started) return "once the battle starts";
-        if (o.Place == null && !W.CanQueueScout(_me, out var why)) return why.ToLowerInvariant();
+        if (o.Action != BuildAction.Wing && !W.Started) return "once the battle starts";
+        string why = null;
+        if (o.Action == BuildAction.Wing && WingTarget() is { } b && !W.CanAddWing(_me, b.Id, o.What, out why)) return why.ToLowerInvariant();
+        if (o.Action == BuildAction.Order && (OrderTarget() is not { } u || !W.CanOrder(_me, u.Id, o.What, out why))) return (why ?? "needs a utility wing").ToLowerInvariant();
         return null;
     }
 
@@ -1563,19 +1597,24 @@ public partial class Main : Node3D
         {
             var o = BuildOptions[i];
             var blocked = BuildBlocked(o);
-            _buildButtons[i].Text = $"[{o.Key}]   {o.Name}   {o.Cost}" + (blocked != null ? $"   ({blocked})" : "");
+            var onto = o.Action == BuildAction.Wing && WingTarget() is { Kind: Kind.Outpost } ? "  (onto the picked base)" : "";
+            _buildButtons[i].Text = $"[{o.Key}]   {o.Name}   {o.Cost}{onto}" + (blocked != null ? $"   ({blocked})" : "");
             _buildButtons[i].Modulate = blocked == null ? Colors.White : new Color(1, 1, 1, 0.45f);
         }
     }
 
-    /// <summary>A building to place (the menu closes and the hologram follows the mouse), or a scout ordered at once.</summary>
+    /// <summary>A wing goes straight onto its base; an extractor to place (the menu closes and the hologram follows
+    /// the mouse); a scout or mobile base ordered at once.</summary>
     void PickBuild(BuildOption o)
     {
-        if (o.Place is Kind.Node or Kind.Extractor || o.Place == null)
-            if (!W.Started) return;
+        if (BuildBlocked(o) is { } why && why != "not enough metal") return;   // (short of metal: order it anyway, it won't go)
         SetBuildMenu(false);
-        if (o.Place is { } kind) _placing = kind;
-        else _session.Issue(new QueueScout(_me));
+        switch (o.Action)
+        {
+            case BuildAction.Wing: _session.Issue(new AddWing(_me, WingTarget().Id, o.What)); break;
+            case BuildAction.Extractor: _placing = Kind.Extractor; break;
+            case BuildAction.Order: _session.Issue(new Order(_me, OrderTarget().Id, o.What)); break;
+        }
     }
 
     // ---- the Escape menu (the user, 2026-10-20: "we need escape to pause") -----------------------------------------
@@ -1668,12 +1707,7 @@ public partial class Main : Node3D
                     if (_placeProblem == null)
                     {
                         var at = ToFix(_mouseGround.Value);
-                        _session.Issue(_placing switch
-                        {
-                            Kind.Node => new PlaceNode(_me, at),
-                            Kind.Extractor => new PlaceExtractor(_me, _placeDeposit),
-                            _ => new PlaceFactory(_me, at, _placing.Value),
-                        });
+                        if (_placing == Kind.Extractor) _session.Issue(new PlaceExtractor(_me, _placeDeposit));
                         _placing = null;
                     }
                 }
@@ -1700,14 +1734,14 @@ public partial class Main : Node3D
                 var box = new Rect2(from, Vector2.Zero).Expand(up.Position);
                 if (!add) _scouts.Clear();
                 foreach (var e in W.Entities)
-                    if (World.IsScout(e.Kind) && e.Owner == _me && !_camera.IsPositionBehind(ToV3(e.Pos)) && box.HasPoint(_camera.UnprojectPosition(ToV3(e.Pos))))
+                    if (World.IsSteered(e.Kind) && e.Owner == _me && !_camera.IsPositionBehind(ToV3(e.Pos)) && box.HasPoint(_camera.UnprojectPosition(ToV3(e.Pos))))
                         _scouts.Add(e.Id);
                 _selected = _scouts.Count > 0 ? _scouts.Min() : -1;
             }
             else if (_mouseGround.HasValue)
             {
                 var hit = EntityAt(_mouseGround.Value);
-                if (hit is { } s && World.IsScout(s.Kind) && s.Owner == _me)
+                if (hit is { } s && World.IsSteered(s.Kind) && s.Owner == _me)
                 {
                     // Shift-click adds or drops a scout; a plain click picks just that one.
                     if (!add) _scouts.Clear();
@@ -1733,11 +1767,12 @@ public partial class Main : Node3D
         else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) SetBuildMenu(true);
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0)
-                _placing = World.FactoryKindsOf(MyCiv)[k.Keycode - Key.Key1];
-            else if (k.Keycode == Key.Key7 && W.Winner < 0 && W.Started) _placing = Kind.Node;
+            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0 && WingTarget() is { } onto)
+                _session.Issue(new AddWing(_me, onto.Id, World.FactoryKindsOf(MyCiv)[k.Keycode - Key.Key1]));
             else if (k.Keycode == Key.Key6 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
-            else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started) _session.Issue(new QueueScout(_me));
+            else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started && OrderTarget() is { } qu) _session.Issue(new Order(_me, qu.Id, World.ScoutKindOf(MyCiv)));
+            else if (k.Keycode == Key.G && W.Winner < 0 && W.Started && OrderTarget() is { } gu) _session.Issue(new Order(_me, gu.Id, Kind.MobileBase));
+            else if (k.Keycode == Key.F) DeployOrPack();
             else if (k.Keycode == Key.E)   // pick all my scouts
             {
                 _scouts.Clear();

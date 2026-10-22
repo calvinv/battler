@@ -239,6 +239,30 @@ def node():
     finish_realistic("node", 22.0, serial="04")
 
 
+
+def factory_mobilebase():
+    """The utility wing: a squat workshop with a wide open bay (mobile bases come out of it), a radar dish on a mast
+    and a crane over the bay, hazard posts at the door."""
+    k.begin(0.0)
+    apron(12.5, 10.5)
+    plate(-10, 8, -9, 9, 0.5, 6.5, "steel", inset=1.2, front=0.3, back=1.0)             # the workshop
+    plate(-8.8, 7.0, -7.6, 7.6, 6.5, 7.4, "plate", inset=0.5)
+    k.box(-7.6, 2.0, -6.0, 6.0, 7.4, 7.65, "paint")                                    # team panel on the roof
+    k.box(7.6, 8.4, -7.0, 7.0, 0.5, 5.8, "black")                                      # the wide bay
+    k.box(7.6, 8.6, -7.8, 7.8, 5.8, 6.6, "plate")
+    strip(8.5, 8.7, -6.8, 6.8, 6.0, "glow", 0.3)
+    for s in (1, -1):
+        k.box(7.6, 9.2, s * 7.2 - 0.5, s * 7.2 + 0.5, 0.5, 5.8, "hazard")                   # door posts
+        strip(-9.0, 6.6, s * 8.4 - 0.1, s * 8.4 + 0.1, 4.0, "glow", 0.2)
+    k.drum(-5.0, 4.5, 0.6, 7.4, 13.0, "dark", 8)                                       # the radar mast
+    hexagon(-5.0, 4.5, 3.0, 13.0, 13.5, "mid", r1=2.0, sides=10)                       # its dish
+    hexagon(-5.0, 4.5, 0.6, 13.5, 14.4, "glow", sides=8)
+    k.box(-1.0, 0.4, -4.6, -3.2, 7.4, 12.0, "mid")                                     # crane post and jib over the bay
+    tube_between((-0.3, -3.9, 11.6), (9.5, -1.0, 10.4), 0.4, "dark", 6)
+    k.box(9.0, 10.0, -1.5, -0.5, 8.4, 10.4, "hazard")
+    finish_realistic("factory_mobilebase", 34.0, serial="18")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar, "factory_spider": factory_spider,
- "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node}[which]()
+ "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node, "factory_mobilebase": factory_mobilebase}[which]()
