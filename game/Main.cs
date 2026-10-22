@@ -778,19 +778,30 @@ public partial class Main : Node3D
 
     void UpdateBuildGhost(Entity f)
     {
-        if (!_ghosts.TryGetValue(f.Id, out var ghost))
+        // What's on the way: a fighting wing's next unit; a utility wing's current order (nothing when it has none).
+        Kind? making = World.IsUtility(f) ? (f.Orders.Count > 0 ? (Kind)f.Orders[0] : null) : f.Makes;
+        if (_ghosts.TryGetValue(f.Id, out var ghost) && (making == null || ghost.Name != making.ToString()))
         {
-            ghost = UnitArt.MakeBuilding(ModelOf(f.Makes), TeamColor[f.Owner]);
+            ghost.QueueFree();
+            _ghosts.Remove(f.Id);
+            ghost = null;
+        }
+        if (making is not { } kind) return;
+        if (ghost == null)
+        {
+            ghost = UnitArt.MakeBuilding(UnitModel(kind, CivOf(f.Owner)), TeamColor[f.Owner]);
+            ghost.Name = kind.ToString();
             AddChild(ghost);
             _ghosts[f.Id] = ghost;
-            // Where the sim rolls the unit out (World.Produce), without its little sideways spread, facing the enemy.
-            var toward = (W.Players[1 - f.Owner].HqPos - f.Pos).WithLength(f.Stats.Radius + World.StatsFor[(int)f.Makes].Radius + 1);
-            var at = ToV3(f.Pos + toward);
-            ghost.Position = at;
-            ghost.Basis = Basis.LookingAt(new Vector3(toward.X.ToFloat(), 0, toward.Z.ToFloat()).Normalized(), Vector3.Up);
+            // At the wing's door, facing out, where the sim rolls the unit out (World.DoorOf, without its little spread).
+            var dir = W.Find(f.BaseId) is { } home && home != f ? f.Pos - home.Pos : W.Players[1 - f.Owner].HqPos - f.Pos;
+            dir = dir.WithLength(f.Stats.Radius + World.StatsFor[(int)kind].Radius + 1);
+            ghost.Position = ToV3(f.Pos + dir);
+            ghost.Basis = Basis.LookingAt(new Vector3(dir.X.ToFloat(), 0, dir.Z.ToFloat()).Normalized(), Vector3.Up);
         }
-        ghost.Visible = Shown(f) && W.Started && W.Winner < 0;
-        UnitArt.SetBuilt(ghost, 1f - f.Timer / (float)World.BuildTicksOf(f));
+        ghost.Visible = Shown(f) && W.Started && W.Winner < 0 && f.Building == 0;
+        int total = World.IsUtility(f) ? World.StatsFor[(int)kind].BuildTicks : World.BuildTicksOf(f);
+        UnitArt.SetBuilt(ghost, 1f - f.Timer / (float)total);
     }
 
     readonly Dictionary<int, Node3D> _flags = new();
@@ -1366,7 +1377,7 @@ public partial class Main : Node3D
             (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
-            (W.Started ? $"Feral wave {W.WaveNumber + 1} in {Clock(W.NextWaveIn)}\n" : "") +
+            (W.Started && World.FeralsOn ? $"Feral wave {W.WaveNumber + 1} in {Clock(W.NextWaveIn)}\n" : "") +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
         if (_session is LockstepSession ls)
             _hud.Text += $"\nLAN {(_me == 0 ? "host" : "client")}   checks passed {ls.VerifiedTicks}" + (_waiting ? "   waiting..." : "");

@@ -158,6 +158,8 @@ public sealed class World
     // and go for the nearest building; every deposit away from home starts guarded by a derelict turret and a few
     // ferals. Killing them pays salvage.
     public const int Feral = 2;   // their owner number
+    // Switched off (the user, 2026-10-22: "get rid of the npcs"): no waves, no guards. True brings them back.
+    public const bool FeralsOn = false;
     public const int WaveTicks = 90 * TicksPerSecond, FirstWaveTicks = 60 * TicksPerSecond, MaxFerals = 50;
     /// <summary>What destroying something pays whoever did it (ferals collect nothing): the scrap in it. Units are free
     /// to build, so this is what a fight is worth; buildings pay about half their cost. Tuned so that, over a match,
@@ -383,7 +385,7 @@ public sealed class World
             Spawn(Kind.Hq, i, hq);
             foreach (var side in new[] { -10, 10 }) Spawn(Kind.Tower, i, TowerStart(i, side));
         }
-        PlaceGuards();
+        if (FeralsOn) PlaceGuards();
     }
 
     static Fix Clamp(Fix v, Fix limit) => Fix.Max(-limit, Fix.Min(limit, v));
@@ -1006,7 +1008,7 @@ public sealed class World
         BuyQueuedUpgrades();
         Construct();
         Produce();
-        SendWaves();
+        if (FeralsOn) SendWaves();
         Fight();
         Separate();
         Settle();

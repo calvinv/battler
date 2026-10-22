@@ -90,7 +90,7 @@ bool BaseTest()
     var spot = World.Deposits[metalAt] + (World.Deposits[metalAt] - hq0.Pos).WithLength(Fix.FromInt(8));   // (just past it, clear of the HQ)
     w.Step(new Command[] { new MoveUnits(0, new[] { truck.Id }, spot) });
     for (int t = 0; t < 4000 && truck.HasWaypoint; t++) w.Step(Array.Empty<Command>());
-    bool guarded = !w.CanDeploy(0, truck.Id, out _) && w.GuardNear(World.Deposits[metalAt]);
+    bool guarded = !World.FeralsOn || (!w.CanDeploy(0, truck.Id, out _) && w.GuardNear(World.Deposits[metalAt]));   // (no guards with ferals off)
     foreach (var g in w.Entities) if (g.Owner == World.Feral && (g.Pos - World.Deposits[metalAt]).LengthSq < Fix.FromInt(30 * 30)) g.Hp = 0;   // cleared
     w.Step(Array.Empty<Command>());
     bool canDeploy = w.CanDeploy(0, truck.Id, out var why);
@@ -112,7 +112,7 @@ bool BaseTest()
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
     bool ok = truck != null && guarded && canDeploy && post != null && canMine && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && WaveTest();
+    return ok && (!World.FeralsOn || WaveTest());
 }
 
 // The first feral wave comes in from both edges a minute after the start.
@@ -289,7 +289,7 @@ bool QueueTest()
     w.Step(new Command[] { new UpgradeFactory(0, f.Id, Upgrade.Damage), new UpgradeFactory(0, f.Id, Upgrade.Damage), new UpgradeFactory(0, f.Id, Upgrade.Armour) });
     int queued = f.UpgradeQueue.Count;
     int ticks = 0;
-    while (f.UpgradeQueue.Count > 0 && ticks++ < 2000) w.Step(Array.Empty<Command>());
+    while (f.UpgradeQueue.Count > 0 && ticks++ < 4000) w.Step(Array.Empty<Command>());   // (800 metal on mining alone: about 270 s)
     bool ok = queued == 3 && f.Level(Upgrade.Damage) == 2 && f.Level(Upgrade.Armour) == 1;
     Console.WriteLine($"Queue test: {queued} queued with no metal, bought within {ticks / World.TicksPerSecond} s: damage {f.Level(Upgrade.Damage)}, armour {f.Level(Upgrade.Armour)}: {(ok ? "OK" : "FAILED")}");
     return ok;
