@@ -1475,8 +1475,7 @@ public sealed class World
                 continue;
             }
 
-            // A bomber that has just dropped flies on for a while before turning back: bombing runs, not hovering.
-            if (e.Kind == Kind.Bomber && e.Cooldown > s.Reload * 2 / 3 && e.Heading.LengthSq.Raw > 0) { _moves.Add((e, e.Heading * s.Speed)); continue; }
+            if (e.Kind == Kind.Bomber) { FlyBomber(e); continue; }
             var target = NearestEnemy(e, AggroOf(e) + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
             if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, AggroOf(e) + MaxDownhillRange, Fix.Zero) != null) continue;
@@ -1778,6 +1777,40 @@ public sealed class World
     };
 
     static readonly Fix TurnCos = Fix.Ratio(866, 1000), TurnSin = Fix.Ratio(1, 2);   // at most 30 degrees a tick
+    static readonly Fix BankCos = Fix.Ratio(974, 1000), BankSin = Fix.Ratio(225, 1000);   // a bomber: at most 13 degrees a tick
+
+    /// <summary>
+    /// A bomber flies like a plane (the user, 2026-10-22: "bombers should drop a bomb and fly over in loops"): always
+    /// on at full speed, turning only so fast, toward its target (or where its side's army is heading). It drops its
+    /// bomb as it passes over, overshoots, loops round and comes over again: with its turn it circles about 3.5 across.
+    /// </summary>
+    void FlyBomber(Entity e)
+    {
+        var s = e.Stats;
+        var target = NearestEnemy(e, AggroOf(e), Fix.Zero);
+        if (target != null && e.Cooldown == 0)
+        {
+            var gap = (target.Pos - e.Pos).Length - s.Radius - target.Stats.Radius;
+            if (gap <= RangeOf(e)) Fire(e, WeakestInReach(e, target));
+        }
+        var goal = target?.Pos ?? NearestKnown(e.Owner, e.Pos, false);
+        var to = goal - e.Pos;
+        var h = e.Heading.LengthSq.Raw == 0 ? (to.LengthSq.Raw == 0 ? new FixVec2(1, 0) : to.WithLength(Fix.One)) : e.Heading;
+        if (to.LengthSq.Raw > 0)
+        {
+            var want = to.WithLength(Fix.One);
+            if (h.X * want.X + h.Z * want.Z >= BankCos) h = want;
+            else
+            {
+                var left = new FixVec2(-h.Z, h.X);
+                h = (h * BankCos + left * ((left.X * want.X + left.Z * want.Z).Raw >= 0 ? BankSin : -BankSin)).WithLength(Fix.One);
+            }
+        }
+        e.Heading = h;
+        var next = e.Pos + h * s.Speed;
+        if (Fix.Abs(next.X) > MapHalfX - 2 || Fix.Abs(next.Z) > MapHalfZ - 2) next = e.Pos + to.WithLength(s.Speed);   // (turn in from the map's edge)
+        _moves.Add((e, next - e.Pos));
+    }
 
     /// <summary>
     /// A ground unit's step, turned from the way it's already heading by at most 30 degrees a tick, and slowed by how far

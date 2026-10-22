@@ -50,8 +50,8 @@ if (args.Contains("matchups"))   // the cheap and air units against each other a
         while (t2++ < 1800)
         {
             w.Step(Array.Empty<Command>());
-            if (Environment.GetEnvironmentVariable("TRACE") == "1" && t2 % 20 == 0 && ka == Kind.Ranger && kb == Kind.Bomber && na == 3 && t2 < 400)
-                Console.WriteLine($"  t{t2}: " + string.Join("  ", w.Entities.FindAll(e => e.Kind == ka || e.Kind == kb).ConvertAll(e => $"p{e.Owner}({e.Pos.X.ToInt()},{e.Pos.Z.ToInt()}) {e.Hp} cd{e.Cooldown} sh{w.Shots.Count}")));
+            if (Environment.GetEnvironmentVariable("TRACE") == "1" && t2 % 3 == 0 && ka == Kind.Bomber && t2 > 60 && t2 < 130)
+                Console.WriteLine($"  t{t2}: " + string.Join("  ", w.Entities.FindAll(e => e.Kind == ka && e.Id == w.Entities.Find(b => b.Kind == ka).Id).ConvertAll(e => $"p{e.Owner}({e.Pos.X.ToInt()},{e.Pos.Z.ToInt()}) {e.Hp} cd{e.Cooldown} sh{w.Shots.Count}")));
             if (first < 0 && w.Entities.Exists(e => (e.Kind == ka || e.Kind == kb) && e.Hp < e.MaxHp)) first = w.Tick;
             int a = w.Entities.Count(e => e.Kind == ka && e.Owner == 0), b = w.Entities.Count(e => e.Kind == kb && e.Owner == 1);
             if (a == 0 || b == 0) { end = $"{(w.Tick - first) / (float)World.TicksPerSecond:0.0} s of fighting, {a} v {b} left"; break; }
