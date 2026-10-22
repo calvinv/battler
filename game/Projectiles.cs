@@ -79,7 +79,7 @@ public partial class Projectiles : Node3D
         var hot = new Color(1f, 0.85f, 0.45f);
         switch (by)
         {
-            case Kind.Scout:   // a short burst of light tracers
+            case Kind.Scout or Kind.Ranger:   // a short burst of light tracers
                 for (int i = 0; i < 3; i++)
                 {
                     var miss = new Vector3(_rng.RandfRange(-0.35f, 0.35f), _rng.RandfRange(-0.1f, 0.3f), _rng.RandfRange(-0.35f, 0.35f));
@@ -92,12 +92,12 @@ public partial class Projectiles : Node3D
                 AddFlash(from, 2.6f, 0.16f, new Color(1f, 0.6f, 0.25f));
                 for (int i = 0; i < 3; i++) Dust?.Add(from, new Vector3(_rng.RandfRange(-1, 1), _rng.RandfRange(0.6f, 1.4f), _rng.RandfRange(-1, 1)), 0.9f, Smoke);
                 break;
-            case Kind.Mortar:   // a small shell lobbed high and short, a lighter burst
+            case Kind.Mortar or Kind.Bomber:   // a small shell lobbed high and short, a lighter burst
                 Add(new Round { From = from, To = to, Flight = flight > 0 ? flight : 0.4f + dist / 30f, Arc = dist * 0.55f, Thick = 0.2f, Length = 0.5f, Col = new Color(0.25f, 0.22f, 0.18f), By = by, Burst = true });
                 AddFlash(from, 1.5f, 0.12f, new Color(1f, 0.6f, 0.25f));
                 Dust?.Add(from, new Vector3(0, 1f, 0), 0.6f, Smoke);
                 break;
-            case Kind.LightTank:   // a quick light round
+            case Kind.LightTank or Kind.Flier:   // a quick light round
                 Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));
                 break;

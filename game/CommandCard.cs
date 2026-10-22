@@ -221,8 +221,8 @@ public partial class Main
         return items.Where(i => i != null).ToList();
     }
 
-    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K };
-    static readonly Key[] LatticeWingKeys = { Key.C, Key.I, Key.K };
+    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H };
+    static readonly Key[] LatticeWingKeys = { Key.C, Key.I, Key.K, Key.J, Key.F, Key.H };
 
     void BaseItems(Entity b, List<CardItem> items)
     {

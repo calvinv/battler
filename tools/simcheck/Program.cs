@@ -32,6 +32,34 @@ if (args.Contains("battle"))   // how long a straight fight between equal groups
     }
     return 0;
 }
+if (args.Contains("matchups"))   // the cheap and air units against each other and the rest
+{
+    foreach (var (ka, na, kb, nb) in new[] { (Kind.Ranger, 5, Kind.Ranger, 5), (Kind.Ranger, 5, Kind.LightTank, 3), (Kind.Flier, 5, Kind.Flier, 5),
+                                             (Kind.Bomber, 3, Kind.Tank, 5), (Kind.Ranger, 6, Kind.Bomber, 3), (Kind.Flier, 4, Kind.Bomber, 3) })
+    {
+        var w = new World(3, new[] { Civ.Coalition, Civ.Coalition }) { Started = true };
+        foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower)) t.Hp = 0;
+        w.Step(Array.Empty<Command>());
+        int apart = ka == Kind.Flier || kb == Kind.Flier ? 6 : 12;   // (interceptors only go for fliers they've seen)
+        bool swap = Environment.GetEnvironmentVariable("SWAP") == "1";   // (player 1's made first: does the order matter?)
+        if (swap) for (int i = 0; i < nb; i++) w.Spawn(kb, 1, -new FixVec2(-apart, -6 + i * 3));
+        for (int i = 0; i < na; i++) w.Spawn(ka, 0, new FixVec2(-apart, -6 + i * 3));
+        if (!swap) for (int i = 0; i < nb; i++) w.Spawn(kb, 1, -new FixVec2(-apart, -6 + i * 3));   // (turned round, as the map is)
+        int first = -1, t2 = 0;
+        string end = "still going after 3 minutes";
+        while (t2++ < 1800)
+        {
+            w.Step(Array.Empty<Command>());
+            if (Environment.GetEnvironmentVariable("TRACE") == "1" && t2 % 10 == 0 && ka == Kind.Ranger && kb == Kind.Ranger && t2 < 200)
+                Console.WriteLine($"  t{t2}: " + string.Join("  ", w.Entities.FindAll(e => e.Kind == ka || e.Kind == kb).ConvertAll(e => $"p{e.Owner}({e.Pos.X.ToInt()},{e.Pos.Z.ToInt()}) {e.Hp}")));
+            if (first < 0 && w.Entities.Exists(e => (e.Kind == ka || e.Kind == kb) && e.Hp < e.MaxHp)) first = w.Tick;
+            int a = w.Entities.Count(e => e.Kind == ka && e.Owner == 0), b = w.Entities.Count(e => e.Kind == kb && e.Owner == 1);
+            if (a == 0 || b == 0) { end = $"{(w.Tick - first) / (float)World.TicksPerSecond:0.0} s of fighting, {a} v {b} left"; break; }
+        }
+        Console.WriteLine($"{na} {ka} v {nb} {kb}: {end}");
+    }
+    return 0;
+}
 if (args.Contains("crowd"))   // a big group of tanks marching out of a busy base to the enemy HQ: how well do they get there?
 {
     int n = 30;

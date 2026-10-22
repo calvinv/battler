@@ -269,6 +269,41 @@ def l_wall():
         tube_between((-5.0, s * 5.0, 0.4), (5.0, s * 5.0, 5.0), 0.35, "dark", 4)
 
 
+
+def l_ranger():
+    """A Lattice ranger: a small skittering four-legged scrap body, a spine gun along its back, three eyes."""
+    hexagon(0, 0, 1.6, 1.6, 3.0, "plate", r1=1.2, sides=6)
+    hexagon(0, 0, 1.1, 3.0, 3.15, "paint", sides=6)
+    legs_round(4, 1.2, 2.4, 2.2, 3.2, 0.22)
+    k.box(-1.0, 3.6, -0.18, 0.18, 3.2, 3.5, "dark")
+    eyes(1.7, 0, 2.3, 3, 0.18, 0.4)
+
+
+def l_flier():
+    """A Lattice flier: an insect-like scrap body slung between four buzzing wing plates, amber eyes. Flies."""
+    k.slab([(4.0, 0.0), (1.0, 1.0), (-3.4, 0.6), (-3.4, -0.6), (1.0, -1.0)], 0.0, 1.2, "plate")
+    k.slab([(2.4, 0.0), (0.6, 0.6), (-2.0, 0.4), (-2.0, -0.4), (0.6, -0.6)], 1.2, 1.35, "paint")
+    for s in (1, -1):
+        k.slab([(1.4, s * 0.8), (0.4, s * 5.0), (-0.8, s * 5.0), (-0.4, s * 0.8)] if s > 0 else [(1.4, -0.8), (-0.4, -0.8), (-0.8, -5.0), (0.4, -5.0)], 1.0, 1.1, "steel")
+        k.slab([(-0.8, s * 0.7), (-2.0, s * 3.6), (-2.8, s * 3.6), (-2.0, s * 0.7)] if s > 0 else [(-0.8, -0.7), (-2.0, -0.7), (-2.8, -3.6), (-2.0, -3.6)], 0.9, 1.0, "steel")
+    eyes(4.0, 0, 0.6, 2, 0.25, 0.5)
+
+
+def l_bomber():
+    """A Lattice bomber: a bloated welded sac of a hull on four rotor rings, a cluster of eyes, a bomb cradle below.
+    Flies."""
+    hexagon(0, 0, 3.4, 0.8, 3.6, "plate", r1=2.6, sides=8)
+    hexagon(0, 0, 2.4, 3.6, 3.85, "paint", sides=8)
+    k.drum(0, 0, 1.2, 0.0, 0.8, "dark", 6)
+    for i in range(4):
+        ang = math.tau * (i + 0.5) / 4
+        ca, sa = math.cos(ang) * 5.0, math.sin(ang) * 5.0
+        tube_between((ca * 0.5, sa * 0.5, 2.6), (ca, sa, 2.6), 0.3, "dark", 4)
+        hexagon(ca, sa, 2.0, 2.3, 2.7, "mid", r1=2.0, sides=8)
+        hexagon(ca, sa, 1.6, 2.2, 2.28, "ember", sides=8)
+    eyes(3.4, 0, 2.0, 4, 0.3, 0.6)
+
+
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()

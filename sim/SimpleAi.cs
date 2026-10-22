@@ -125,9 +125,10 @@ public sealed class SimpleAi
     Kind PickUnit(Civ civ)
     {
         var roll = _rng.Next(20);
+        if (roll >= 17) return roll == 17 ? Kind.Ranger : roll == 18 ? Kind.Flier : Kind.Bomber;   // 5% each
         return civ == Civ.Lattice
-            ? (roll < 8 ? Kind.Crawler : roll < 14 ? Kind.Spider : Kind.Piercer)            // crawlers 40%, spiders 30%, piercers 30%
-            : (roll < 7 ? Kind.Tank : roll < 12 ? Kind.LightTank : roll < 16 ? Kind.Artillery : Kind.Mortar);   // tanks 35%, light 25%, artillery 20%, mortars 20%
+            ? (roll < 7 ? Kind.Crawler : roll < 12 ? Kind.Spider : Kind.Piercer)
+            : (roll < 6 ? Kind.Tank : roll < 10 ? Kind.LightTank : roll < 14 ? Kind.Artillery : Kind.Mortar);
     }
 
     /// <summary>Mobile bases on the move: each heads for the nearest deposit no base covers (and no other is heading

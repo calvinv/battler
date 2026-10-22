@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -31,6 +31,7 @@ public sealed class Stats
     public int BuildTicks;    // a unit: how often its factory makes one
     public bool Flying;       // flies: crosses water and hills, and only HitsAir guns can reach it
     public bool HitsAir;      // its gun can hit fliers
+    public bool AirOnly;      // and only fliers (the interceptor)
     public bool Armoured;     // heavy plate: anti-armour weapons do extra to it
     public int VsArmour = 100;   // percent of its damage it does to Armoured targets
     public bool Explosive;    // shells, cannon and spikes: sulfur makes these hit harder
@@ -134,6 +135,9 @@ public sealed class World
         Kind.Mortar or Kind.Spider => 350,
         Kind.Tank or Kind.Piercer => 450,
         Kind.Artillery => 600,
+        Kind.Ranger => 150,
+        Kind.Flier => 300,
+        Kind.Bomber => 400,
         Kind.MobileBase => 300,   // the utility wing
         _ => 500,
     };
@@ -171,6 +175,7 @@ public sealed class World
         Kind.Feral => 40, Kind.FeralBrute => 120, Kind.Derelict => 300,
         Kind.Crawler or Kind.Drone or Kind.Scout => 40, Kind.LightTank or Kind.Spider => 70, Kind.Mortar or Kind.Piercer => 90,
         Kind.Tank => 120, Kind.Artillery => 140, Kind.MobileBase => 300,
+        Kind.Ranger => 30, Kind.Flier => 70, Kind.Bomber => 100,
         Kind.Factory => 250, Kind.Extractor => 150, Kind.Outpost => 300, Kind.Tower => 200, Kind.Hq => 0,
         Kind.Turret or Kind.Flak => 120, Kind.Bombard => 200, Kind.Wall => 25,
         _ => 0,
@@ -217,12 +222,12 @@ public sealed class World
     /// <summary>What factories can make (scouts come from the HQ).</summary>
     // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
     // tank and a combat tank": units stay free, the light ones just come quicker).
-    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery };   // the Coalition's
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber };   // the Coalition's
 
     /// <summary>What a civilisation's factories can make, in build-menu order. The Lattice (the user, 2026-10-21: "they
     /// don't get artillery at tier 1 but they get scout fliers and anti armour units"): crawlers, spiders, piercers.</summary>
     public static Kind[] FactoryKindsOf(Civ civ) => civ == Civ.Lattice ? LatticeKinds : FactoryKinds;
-    static readonly Kind[] LatticeKinds = { Kind.Crawler, Kind.Spider, Kind.Piercer };
+    static readonly Kind[] LatticeKinds = { Kind.Crawler, Kind.Spider, Kind.Piercer, Kind.Ranger, Kind.Flier, Kind.Bomber };
 
     /// <summary>The scout a civilisation's HQ builds: the Coalition's hovercraft, the Lattice's flying drone.</summary>
     public static Kind ScoutKindOf(Civ civ) => civ == Civ.Lattice ? Kind.Drone : Kind.Scout;
@@ -348,6 +353,18 @@ public sealed class World
         new() { Armoured = true, MaxHp = 140, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(24, 100), Range = 5, Aggro = 12, Vision = 10, Damage = 12, Reload = 12 },
         // Derelict: an old turret gone feral, guarding a deposit.
         new() { Armoured = true, MaxHp = 600, Radius = Fix.Ratio(14, 10), Range = 11, Aggro = 11, Vision = 12, Damage = 8, Reload = 8 },
+        // ---- cheap and air units (the user, 2026-10-22: "the game still feels really swingy at the start ... add a
+        // ranger (small arms, can attack air or land), add a flier (attacks other fliers) and a bomber (slow bombing
+        // runs)"), both civilisations ----
+        // Ranger: a small, quick, fragile robot with small arms that reach fliers too: the cheap answer to everything.
+        new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(36, 100), Range = 7, Aggro = 12, Vision = 10,
+                Damage = 4, Reload = 5, HitsAir = true, BuildTicks = 12 * TicksPerSecond },
+        // Flier: a fast interceptor that only fights other fliers; with none about it keeps over its army.
+        new() { MaxHp = 60, Radius = Fix.Ratio(9, 10), Speed = Fix.Ratio(70, 100), Range = 8, Aggro = 16, Vision = 14,
+                Damage = 6, Reload = 6, Flying = true, HitsAir = true, AirOnly = true, BuildTicks = 25 * TicksPerSecond },
+        // Bomber: slow; flies over a ground target, drops a heavy bomb with a wide blast, flies on and comes round again.
+        new() { MaxHp = 120, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(45, 100), Range = 2, Aggro = 18, Vision = 12,
+                Splash = 3, Damage = 60, Reload = 60, Flying = true, Explosive = true, BuildTicks = 40 * TicksPerSecond },
     };
 
     public int Tick;
@@ -1363,6 +1380,8 @@ public sealed class World
                 continue;
             }
 
+            // A bomber that has just dropped flies on for a while before turning back: bombing runs, not hovering.
+            if (e.Kind == Kind.Bomber && e.Cooldown > s.Reload * 2 / 3 && e.Heading.LengthSq.Raw > 0) { _moves.Add((e, e.Heading * s.Speed)); continue; }
             var target = NearestEnemy(e, AggroOf(e) + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
             if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, AggroOf(e) + MaxDownhillRange, Fix.Zero) != null) continue;
@@ -1372,11 +1391,13 @@ public sealed class World
                 var reach = RangeOf(e) + DownhillRange(e, target);   // firing down from a hill reaches further
                 if (gap <= reach)
                 {
-                    if (e.Cooldown == 0) Fire(e, target);
+                    if (e.Cooldown == 0) Fire(e, WeakestInReach(e, target));
                     continue;
                 }
                 if (s.IsUnit) _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
             }
+            else if (s.IsUnit && s.AirOnly)
+                _moves.Add((e, Drive(e, AirGoal(e), s.Speed)));
             else if (s.IsUnit && e.Owner == Feral)
             {
                 var home = FeralGoal(e);
@@ -1478,6 +1499,7 @@ public sealed class World
         {
             if (e.Dead || e.Owner == from.Owner || e.Hp <= 0 || !CanSee(from.Owner, e)) continue;
             if (e.Stats.Flying && !from.Stats.HitsAir) continue;   // (only anti-air guns reach fliers)
+            if (!e.Stats.Flying && from.Stats.AirOnly) continue;   // (interceptors fight fliers only)
             var reach = within + e.Stats.Radius;
             var d = (e.Pos - from.Pos).LengthSq;
             if (d > reach * reach) continue;
@@ -1487,6 +1509,24 @@ public sealed class World
                 if (d < close * close) continue;
             }
             if (best == null || d < bestD) { best = e; bestD = d; }
+        }
+        return best;
+    }
+
+    /// <summary>Focus fire: of the enemies this one can shoot right now, the most damaged (ties: the nearest, then
+    /// the lowest id). Shooting the nearest spread a side's fire over many and killed none, while the other side
+    /// happened to pile onto one: even fights ended 5 to 0.</summary>
+    Entity WeakestInReach(Entity from, Entity nearest)
+    {
+        var best = nearest;
+        foreach (var o in Entities)
+        {
+            if (o == nearest || o.Dead || o.Owner == from.Owner || o.Hp <= 0 || !CanSee(from.Owner, o)) continue;
+            if (o.Stats.Flying && !from.Stats.HitsAir || !o.Stats.Flying && from.Stats.AirOnly) continue;
+            var gap = (o.Pos - from.Pos).Length - from.Stats.Radius - o.Stats.Radius;
+            if (gap > RangeOf(from) + DownhillRange(from, o)) continue;
+            if (from.Stats.MinRange.Raw > 0 && gap < from.Stats.MinRange) continue;
+            if (o.Hp < best.Hp || o.Hp == best.Hp && o.Id < best.Id) best = o;
         }
         return best;
     }
@@ -1560,6 +1600,28 @@ public sealed class World
         foreach (var (e, step) in _moves) Move(e, step);
     }
 
+    /// <summary>Where an interceptor with nothing to fight goes: the nearest enemy flier its side knows of; failing
+    /// that, over its own army's front (the unit of its side nearest the enemy HQ); failing that, home.</summary>
+    FixVec2 AirGoal(Entity e)
+    {
+        var me = Players[e.Owner];
+        FixVec2? best = null;
+        var bestD = Fix.Zero;
+        foreach (var (id, at) in me.Known)
+        {
+            if (!me.KnownFliers.Contains(id)) continue;
+            var d = (at - e.Pos).LengthSq;
+            if (best == null || d < bestD) { best = at; bestD = d; }
+        }
+        if (best is { } flier) return flier;
+        var enemyHq = Players[1 - e.Owner].HqPos;
+        Entity front = null;
+        foreach (var u in Entities)
+            if (!u.Dead && u.Owner == e.Owner && IsArmy(u.Kind) && !u.Stats.Flying
+                && (front == null || (u.Pos - enemyHq).LengthSq < (front.Pos - enemyHq).LengthSq)) front = u;
+        return front?.Pos ?? me.HqPos;
+    }
+
     static readonly Fix TurnCos = Fix.Ratio(866, 1000), TurnSin = Fix.Ratio(1, 2);   // at most 30 degrees a tick
 
     /// <summary>
@@ -1570,7 +1632,8 @@ public sealed class World
     /// </summary>
     FixVec2 Steer(Entity e, FixVec2 step)
     {
-        if (e.Stats.Flying || !e.Stats.IsUnit || step.LengthSq < Fix.Ratio(1, 10000)) return step;
+        if (!e.Stats.IsUnit || step.LengthSq < Fix.Ratio(1, 10000)) return step;
+        if (e.Stats.Flying) { e.Heading = step.WithLength(Fix.One); return step; }   // (fliers turn on the spot; the heading is for bombing runs)
         var len = step.Length;
         var want = step * (Fix.One / len);
         var h = e.Heading;

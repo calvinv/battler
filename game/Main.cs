@@ -678,7 +678,7 @@ public partial class Main : Node3D
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
     /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
-    static string UnitModel(Kind k, Civ civ) => k == Kind.MobileBase && civ == Civ.Lattice ? "l_mobilebase" : ModelOf(k);
+    static string UnitModel(Kind k, Civ civ) => civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
     /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
@@ -870,7 +870,7 @@ public partial class Main : Node3D
     Terrain _terrain;
 
     /// <summary>Where a view's origin sits above the ground: boxes are centred, unit models stand on y = 0.</summary>
-    static float HeightOf(Kind k) => k == Kind.Drone ? 3.2f : 0f;   // models stand on their origin; fliers fly
+    static float HeightOf(Kind k) => k switch { Kind.Drone => 3.2f, Kind.Flier => 6f, Kind.Bomber => 7.5f, _ => 0f };   // models stand on their origin; fliers fly
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
     static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 1.1f, Kind.Artillery => 2.8f, Kind.LightTank => 0.72f, Kind.Mortar => 2.0f, Kind.Spider => 0.98f, Kind.Crawler => 0.32f, Kind.Piercer => 0.72f, _ => 1f };
@@ -1015,7 +1015,7 @@ public partial class Main : Node3D
                 if (!W.Paused && moving && Shown(e))
                 {
                     float r = e.Stats.Radius.ToFloat();
-                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer, flies = e.Stats.Flying;
+                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger, flies = e.Stats.Flying;
                     if (!flies) _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
                     // Tread marks under each track (the scout's wheels leave thinner, fainter ones; walkers and fliers none).
                     if (!legs && !flies) _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
@@ -1039,7 +1039,7 @@ public partial class Main : Node3D
                 float ahead = _terrain.HeightAt(pos.X + face.X, pos.Z + face.Z), behind = _terrain.HeightAt(pos.X - face.X, pos.Z - face.Z);
                 view.Basis = Basis.LookingAt(new Vector3(face.X, (ahead - behind) * 0.5f, face.Z), Vector3.Up);
                 // A walker sways side to side and bobs as it steps (its legs are one piece with it).
-                if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer && moving && !W.Paused)
+                if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger && moving && !W.Paused)
                 {
                     float gait = (float)Time.GetTicksMsec() * 0.012f + e.Id;
                     view.Basis = view.Basis * new Basis(Vector3.Back, Mathf.Sin(gait) * 0.06f);
@@ -1089,7 +1089,7 @@ public partial class Main : Node3D
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
         Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
-        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, _ => 2f,
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, _ => 2f,
     };
 
     readonly List<(Vector3 At, int Amount, float Age)> _salvageTexts = new();
@@ -1215,6 +1215,9 @@ public partial class Main : Node3D
                 Kind.Drone => e.Owner == _me
                     ? "A flying scout: unarmed, quick, sees far, crosses water.\nOnly HQs, towers and outposts can shoot it down."
                     : "A flying scout: it's watching you.",
+                Kind.Ranger => "Small, quick and fragile, with small arms that\nreach fliers too: the cheap answer to most things.",
+                Kind.Flier => "An interceptor: fast, fights other fliers only.\nWith none about, it keeps over your army.",
+                Kind.Bomber => "Slow bombing runs: flies over a ground target, drops a\nheavy bomb with a wide blast, flies on and comes round.\nOnly anti-air can touch it.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
                 Kind.Hq => $"Lose it and you lose the match. Takes {World.HqWings} wings (B);\nits radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",

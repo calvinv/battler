@@ -151,5 +151,51 @@ def mobilebase():
     finish_realistic("mobilebase", 42.0, serial="22")
 
 
+
+def ranger():
+    """Ranger: a small two-legged robot, a boxy body on stocky legs, a light rifle along its right side and a sensor
+    head; small and quick."""
+    k.begin(0.0)
+    for s in (1, -1):
+        tube_between((0.0, s * 1.0, 3.0), (0.6, s * 1.2, 1.4), 0.45, "dark", 6)            # thigh
+        tube_between((0.6, s * 1.2, 1.4), (-0.2, s * 1.2, 0.0), 0.38, "mid", 6)             # shin
+        k.box(-0.8, 1.0, s * 1.2 - 0.5, s * 1.2 + 0.5, 0.0, 0.3, "dark")                    # foot
+    plate(-1.4, 1.6, -1.4, 1.4, 2.8, 5.0, "steel", inset=0.3, front=0.6)
+    plate(-0.9, 0.9, -0.9, 0.9, 5.0, 5.15, "paint", inset=0.1)
+    k.box(-0.4, 0.8, -0.5, 0.5, 5.15, 5.9, "mid")                                           # head
+    k.box(0.75, 0.85, -0.3, 0.3, 5.4, 5.65, "glow")
+    k.tube(0.0, 4.4, -1.7, 4.0, 0.2, "dark", 8)                                              # rifle
+    k.box(-0.6, 0.8, -1.95, -1.45, 3.6, 4.3, "mid")
+    finish_realistic("ranger", 14.0)
+
+
+def flier():
+    """Flier: an interceptor: a dart of a fuselage, swept wings, twin tail fins, glowing engines. Flies."""
+    k.begin(0.0)
+    k.slab([(7.0, 0.0), (1.0, 1.0), (-4.0, 1.0), (-4.0, -1.0), (1.0, -1.0)], 0.0, 1.4, "steel")          # fuselage
+    k.slab([(1.5, 0.8), (-3.0, 5.6), (-4.2, 5.6), (-2.6, 0.8)], 0.4, 0.8, "plate")                       # wings
+    k.slab([(1.5, -0.8), (-2.6, -0.8), (-4.2, -5.6), (-3.0, -5.6)], 0.4, 0.8, "plate")
+    k.slab([(-0.4, 0.5), (-3.0, 3.2), (-3.6, 3.2), (-2.4, 0.5)], 0.8, 0.9, "paint")
+    k.slab([(-0.4, -0.5), (-2.4, -0.5), (-3.6, -3.2), (-3.0, -3.2)], 0.8, 0.9, "paint")
+    for s in (1, -1):
+        k.upright([(-2.6, 1.4), (-4.0, 1.4), (-4.4, 3.4), (-3.4, 3.4)], s * 0.8 - 0.1, s * 0.8 + 0.1, "plate")   # fins
+        k.box(-4.4, -4.0, s * 0.5 - 0.35, s * 0.5 + 0.35, 0.3, 1.0, "glow")                 # engines
+    k.box(3.0, 4.6, -0.4, 0.4, 1.4, 1.7, "dark")                                            # sensor canopy
+    finish_realistic("flier", 18.0)
+
+
+def bomber():
+    """Bomber: a heavy flying wing with four engine pods along its trailing edge and a bomb bay underneath. Flies."""
+    k.begin(0.0)
+    k.slab([(5.0, 0.0), (1.0, 8.0), (-2.6, 8.0), (-3.6, 0.0), (-2.6, -8.0), (1.0, -8.0)], 0.6, 1.6, "steel")   # the wing
+    k.slab([(4.0, 0.0), (0.6, 3.0), (-2.4, 3.0), (-2.4, -3.0), (0.6, -3.0)], 1.6, 2.6, "plate")               # the body
+    k.slab([(2.4, 0.0), (0.0, 1.8), (-1.8, 1.8), (-1.8, -1.8), (0.0, -1.8)], 2.6, 2.75, "paint")
+    for x in (-5.4, -2.6, 2.6, 5.4):
+        k.tube(-3.4, 0.8, x, 1.1, 0.55, "mid", 8)                                          # engine pods
+        k.box(-3.6, -3.3, x - 0.4, x + 0.4, 0.75, 1.45, "glow")
+    k.box(-1.6, 1.6, -1.0, 1.0, 0.2, 0.6, "dark")                                           # bomb bay
+    finish_realistic("bomber", 24.0)
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
-{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar, "spider": spider, "mobilebase": mobilebase}[which]()
+{"tank": tank, "artillery": artillery, "scout": scout, "lighttank": lighttank, "mortar": mortar, "spider": spider, "mobilebase": mobilebase, "ranger": ranger, "flier": flier, "bomber": bomber}[which]()
