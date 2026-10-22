@@ -220,6 +220,25 @@ def deposit():
     finish_realistic("deposit", 34.0, serial="0" + str(len("deposit")))
 
 
+
+def node():
+    """A node of the base's network (the user, 2026-10-22: "a base is like a single structure that branches out"): a
+    squat junction box on an octagonal footing, a short mast with a lit ring, where the conduits meet. Team panel on top."""
+    k.begin(0.0)
+    hexagon(0, 0, 6.4, 0.0, 1.0, "mid", r1=6.0, sides=8, turn=math.pi / 8)               # footing
+    plate(-3.6, 3.6, -3.6, 3.6, 1.0, 4.6, "steel", inset=0.6, front=0.6, back=0.6)        # the junction box
+    plate(-2.4, 2.4, -2.4, 2.4, 4.6, 4.85, "paint", inset=0.2)
+    for i in range(4):                                                                  # conduit sockets, one a side
+        ang = i * math.pi / 2
+        ca, sa = math.cos(ang), math.sin(ang)
+        tube_between((ca * 3.4, sa * 3.4, 2.6), (ca * 5.6, sa * 5.6, 2.6), 0.9, "dark", 8)
+        tube_between((ca * 5.0, sa * 5.0, 2.6), (ca * 5.4, sa * 5.4, 2.6), 1.15, "plate", 8)
+    k.drum(0, 0, 0.8, 4.85, 10.5, "dark", 8)                                            # the mast
+    hexagon(0, 0, 1.9, 8.2, 8.8, "glow", r1=1.9, sides=8)                               # its lit ring
+    hexagon(0, 0, 1.3, 10.5, 11.2, "plate", r1=0.9, sides=8)
+    finish_realistic("node", 22.0, serial="04")
+
+
 which = sys.argv[sys.argv.index("--") + 1]      # one per run: the kit starts Blender empty when imported
 {"factory_tank": factory_tank, "factory_artillery": factory_artillery, "factory_lighttank": factory_lighttank, "factory_mortar": factory_mortar, "factory_spider": factory_spider,
- "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit}[which]()
+ "hq": hq, "tower": tower, "outpost": outpost, "extractor": extractor, "deposit": deposit, "node": node}[which]()

@@ -23,8 +23,8 @@ namespace Battler.Game;
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
 /// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
 /// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit (with --at N seconds, --wide for the whole map, --fight
-/// to close on the busiest fight, --frames N to play on N frames first, --placing [outpost] to hold a building under the
-/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu).
+/// to close on the busiest fight, --frames N to play on N frames first, --placing [node] to hold a building under the
+/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu, --napalm to light fires in view).
 /// </summary>
 public partial class Main : Node3D
 {
@@ -53,7 +53,8 @@ public partial class Main : Node3D
     PanelContainer _statsPanel;
     Label _stats;
     MeshInstance3D _selRing;
-    readonly Button[] _upgradeButtons = new Button[3];   // in the stats panel, for my selected factory
+    readonly Button[] _upgradeButtons = new Button[3];
+    Button _fittingButton;   // in the stats panel: a factory's fitting (napalm, with sulfur)   // in the stats panel, for my selected factory
     Button _sellButton, _scoutButton, _autoButton, _cancelQueueButton;
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
@@ -149,11 +150,9 @@ public partial class Main : Node3D
             if (args.IndexOf("--placing") is int pi and >= 0)   // something in hand under the screen's centre: a tank factory, or "outpost"
             {
                 _placeAtCentre = true;
-                _placing = pi + 1 < args.Count && args[pi + 1] == "outpost" ? Kind.Outpost : Kind.Tank;
-                if (_placing == Kind.Outpost)   // look at the pad by my first extractor that has one
-                    for (int d = 0; d < World.Deposits.Length; d++)
-                        if (World.HasPad[d] && W.ExtractorOn(d) is { } rig && rig.Owner == _me)
-                        { _focus = ToV3(World.Pads[d]); _distance = 40; _selected = -1; break; }
+                _placing = pi + 1 < args.Count && args[pi + 1] == "node" ? Kind.Node : Kind.Tank;
+                if (_placing == Kind.Node && W.Entities.FindLast(e => e.Kind == Kind.Node && e.Owner == _me) is { } last)   // at the end of my network
+                { _focus = ToV3(last.Pos); _distance = 50; _selected = -1; }
             }
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
@@ -164,6 +163,11 @@ public partial class Main : Node3D
                 _yaw = Mathf.DegToRad(float.Parse(args[vi + 1]));
                 _pitch = float.Parse(args[vi + 2]);
                 _viewHintUntil = Time.GetTicksMsec() + 20000;
+            }
+            if (args.Contains("--napalm") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } burner)   // fires in view
+            {
+                _focus = ToV3(burner.Pos) + TowardEnemy(_me) * 30; _distance = 30; _selected = -1;
+                for (int i = 0; i < 4; i++) W.Ignite(ToFix(_focus + new Vector3(i * 4 - 6, 0, (i % 2) * 3)), Fix.Ratio(20 + i * 5, 10), burner);
             }
             _watchFelled = args.Contains("--felled");      // close on the first tree knocked down, once it's down
             if (args.IndexOf("--look") is int li and >= 0 && li + 3 < args.Count)   // --look x z distance: the camera on a spot, fog lifted
@@ -366,7 +370,7 @@ public partial class Main : Node3D
     /// the enemy HQ, whose place everyone knows.</summary>
     bool Shown(Entity e)
     {
-        if (e.Owner == _me || e.Kind is Kind.Hq or Kind.Tower) return true;
+        if (e.Owner == _me || e.Kind is Kind.Hq or Kind.Tower || _noFog) return true;   // (_noFog: a debug view, everything shown)
         if (World.CanSee(_me, e)) { if (e.Stats.IsBuilding) _seenBuildings.Add(e.Id); return true; }
         return _seenBuildings.Contains(e.Id);
     }
@@ -376,6 +380,7 @@ public partial class Main : Node3D
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
         _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset();
+        ClearNetworkViews();
         _session = session;
         _me = session.LocalPlayer;
         _acc = 0;
@@ -405,11 +410,17 @@ public partial class Main : Node3D
             }
             ring.SurfaceEnd();
         }
-        Circle(World.HqStart(_me), World.BuildRadius.ToFloat());
+        bool placingFactory = _placing is { } pk && World.IsArmy(pk);
+        if (placingFactory || _placing == null) Circle(World.HqStart(_me), World.BuildRadius.ToFloat());
         foreach (var e in W.Entities)
         {
             if (e.Owner != _me) continue;
-            if (e.Kind == Kind.Outpost) Circle(e.Pos, World.OutpostRadius(e).ToFloat());
+            // Placing a factory: a ring round each powered node with a spot free.
+            if (placingFactory && e.Kind == Kind.Node && e.Building == 0 && e.Powered && W.SlotsUsed(e) < World.SlotsOf(e))
+                Circle(e.Pos, World.NodeHostReach.ToFloat());
+            // Placing a node: a line to each node it would link to.
+            if (_placing == Kind.Node && _mouseGround is { } m && e.Kind is Kind.Hq or Kind.Node && World.CouldLink(ToFix(m), e))
+                Line(e.Pos, ToFix(m));
             if (!World.IsScout(e.Kind)) continue;
             // Placing an extractor: how near each scout it must go.
             if (_placing == Kind.Extractor) Circle(e.Pos, (World.DeployReach + e.Stats.Radius).ToFloat());
@@ -420,14 +431,11 @@ public partial class Main : Node3D
                 if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
             }
         }
-        // Pads by my extractors with nothing on them yet: ringed and tied to their extractor, "an outpost goes here".
-        for (int d = 0; d < World.Deposits.Length; d++)
-        {
-            if (!World.HasPad[d] || W.ExtractorOn(d) is not { } rig || rig.Owner != _me) continue;
-            if (W.Entities.Exists(o => o.Kind == Kind.Outpost && !o.Dead && (o.Pos - World.Pads[d]).LengthSq < Fix.FromInt(4))) continue;
-            Circle(World.Pads[d], 3.4f);
-            Line(World.Deposits[d] + (World.Pads[d] - World.Deposits[d]).WithLength(Fix.FromInt(2)), World.Pads[d] - (World.Pads[d] - World.Deposits[d]).WithLength(Fix.FromInt(3)));
-        }
+        // Placing an extractor: a ring round each free deposit my network reaches.
+        if (_placing == Kind.Extractor)
+            for (int d = 0; d < World.Deposits.Length; d++)
+                if (W.ExtractorOn(d) == null && W.NetworkNear(_me, World.Deposits[d], World.ExtractorReach, false) != null)
+                    Circle(World.Deposits[d], 3.4f);
         void Line(FixVec2 from, FixVec2 to)
         {
             ring.SurfaceBegin(Mesh.PrimitiveType.LineStrip, _ringMat);
@@ -531,7 +539,7 @@ public partial class Main : Node3D
         // The metal deposits: an outcrop of ore on each, hidden while an extractor stands on it.
         for (int i = 0; i < World.Deposits.Length; i++)
         {
-            var ore = UnitArt.Make("deposit", Neutral);
+            var ore = World.DepositResource[i] == Battler.Sim.Resource.Sulfur ? MakeSulfur(i) : UnitArt.Make("deposit", Neutral);
             ore.Position = ToV3(World.Deposits[i]);
             ore.Basis = new Basis(Vector3.Up, i * 1.7f).Scaled(Vector3.One * 1.4f);   // (bigger, to read from afar)
             AddChild(ore);
@@ -618,6 +626,14 @@ public partial class Main : Node3D
             column.AddChild(b);
             _upgradeButtons[i] = b;
         }
+        _fittingButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
+        _fittingButton.AddThemeFontSizeOverride("font_size", 17);
+        _fittingButton.Pressed += () =>
+        {
+            if (W.Find(_selected) is { Kind: Kind.Factory } f)
+                _session?.Issue(new SetFitting(_me, f.Id, f.Fitting == Fitting.Napalm ? Fitting.Standard : Fitting.Napalm));
+        };
+        column.AddChild(_fittingButton);
         _cancelQueueButton = new Button { FocusMode = Control.FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
         _cancelQueueButton.AddThemeFontSizeOverride("font_size", 17);
         _cancelQueueButton.Pressed += () => _session?.Issue(new CancelUpgrades(_me, _selected));
@@ -1086,6 +1102,8 @@ public partial class Main : Node3D
         for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
             _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
+        DrawNetwork();
+        DrawFires();
         DrawPlacement();
         DrawBarsAndSelection(alpha);
         DrawHud();
@@ -1094,7 +1112,7 @@ public partial class Main : Node3D
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,   // (a factory's bar clears its cogs)
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, _ => 2f,
     };
 
@@ -1103,10 +1121,20 @@ public partial class Main : Node3D
         _overlay.Bars.Clear();
         _overlay.Badges.Clear();
         _overlay.Tags.Clear();
-        // Over each of my bases: its factory slots in use, "2/3" (amber when full).
+        // Over each of my bases: its factory spots in use, "2/3" (amber when full), while placing a factory; and over
+        // anything of mine cut off from the network, "NO POWER".
+        bool placingFactory = _placing is { } pk && World.IsArmy(pk);
         foreach (var b in W.Entities)
         {
-            if (b.Owner != _me || !World.IsBase(b)) continue;
+            if (b.Owner != _me || !b.Stats.IsBuilding) continue;
+            if (!b.Powered && b.Kind is Kind.Factory or Kind.Extractor or Kind.Node)
+            {
+                var top = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.2f);
+                if (!_camera.IsPositionBehind(top))
+                    _overlay.Tags.Add((_camera.UnprojectPosition(top) - new Vector2(0, 30), "NO POWER", new Color(1f, 0.35f, 0.3f)));
+                continue;
+            }
+            if (!placingFactory || !World.IsBase(b) || b.Building > 0) continue;
             var over = ToV3(b.Pos) + Vector3.Up * (TopOf(b.Kind) + 1.6f);
             if (_camera.IsPositionBehind(over)) continue;
             int used = W.SlotsUsed(b), slots = World.SlotsOf(b);
@@ -1149,6 +1177,7 @@ public partial class Main : Node3D
             : Describe(selected);
         ShowUpgrades(selected);
         ShowScoutButtons(selected);
+        ShowFitting(selected);
         _rallyButton.Visible = selected.Kind is Kind.Factory or Kind.Hq && selected.Owner == _me && selected.HasRally;
         ShowSell(selected);
         _statsPanel.OffsetTop = -_statsPanel.GetCombinedMinimumSize().Y - 16;
@@ -1170,6 +1199,18 @@ public partial class Main : Node3D
         _sellButton.Text = armed ? $"Click again to sell for {value}" : $"Sell for {value}  ({World.SellBackPercent}% of {World.SpentOn(e)} spent)";
         _sellButton.Modulate = armed ? new Color(1f, 0.6f, 0.5f) : Colors.White;
         _sellButton.Disabled = !W.Started || W.Winner >= 0;
+    }
+
+    /// <summary>The fitting button, for my factories that can carry napalm.</summary>
+    void ShowFitting(Entity e)
+    {
+        _fittingButton.Visible = e.Kind == Kind.Factory && e.Owner == _me && World.CanFitNapalm(e.Makes);
+        if (!_fittingButton.Visible) return;
+        bool napalm = e.Fitting == Fitting.Napalm;
+        bool can = W.CanSetFitting(_me, e.Id, napalm ? Fitting.Standard : Fitting.Napalm, out var why);
+        _fittingButton.Text = napalm ? "Fitting: napalm   (switch back to standard)"
+            : "Fitting: standard   " + (can ? $"(switch to napalm: hits do {World.NapalmHitPercent}%, the ground burns)" : $"(napalm: {why.ToLowerInvariant()})");
+        _fittingButton.Disabled = !can || W.Winner >= 0;
     }
 
     /// <summary>My HQ's scout buttons: build one now, and auto-build.</summary>
@@ -1222,10 +1263,12 @@ public partial class Main : Node3D
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
-                    ? "Unarmed eyes. Finds deposits: an extractor can go\non a deposit beside it. Right-click to send it."
+                    ? "Unarmed eyes: finds deposits and watches the enemy.\nRight-click to send it."
                     : "Unarmed eyes: it's scouting you.",
-                Kind.Extractor => $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second."
-                    + (World.HasPad[e.Deposit] ? "\nThe hexagon pad beside it takes an outpost (B then O)." : ""),
+                Kind.Extractor => World.DepositResource[e.Deposit] == Battler.Sim.Resource.Sulfur
+                    ? $"Mines sulfur: +{World.SulfurBonusPercent}% damage for every explosive weapon\non your side, and napalm for mortars, artillery and crawlers."
+                    : $"Mines its deposit: +{World.ExtractorIncome * World.TicksPerSecond} metal a second.",
+                Kind.Node => $"Part of the network: carries power on to nodes within {World.LinkReach},\nand takes {World.NodeSlots} factories beside it. Lose it and what's past it stops.",
                 Kind.Tank => "Tough all-rounder.",
                 Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
                 Kind.Spider => "A four-legged walker: quick, lightly armoured, a twin\nlaser firing three times a second, little each shot.",
@@ -1259,6 +1302,12 @@ public partial class Main : Node3D
             lines.Add($"Factory slots  {W.SlotsUsed(e)} / {World.SlotsOf(e)}");
         if (e.Kind == Kind.Hq && e.Owner == _me && e.ScoutQueue > 0)
             lines.Add($"Next scout in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
+        if (e.Owner == _me && s.IsBuilding && !e.Powered && e.Kind is Kind.Factory or Kind.Extractor or Kind.Node)
+            lines.Add("NO POWER: cut off from your network");
+        if (e.Kind == Kind.Factory && World.CanFitNapalm(e.Makes))
+            lines.Add($"Fitting  {e.Fitting}" + (e.Fitting == Fitting.Napalm && W.SulfurOf(e.Owner) == 0 ? "  (no sulfur: standard for now)" : ""));
+        if (s.IsUnit && e.Fitting == Fitting.Napalm)
+            lines.Add("Napalm: hits leave the ground burning");
         if (e.Building > 0)
             lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
         else if (e.Kind == Kind.Factory) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
@@ -1302,17 +1351,11 @@ public partial class Main : Node3D
                 ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
                 if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
             }
-            else if (_placing == Kind.Outpost)
-            {
-                // It snaps onto the pad under the mouse (the pad beside a deposit).
-                _placeDeposit = NearestOf(World.Pads, at, World.HasPad);
-                ok = W.CanPlaceOutpost(_me, _placeDeposit, out _placeProblem);
-                if (_placeDeposit >= 0) at = ToV3(World.Pads[_placeDeposit]);
-            }
+            else if (_placing == Kind.Node) ok = W.CanPlaceNode(_me, ToFix(at), out _placeProblem);
             else ok = W.CanPlaceFactory(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = BuildingModel(_placing.Value is Kind.Outpost or Kind.Extractor ? _placing.Value : Kind.Factory, _placing.Value, MyCiv);
+            var name = BuildingModel(_placing.Value is Kind.Node or Kind.Extractor ? _placing.Value : Kind.Factory, _placing.Value, MyCiv);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
@@ -1325,12 +1368,12 @@ public partial class Main : Node3D
         _ghost.Visible = false;   // (the plain box is only the fallback now)
 
         // Factories and outposts ordered during a pause, waiting for it to end.
-        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceOutpost or PlaceExtractor)
+        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceFactory or PlaceNode or PlaceExtractor)
             .Select(c => c switch
             {
                 PlaceFactory pf => (BuildingModel(Kind.Factory, pf.Makes, MyCiv), pf.Pos),
                 PlaceExtractor pe => (BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), World.Deposits[pe.Deposit]),
-                _ => (BuildingModel(Kind.Outpost, Kind.Hq, MyCiv), World.Pads[((PlaceOutpost)c).Deposit]),
+                _ => (BuildingModel(Kind.Node, Kind.Hq, MyCiv), ((PlaceNode)c).Pos),
             }).ToList();
         if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
         {
@@ -1386,8 +1429,8 @@ public partial class Main : Node3D
         var menu = "[B] Build   [E] Pick scouts   [P] Pause   [Esc] Menu";
         var placingWhat = _placing switch
         {
-            Kind.Outpost => "an outpost (on the pad beside one of your extractors)",
-            Kind.Extractor => "an extractor (on a deposit in a ring or beside a scout)",
+            Kind.Node => $"a node (within {World.LinkReach} of your network)",
+            Kind.Extractor => "an extractor (on a deposit your network reaches)",
             Kind kind => NameOf(kind) + " factory",
             null => "",
         };
@@ -1398,6 +1441,7 @@ public partial class Main : Node3D
             $"Metal {me.Metal}   +{W.IncomeOf(_me) * World.TicksPerSecond}/s\n" +
             building + "\n" +
             $"Army {W.ArmyCount(_me)}/{World.MaxArmyOf(MyCiv)}   units seen {myUnits} vs {theirUnits}\n" +
+            (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             $"t {W.Tick / World.TicksPerSecond}s   sum {W.Checksum() & 0xFFFF:X4}";
@@ -1435,7 +1479,7 @@ public partial class Main : Node3D
         new(Key.M, "Mortar factory", World.FactoryCost, Kind.Mortar),
         new(Key.A, "Artillery factory", World.FactoryCost, Kind.Artillery),
         new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
-        new(Key.O, "Outpost (on the pad by an extractor)", World.OutpostCost, Kind.Outpost),
+        new(Key.N, "Conduit node (grows your network)", World.NodeCost, Kind.Node),
         new(Key.C, "Scout (built at the HQ)", World.ScoutCost, null),
     };
 
@@ -1446,7 +1490,7 @@ public partial class Main : Node3D
         new(Key.S, "Spider nest", World.FactoryCost, Kind.Spider),
         new(Key.A, "Piercer nest (anti-armour)", World.FactoryCost, Kind.Piercer),
         new(Key.X, "Extractor (on a deposit)", World.ExtractorCost, Kind.Extractor),
-        new(Key.O, "Outpost (on the pad by an extractor)", World.OutpostCost, Kind.Outpost),
+        new(Key.N, "Tendril node (grows your network)", World.NodeCost, Kind.Node),
         new(Key.D, "Drone (flying scout, built at the HQ)", World.ScoutCost, null),
     };
 
@@ -1504,7 +1548,7 @@ public partial class Main : Node3D
     string BuildBlocked(BuildOption o)
     {
         if (W.Players[_me].Metal < o.Cost) return "not enough metal";
-        if (o.Place is Kind.Outpost or Kind.Extractor || o.Place == null)
+        if (o.Place is Kind.Node or Kind.Extractor || o.Place == null)
             if (!W.Started) return "once the battle starts";
         if (o.Place == null && !W.CanQueueScout(_me, out var why)) return why.ToLowerInvariant();
         return null;
@@ -1527,7 +1571,7 @@ public partial class Main : Node3D
     /// <summary>A building to place (the menu closes and the hologram follows the mouse), or a scout ordered at once.</summary>
     void PickBuild(BuildOption o)
     {
-        if (o.Place is Kind.Outpost or Kind.Extractor || o.Place == null)
+        if (o.Place is Kind.Node or Kind.Extractor || o.Place == null)
             if (!W.Started) return;
         SetBuildMenu(false);
         if (o.Place is { } kind) _placing = kind;
@@ -1626,7 +1670,7 @@ public partial class Main : Node3D
                         var at = ToFix(_mouseGround.Value);
                         _session.Issue(_placing switch
                         {
-                            Kind.Outpost => new PlaceOutpost(_me, _placeDeposit),
+                            Kind.Node => new PlaceNode(_me, at),
                             Kind.Extractor => new PlaceExtractor(_me, _placeDeposit),
                             _ => new PlaceFactory(_me, at, _placing.Value),
                         });
@@ -1691,7 +1735,7 @@ public partial class Main : Node3D
         {
             if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0)
                 _placing = World.FactoryKindsOf(MyCiv)[k.Keycode - Key.Key1];
-            else if (k.Keycode == Key.Key7 && W.Winner < 0 && W.Started) _placing = Kind.Outpost;
+            else if (k.Keycode == Key.Key7 && W.Winner < 0 && W.Started) _placing = Kind.Node;
             else if (k.Keycode == Key.Key6 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
             else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started) _session.Issue(new QueueScout(_me));
             else if (k.Keycode == Key.E)   // pick all my scouts

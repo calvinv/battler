@@ -41,3 +41,9 @@ public sealed record MoveUnits(int Player, int[] Ids, FixVec2 Pos) : Command(Pla
 
 /// <summary>Drops all the upgrades queued at one of the player's buildings.</summary>
 public sealed record CancelUpgrades(int Player, int BuildingId) : Command(Player);
+
+/// <summary>Grows the player's network: a node at Pos, linked to one of theirs within World.LinkReach.</summary>
+public sealed record PlaceNode(int Player, FixVec2 Pos) : Command(Player);
+
+/// <summary>What one of the player's factories fits its units with from now on (napalm needs sulfur).</summary>
+public sealed record SetFitting(int Player, int FactoryId, Fitting Fitting) : Command(Player);

@@ -192,6 +192,20 @@ def l_extractor():
     hexagon(0, 0, 2.0, 0.0, 0.2, "ember", sides=6)
 
 
+
+def l_node():
+    """A Lattice network node: three short scrap struts gripping the ground round a knot of welded plate, an amber eye
+    on a stub where the tendrils meet."""
+    for i in range(3):
+        ang = math.tau * (i + 0.25) / 3
+        ca, sa = math.cos(ang), math.sin(ang)
+        leg((ca * 1.6, sa * 1.6, 4.0), (ca * 4.6, sa * 4.6, 5.4), (ca * 6.0, sa * 6.0, 0.0), 0.5)
+    hexagon(0, 0, 3.0, 2.0, 5.4, "plate", r1=2.4, sides=6)                              # the knot
+    hexagon(0, 0, 2.3, 5.4, 5.7, "paint", sides=6)
+    k.drum(0, 0, 0.7, 5.7, 8.6, "dark", 6)
+    hexagon(0, 0, 1.2, 8.6, 9.6, "ember", r1=0.8, sides=6)                              # its eye
+
+
 which = sys.argv[sys.argv.index("--") + 1]
 k.begin(0.0)
 globals()[which]()

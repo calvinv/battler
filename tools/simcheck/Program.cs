@@ -41,39 +41,86 @@ if (args.Contains("probe"))   // print the ground at a few places (for checking 
     }
     return 0;
 }
-if (!SlotTest() || !QueueTest()) return 1;
+if (args.Contains("map"))   // the open ground as text, 8 units a character: # shut, . open, D deposit, H HQ
+{
+    for (int z = -168; z <= 168; z += 8)
+    {
+        var row = new System.Text.StringBuilder();
+        for (int x = -280; x <= 280; x += 6)
+        {
+            var at = new FixVec2(x, z);
+            char c = Nav.OpenAt(at) ? '.' : '#';
+            foreach (var d in World.Deposits) if ((d - at).LengthSq < Fix.FromInt(16)) c = 'D';
+            if ((World.HqStart(0) - at).LengthSq < Fix.FromInt(25) || (World.HqStart(1) - at).LengthSq < Fix.FromInt(25)) c = 'H';
+            if (x == 0 && z == 0) c = '+';
+            row.Append(c);
+        }
+        Console.WriteLine($"{z,5} {row}");
+    }
+    return 0;
+}
+if (!NetworkTest() || !QueueTest()) return 1;
 return args.Contains("lan") ? LanTest() : ReplayTest();
 
-// An outpost with both its factory slots full dies and is rebuilt: the factories still standing must fill the new one
-// (it used to come back with two fresh slots).
-bool SlotTest()
+// The network: a chain of nodes from the HQ to a deposit powers its extractor; cut a node out of the middle and the
+// extractor (and its income) stops. Then a chain to a sulfur patch: sulfur counts, and a mortar factory takes napalm.
+bool NetworkTest()
 {
     var w = new World(1, new[] { Civ.Coalition, Civ.Coalition });
     foreach (var p in w.Players) p.Metal = 100000;
-    w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(-8, 10), Kind.Tank), new PlaceFactory(1, World.HqStart(1) - new FixVec2(-8, 10), Kind.Tank) });
-    int d = Array.FindIndex(World.Deposits, at => at.X.Raw < 0 && World.HasPad[Array.IndexOf(World.Deposits, at)]);
-    w.Spawn(Kind.Extractor, 0, World.Deposits[d]).Deposit = d;
-    w.Step(new Command[] { new PlaceOutpost(0, d) });
-    var post = w.Entities.Find(e => e.Kind == Kind.Outpost);
-    while (post.Building > 0) w.Step(Array.Empty<Command>());   // (it gives slots once it's built)
-    int placed = 0;
-    for (int dx = -12; dx <= 12 && placed < 2; dx += 3)
-        for (int dz = -12; dz <= 12 && placed < 2; dz += 3)
-        {
-            var at = World.Pads[d] + new FixVec2(dx, dz);
-            if (!w.CanPlaceFactory(0, at, Kind.Tank, out _) || w.BaseFor(0, at, out _) != post) continue;
-            w.Step(new Command[] { new PlaceFactory(0, at, Kind.Tank) });
-            placed++;
-        }
-    int before = w.SlotsUsed(post);
-    post.Hp = 0;
+    w.Step(new Command[] { new PlaceFactory(0, World.HqStart(0) + new FixVec2(-8, 10), Kind.Mortar), new PlaceFactory(1, World.HqStart(1) - new FixVec2(-8, 10), Kind.Tank) });
+    int metalAt = Array.FindIndex(World.Deposits, d => d.X.ToInt() == -200);
+    var chain = Chain(w, 0, World.Deposits[metalAt]);
+    var rig = w.Spawn(Kind.Extractor, 0, World.Deposits[metalAt]);
+    rig.Deposit = metalAt; rig.Building = 0;
     w.Step(Array.Empty<Command>());
-    w.Step(new Command[] { new PlaceOutpost(0, d) });
-    var again = w.Entities.Find(e => e.Kind == Kind.Outpost);
-    int after = again == null ? -1 : w.SlotsUsed(again);
-    bool ok = placed == 2 && before == 2 && after == 2;
-    Console.WriteLine($"Slot test: {placed} factories by the outpost, {before}/2 before it died, {after}/2 once rebuilt: {(ok ? "OK" : "FAILED")}");
+    bool poweredBefore = rig.Powered;
+    int incomeBefore = w.IncomeOf(0);
+    chain[chain.Count / 2].Hp = 0;   // cut the branch
+    w.Step(Array.Empty<Command>());
+    w.Step(Array.Empty<Command>());
+    bool poweredAfter = rig.Powered;
+    int incomeAfter = w.IncomeOf(0);
+
+    int sulfurAt = Array.FindIndex(World.Deposits, d => d.X.ToInt() == 0 && d.Z.ToInt() > 0);
+    Chain(w, 0, World.Deposits[sulfurAt]);
+    var pit = w.Spawn(Kind.Extractor, 0, World.Deposits[sulfurAt]);
+    pit.Deposit = sulfurAt; pit.Building = 0;
+    w.Step(Array.Empty<Command>());
+    var mortars = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
+    w.Step(new Command[] { new SetFitting(0, mortars.Id, Fitting.Napalm) });
+    bool ok = chain.Count > 3 && poweredBefore && incomeBefore == 2 && !poweredAfter && incomeAfter == 1
+              && w.SulfurOf(0) == 1 && mortars.Fitting == Fitting.Napalm;
+    Console.WriteLine($"Network test: {chain.Count} nodes to the deposit, powered {poweredBefore} (income {incomeBefore}), cut: powered {poweredAfter} (income {incomeAfter}); sulfur {w.SulfurOf(0)}, napalm {mortars.Fitting}: {(ok ? "OK" : "FAILED")}");
     return ok;
+}
+
+// Finished nodes every 18 along the way from the player's network to `to`, ending beside it.
+static List<Entity> Chain(World w, int player, FixVec2 to)
+{
+    var nodes = new List<Entity>();
+    for (int guard = 0; guard < 40; guard++)
+    {
+        Entity from = null;
+        foreach (var e in w.Entities)
+            if (!e.Dead && e.Owner == player && e.Kind is Kind.Hq or Kind.Node && (e.Powered || nodes.Contains(e)) && (from == null || (e.Pos - to).LengthSq < (from.Pos - to).LengthSq)) from = e;
+        if ((from.Pos - to).LengthSq <= Fix.FromInt(10 * 10)) break;
+        var path = w.PathBetween(from.Pos, to);
+        var at = from.Pos;
+        var left = Fix.FromInt(18);
+        foreach (var c in path)
+        {
+            var seg = (c - at).Length;
+            if (seg >= left) { at += (c - at).WithLength(left); left = Fix.Zero; break; }
+            left -= seg;
+            at = c;
+        }
+        if ((at - to).LengthSq < Fix.FromInt(36)) at = to + (from.Pos - to).WithLength(Fix.FromInt(6));
+        var n = w.Spawn(Kind.Node, player, at);
+        n.Building = 0;
+        nodes.Add(n);
+    }
+    return nodes;
 }
 
 int ReplayTest()
@@ -104,7 +151,7 @@ int ReplayTest()
         if (script && first0 != null && (world.Tick == 1000 || world.Tick == 1100))
             foreach (var u in new[] { Upgrade.Damage, Upgrade.Damage, Upgrade.Armour, Upgrade.Production }) cmds.Add(new UpgradeFactory(0, first0.Id, u));
         if (script && first0 != null && world.Tick == 1050) cmds.Add(new CancelUpgrades(0, first0.Id));
-        if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 0) is { } sold)
+        if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind == Kind.Factory && e.Owner == 0) is { } sold)
         {
             Console.WriteLine($"  t={world.Tick}: player 0 sells {sold.Kind} {sold.Id} for {World.SellValue(sold)} (metal {world.Players[0].Metal})");
             cmds.Add(new Sell(0, sold.Id));
@@ -176,7 +223,7 @@ int LanTest()
                 if (i == 1 && first1 != null && (w.Tick == 1000 || w.Tick == 1100))
                     foreach (var u in new[] { Upgrade.Armour, Upgrade.Damage, Upgrade.Production }) ss.Issue(new UpgradeFactory(1, first1.Id, u));
                 if (i == 1 && first1 != null && w.Tick == 1050) ss.Issue(new CancelUpgrades(1, first1.Id));
-                if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind is Kind.Factory or Kind.Outpost && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
+                if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind == Kind.Factory && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
             }
             if (ss.TryStep()) { any = true; if (w.Paused) pausedTicks[i]++; if (i == 0 && w.Tick % 1200 == 0) Report(w); }
             else stalls++;
@@ -205,12 +252,12 @@ static void Report(World world)
     {
         if (e.Stats.IsUnit) { if (e.Owner == 0) m0++; else m1++; }
         if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
-        if (e.Kind == Kind.Outpost) { if (e.Owner == 0) o0++; else o1++; }
+        if (e.Kind == Kind.Node) { if (e.Owner == 0) o0++; else o1++; }
         if (e.Kind == Kind.Extractor) { if (e.Owner == 0) x0++; else x1++; }
         if (e.Kind == Kind.Scout) { if (e.Owner == 0) s0++; else s1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  outposts {o0}v{o1}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
+    Console.WriteLine($"t={world.Tick / 10,4}s  factories {f0}v{f1}  nodes {o0}v{o1}  sulfur {world.SulfurOf(0)}v{world.SulfurOf(1)}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
     string Front(int p) { var xs = world.Entities.FindAll(e => e.Owner == p && World.IsArmy(e.Kind)).ConvertAll(e => e.Pos.X.ToInt()); xs.Sort(); return xs.Count == 0 ? "-" : $"{xs[0]}..{xs[xs.Count / 2]}..{xs[^1]}"; }
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
     // Units in the water (they never should be), and how many are in the middle.

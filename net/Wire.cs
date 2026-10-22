@@ -68,6 +68,8 @@ public static class Wire
             case QueueScout: w.Write((byte)9); w.Write((byte)c.Player); break;
             case SetAutoScout sa: w.Write((byte)10); w.Write((byte)sa.Player); w.Write(sa.On); break;
             case CancelUpgrades cu: w.Write((byte)12); w.Write((byte)cu.Player); w.Write(cu.BuildingId); break;
+            case PlaceNode pn: w.Write((byte)13); w.Write((byte)pn.Player); w.Write(pn.Pos.X.Raw); w.Write(pn.Pos.Z.Raw); break;
+            case SetFitting sf: w.Write((byte)14); w.Write((byte)sf.Player); w.Write(sf.FactoryId); w.Write((byte)sf.Fitting); break;
             case MoveUnits mu:
                 w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
                 w.Write((ushort)mu.Ids.Length); foreach (var id in mu.Ids) w.Write(id);
@@ -94,6 +96,8 @@ public static class Wire
             10 => new SetAutoScout(player, r.ReadBoolean()),
             11 => ReadMove(player, r),
             12 => new CancelUpgrades(player, r.ReadInt32()),
+            13 => new PlaceNode(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
+            14 => new SetFitting(player, r.ReadInt32(), (Fitting)r.ReadByte()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
     }

@@ -2,10 +2,19 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
+
+/// <summary>What a deposit gives (the user, 2026-10-22: resources "impact the way your units can fit and offer upgrades,
+/// like you can find a sulfur patch that could increase explosive damage for all units or give you access to napalm").
+/// Metal is income; the others are mined for what having them does, not stockpiled.</summary>
+public enum Resource { Metal, Sulfur }
+
+/// <summary>What a factory fits its units with. Napalm needs sulfur: hits do a quarter less, but leave the ground
+/// burning (World.Fires).</summary>
+public enum Fitting { Standard, Napalm }
 
 public sealed class Stats
 {
@@ -24,6 +33,7 @@ public sealed class Stats
     public bool HitsAir;      // its gun can hit fliers
     public bool Armoured;     // heavy plate: anti-armour weapons do extra to it
     public int VsArmour = 100;   // percent of its damage it does to Armoured targets
+    public bool Explosive;    // shells, cannon and spikes: sulfur makes these hit harder
 
     public bool IsBuilding => Speed.Raw == 0;
     public bool IsUnit => !IsBuilding;
@@ -63,6 +73,8 @@ public sealed class Entity
     public int NavVersion;             // the buildings as they stood when it was found (Nav.Version)
     public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
     public bool AutoScout;     // the HQ: keep building scouts on its own while there's metal and room
+    public bool Powered;       // a building: joined to its side's network, so it works (World.UpdatePower)
+    public Fitting Fitting;    // a factory: what it fits its units with; a unit: what it was made with
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -109,7 +121,15 @@ public sealed class World
     public const int ExtractorCost = 300;
     public static readonly Fix DepositRadius = 3;   // nothing else can be built this near a deposit's centre
     public const int FactoryCost = 500;   // every kind: they're balanced by how often they make a unit
-    public const int OutpostCost = 600;
+    public const int OutpostCost = 600;   // (outposts are gone: kept for old replays' numbers)
+    // The network (the user, 2026-10-22: "a base is like a single structure that branches out"): the base grows node by
+    // node from the HQ. A node links to any of its side's nodes (or the HQ) within LinkReach over open ground; power
+    // runs from the HQ through finished nodes. Factories go on a powered node (two each) or round the HQ (three);
+    // extractors work while a powered node is near their deposit. Cut a branch and everything past it stops.
+    public const int NodeCost = 100, NodeSlots = 2;
+    public static readonly Fix LinkReach = 22, NodeSpacing = 8, NodeHostReach = 9, ExtractorReach = 12;
+    // Sulfur: each patch mined (and powered) makes explosive weapons hit harder; one unlocks the napalm fitting.
+    public const int SulfurBonusPercent = 20, NapalmHitPercent = 75, FireTicks = 8 * TicksPerSecond;
     // Building limits (the user, 2026-10-20: "building new factories is so much more powerful than upgrading"):
     // each base has so many factory slots; more factories means expanding, and upgrades are how a base grows.
     public const int HqSlots = 3, OutpostSlots = 2;
@@ -170,6 +190,8 @@ public sealed class World
     /// <summary>Per deposit, where its outpost goes; HasPad false for the home one on each side.</summary>
     public static readonly FixVec2[] Pads;
     public static readonly bool[] HasPad;
+    /// <summary>What each deposit gives.</summary>
+    public static readonly Resource[] DepositResource;
 
     static World()
     {
@@ -187,9 +209,15 @@ public sealed class World
             all.Add(d);
             all.Add((-d.At, d.Pad is { } p ? -p : null));
         }
+        int metal = all.Count;
+        // Sulfur: two patches in the open middle between the lakes, one a little nearer each side, so both are fought over.
+        all.Add((new FixVec2(0, 45), null));
+        all.Add((new FixVec2(0, -45), null));
         Deposits = all.ConvertAll(d => d.At).ToArray();
         Pads = all.ConvertAll(d => d.Pad ?? d.At).ToArray();
-        HasPad = all.ConvertAll(d => d.Pad.HasValue).ToArray();
+        HasPad = new bool[all.Count];   // (outposts are gone: the network replaced them)
+        DepositResource = new Resource[all.Count];
+        for (int i = metal; i < all.Count; i++) DepositResource[i] = Resource.Sulfur;
     }
 
     // Roles: the scout is fast and fragile; the tank is tough, the all-rounder; artillery outranges everything and
@@ -197,7 +225,7 @@ public sealed class World
     public static readonly Stats[] StatsFor =
     {
         // Hq
-        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 10, Reload = 10, HitsAir = true, Armoured = true },
+        new() { MaxHp = 3000, Radius = 3, Range = 10, Aggro = 12, Vision = 14, Damage = 10, Reload = 10, HitsAir = true, Armoured = true, Explosive = true },
         // Factory
         new() { MaxHp = 800, Radius = 2, Vision = 8, Armoured = true },
         // Scout: unarmed (Reload 0), quick, sees far; built at the HQ and moved by its player.
@@ -205,13 +233,13 @@ public sealed class World
         // Tank (the user, 2026-10-20: tanks and artillery "need to build slower and be weaker, we want like 20 units in
         // game eventually": twice as slow to build, about two thirds the health and damage, and an army cap).
         new() { Armoured = true, MaxHp = 160, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 8, Aggro = 14, Vision = 8,
-                Damage = 16, Reload = 15, BuildTicks = 45 * TicksPerSecond },
+                Damage = 16, Reload = 15, BuildTicks = 45 * TicksPerSecond, Explosive = true },
         // Artillery
         new() { Armoured = true, MaxHp = 60, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(20, 100), Range = 22, MinRange = 7, Aggro = 22, Vision = 8,
-                Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 60 * TicksPerSecond },   // (30, up from 27: its shells now miss moving targets)
+                Splash = Fix.Ratio(25, 10), Damage = 30, Reload = 40, BuildTicks = 60 * TicksPerSecond, Explosive = true },   // (30, up from 27: its shells now miss moving targets)
         // Tower: two stand ahead of each HQ from the start, so a side isn't overrun before it has an army
         // (the user, 2026-10-19: "starting watch towers so it's hard to get overwhelmed initially").
-        new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10, HitsAir = true, Armoured = true },
+        new() { MaxHp = 1200, Radius = Fix.Ratio(15, 10), Range = 14, Aggro = 14, Vision = 18, Damage = 13, Reload = 10, HitsAir = true, Armoured = true, Explosive = true },
         // Outpost: a sub-base deployed out in the field (the user, 2026-10-19: "bases you can deploy further out as
         // sub bases, those can be upgraded"): factories can be built near it; a light gun; upgrades reach, guns, armour.
         new() { MaxHp = 900, Radius = Fix.Ratio(22, 10), Range = 10, Aggro = 10, Vision = 16, Damage = 5, Reload = 10, HitsAir = true, Armoured = true },
@@ -219,10 +247,10 @@ public sealed class World
         new() { MaxHp = 600, Radius = Fix.Ratio(16, 10), Vision = 8, Armoured = true },
         // Light tank: small, quick, fragile; a fast-firing light gun. Built every 10 s.
         new() { MaxHp = 90, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(38, 100), Range = 7, Aggro = 12, Vision = 9,
-                Damage = 7, Reload = 7, BuildTicks = 20 * TicksPerSecond },
+                Damage = 7, Reload = 7, BuildTicks = 20 * TicksPerSecond, Explosive = true },
         // Mortar: a small artillery tank. Shorter range than artillery, a small blast, quick shells; built every 14 s.
         new() { Armoured = true, MaxHp = 55, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(28, 100), Range = 15, MinRange = 4, Aggro = 15, Vision = 8,
-                Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 26 * TicksPerSecond },
+                Splash = Fix.Ratio(17, 10), Damage = 16, Reload = 25, BuildTicks = 26 * TicksPerSecond, Explosive = true },
         // Spider (the user, 2026-10-20: "a small spider bot. 4 legs, small tank size, a turret and a laser that shoots
         // rapid weak shots"): quick on its legs, light armour, a laser firing three times a second for little each.
         new() { MaxHp = 100, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(34, 100), Range = 7, Aggro = 12, Vision = 10,
@@ -234,9 +262,12 @@ public sealed class World
                 Damage = 5, Reload = 6, BuildTicks = 12 * TicksPerSecond },
         // Piercer: anti-armour: slow, a heavy spike-gun every 3 s that does two and a half times to armour.
         new() { MaxHp = 80, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(24, 100), Range = 9, Aggro = 13, Vision = 9,
-                Damage = 26, Reload = 30, VsArmour = 250, BuildTicks = 30 * TicksPerSecond },
+                Damage = 26, Reload = 30, VsArmour = 250, BuildTicks = 30 * TicksPerSecond, Explosive = true },
         // Drone: the Lattice's scout: a flier, unarmed, quick and far-seeing; crosses water. Only HitsAir guns reach it.
         new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(65, 100), Vision = 26, Flying = true, BuildTicks = 8 * TicksPerSecond },
+        // Node: a junction of the base's network (the user, 2026-10-22: "a base is like a single structure that branches
+        // out"). Carries power on from the HQ, and two factories can be built on it.
+        new() { MaxHp = 300, Radius = Fix.Ratio(12, 10), Vision = 10, Armoured = true },
     };
 
     public int Tick;
@@ -292,6 +323,7 @@ public sealed class World
         {
             from.Levels.CopyTo(e.Levels, 0);
             e.FactoryId = from.Id;
+            e.Fitting = from.Fitting == Fitting.Napalm && SulfurOf(owner) > 0 ? Fitting.Napalm : Fitting.Standard;
             // Its factory's own rally point; failing that the base's (the HQ's: the user, 2026-10-20, "main base
             // should have a way to rally").
             var rally = from.HasRally ? from : HqOf(owner) is { HasRally: true } hq ? hq : null;
@@ -395,7 +427,7 @@ public sealed class World
     /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind switch { Kind.Outpost => OutpostCost, Kind.Extractor => ExtractorCost, _ => FactoryCost };
+        int spent = b.Kind switch { Kind.Outpost => OutpostCost, Kind.Extractor => ExtractorCost, Kind.Node => NodeCost, _ => FactoryCost };
         foreach (var level in b.Levels)
             for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
@@ -407,7 +439,7 @@ public sealed class World
     {
         var b = Find(id);
         why = null;
-        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost or Kind.Extractor) || b.Owner != player) { why = "Not yours to sell"; return false; }
+        if (b == null || b.Kind is not (Kind.Factory or Kind.Outpost or Kind.Extractor or Kind.Node) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -429,25 +461,26 @@ public sealed class World
         Kind.Factory => 60 * TicksPerSecond,
         Kind.Extractor => 120 * TicksPerSecond,
         Kind.Outpost => 240 * TicksPerSecond,
+        Kind.Node => 15 * TicksPerSecond,
         _ => 0,
     };
 
-    /// <summary>Buildings going up count down.</summary>
+    /// <summary>Buildings going up count down, while the network reaches them.</summary>
     void Construct()
     {
-        foreach (var e in Entities) if (!e.Dead && e.Building > 0) e.Building--;
+        foreach (var e in Entities) if (!e.Dead && e.Building > 0 && e.Powered) e.Building--;
     }
 
     // ---- bases and their factory slots ---------------------------------------------------------------------
 
     /// <summary>A base: the HQ or an outpost. Factories go in its ring, up to its slots.</summary>
-    public static bool IsBase(Entity e) => e.Kind is Kind.Hq or Kind.Outpost;
+    public static bool IsBase(Entity e) => e.Kind is Kind.Hq or Kind.Node;
 
-    public static Fix BaseRadius(Entity b) => b.Kind == Kind.Hq ? BuildRadius : OutpostRadius(b);
+    public static Fix BaseRadius(Entity b) => b.Kind == Kind.Hq ? BuildRadius : NodeHostReach;
 
     /// <summary>How many factories a base holds: the HQ 3, an outpost 2. (Reach used to add one each level: with
     /// that, a side ran a dozen factories and refilled its army faster than any attack could land.)</summary>
-    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqSlots : OutpostSlots;
+    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqSlots : NodeSlots;
 
     /// <summary>How many of a base's slots are taken.</summary>
     public int SlotsUsed(Entity b)
@@ -464,7 +497,7 @@ public sealed class World
         inRing = false;
         foreach (var b in Entities)
         {
-            if (b.Dead || b.Owner != player || !IsBase(b) || b.Building > 0) continue;   // (an outpost works once built)
+            if (b.Dead || b.Owner != player || !IsBase(b) || b.Building > 0 || !b.Powered) continue;   // (a node hosts once built, and powered)
             var r = BaseRadius(b);
             if ((pos - b.Pos).LengthSq > r * r) continue;
             inRing = true;
@@ -520,7 +553,7 @@ public sealed class World
     public bool CanPlaceOutpost(int player, int deposit, out string why)
     {
         why = null;
-        if (deposit < 0 || deposit >= Deposits.Length || !HasPad[deposit]) { why = "Outposts go on the pad beside an extractor"; return false; }
+        if (deposit < 0 || deposit >= Deposits.Length || !HasPad[deposit]) { why = "Outposts are gone: grow your network instead"; return false; }
         if (Players[player].Metal < OutpostCost) { why = "Not enough metal"; return false; }
         if (ExtractorOn(deposit) is not { } rig || rig.Owner != player) { why = "Build an extractor on this deposit first"; return false; }
         foreach (var e in Entities)
@@ -554,7 +587,7 @@ public sealed class World
         if (OffMap(pos, r)) { why = "Off the map"; return false; }
         if (BaseFor(player, pos, out bool inRing) == null)
         {
-            why = inRing ? "No free factory slot here (expand: an outpost on the pad by an extractor)" : "Too far from your HQ or an outpost";
+            why = inRing ? "No free spot on this node (each node takes two factories: grow the network)" : "Build beside a powered node of your network (B then N grows it)";
             return false;
         }
         if (Blocked(pos, r) || OnPad(pos, r)) { why = "Blocked"; return false; }
@@ -574,7 +607,7 @@ public sealed class World
         return -1;
     }
 
-    /// <summary>An extractor goes on a free deposit inside one of the player's build rings, or beside one of their scouts.</summary>
+    /// <summary>An extractor goes on a free deposit that the player's network reaches (a node or the HQ near it).</summary>
     public bool CanPlaceExtractor(int player, int deposit, out string why)
     {
         why = null;
@@ -582,7 +615,7 @@ public sealed class World
         if (Players[player].Metal < ExtractorCost) { why = "Not enough metal"; return false; }
         if (ExtractorOn(deposit) != null) { why = "Already mined"; return false; }
         var at = Deposits[deposit];
-        if (!InBuildRange(player, at) && !ScoutNear(player, at)) { why = "Needs one of your scouts beside it (or a build ring)"; return false; }
+        if (NetworkNear(player, at, ExtractorReach, false) == null) { why = "Grow your network to it first (a node beside the deposit)"; return false; }
         return true;
     }
 
@@ -590,8 +623,192 @@ public sealed class World
     public int IncomeOf(int player)
     {
         int n = 0;
-        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0) n++;   // (mining once built)
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && e.Powered && DepositResource[e.Deposit] == Resource.Metal) n++;   // (mining once built, while powered)
         return IncomePerTick + ExtractorIncome * n;
+    }
+
+    /// <summary>How many sulfur patches a player mines (built and powered).</summary>
+    public int SulfurOf(int player)
+    {
+        int n = 0;
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && e.Powered && DepositResource[e.Deposit] == Resource.Sulfur) n++;
+        return n;
+    }
+
+    // ---- the network -------------------------------------------------------------------------------------------
+
+    /// <summary>One of the player's HQ or nodes within `reach` of `pos` (centre to centre), the first in id order;
+    /// with `live`, only finished, powered ones.</summary>
+    public Entity NetworkNear(int player, FixVec2 pos, Fix reach, bool live)
+    {
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Owner != player || e.Kind is not (Kind.Hq or Kind.Node)) continue;
+            if (live && (e.Building > 0 || !e.Powered)) continue;
+            if ((e.Pos - pos).LengthSq <= reach * reach) return e;
+        }
+        return null;
+    }
+
+    readonly Dictionary<(int, int), bool> _linkClear = new();   // buildings don't move: whether two can link, once worked out
+
+    /// <summary>Whether two of a side's nodes (or a node and its HQ) are joined: near enough, over open ground.</summary>
+    bool Linked(Entity a, Entity b)
+    {
+        if ((a.Pos - b.Pos).LengthSq > LinkReach * LinkReach) return false;
+        var key = a.Id < b.Id ? (a.Id, b.Id) : (b.Id, a.Id);
+        if (!_linkClear.TryGetValue(key, out var clear)) _linkClear[key] = clear = Nav.Clear(a.Pos, b.Pos);
+        return clear;
+    }
+
+    /// <summary>Whether a link from `pos` to `b` would be possible (for placing).</summary>
+    public static bool CouldLink(FixVec2 pos, Entity b) => (b.Pos - pos).LengthSq <= LinkReach * LinkReach && Nav.Clear(b.Pos, pos);
+
+    /// <summary>Every link standing, by id pair, for drawing (both sides; kept by UpdatePower).</summary>
+    public readonly List<(int A, int B)> Links = new();
+
+    /// <summary>
+    /// Works out what has power. From each HQ it runs through finished nodes linked one to the next. A node still going
+    /// up is powered (so it builds) if it's linked to a powered finished one, but carries nothing on yet. A factory is
+    /// powered through the node or HQ it was built on (whose slot it takes; if that's gone, it takes a free slot on any
+    /// in reach); an extractor through any powered node near its deposit. Towers stand on their own.
+    /// </summary>
+    void UpdatePower()
+    {
+        Links.Clear();
+        var net = new List<Entity>();
+        var queue = new Queue<Entity>();
+        foreach (var p in Players)
+        {
+            net.Clear();
+            foreach (var e in Entities)
+                if (!e.Dead && e.Owner == p.Id && e.Kind is Kind.Hq or Kind.Node) { net.Add(e); e.Powered = false; }
+            for (int i = 0; i < net.Count; i++)
+                for (int j = i + 1; j < net.Count; j++)
+                    if (Linked(net[i], net[j])) Links.Add((net[i].Id, net[j].Id));
+            foreach (var hq in net) if (hq.Kind == Kind.Hq) { hq.Powered = true; queue.Enqueue(hq); }
+            while (queue.Count > 0)
+            {
+                var a = queue.Dequeue();
+                foreach (var b in net)
+                {
+                    if (b.Powered || !Linked(a, b)) continue;
+                    b.Powered = true;
+                    if (b.Building == 0) queue.Enqueue(b);   // (a node going up takes power but passes none on)
+                }
+            }
+        }
+        foreach (var e in Entities)
+        {
+            if (e.Dead) continue;
+            switch (e.Kind)
+            {
+                case Kind.Factory:
+                    if (Find(e.BaseId) is not { } host || !IsBase(host))
+                    {
+                        host = null;
+                        foreach (var b in Entities)
+                        {
+                            if (b.Dead || b.Owner != e.Owner || !IsBase(b) || b.Building > 0) continue;
+                            var r = BaseRadius(b);
+                            if ((b.Pos - e.Pos).LengthSq <= r * r && SlotsUsed(b) < SlotsOf(b)) { host = b; break; }
+                        }
+                        e.BaseId = host?.Id ?? 0;
+                    }
+                    e.Powered = host != null && host.Powered && host.Building == 0;
+                    break;
+                case Kind.Extractor:
+                    e.Powered = NetworkNear(e.Owner, Deposits[e.Deposit], ExtractorReach, true) != null;
+                    break;
+                case Kind.Hq or Kind.Node:
+                    break;
+                default:
+                    e.Powered = e.Stats.IsBuilding;   // towers (and the old outposts) need nothing
+                    break;
+            }
+        }
+    }
+
+    public bool CanPlaceNode(int player, FixVec2 pos, out string why)
+    {
+        why = null;
+        var r = StatsFor[(int)Kind.Node].Radius;
+        if (Players[player].Metal < NodeCost) { why = "Not enough metal"; return false; }
+        if (OffMap(pos, r)) { why = "Off the map"; return false; }
+        bool links = false;
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Owner != player || e.Kind is not (Kind.Hq or Kind.Node)) continue;
+            var apart = e.Kind == Kind.Hq ? e.Stats.Radius + NodeSpacing : NodeSpacing;
+            if ((e.Pos - pos).LengthSq < apart * apart) { why = "Too close to another node"; return false; }
+            if (!links && CouldLink(pos, e)) links = true;
+        }
+        if (!links) { why = $"Must be within {LinkReach} of your network, over open ground"; return false; }
+        if (Blocked(pos, r)) { why = "Blocked"; return false; }
+        return true;
+    }
+
+    // ---- fittings and fire (sulfur) ------------------------------------------------------------------------------
+
+    /// <summary>Which factories can fit napalm: the shell-firers, and the Lattice's crawlers (incendiary spit).</summary>
+    public static bool CanFitNapalm(Kind makes) => makes is Kind.Mortar or Kind.Artillery or Kind.Crawler;
+
+    public bool CanSetFitting(int player, int factoryId, Fitting fitting, out string why)
+    {
+        why = null;
+        var f = Find(factoryId);
+        if (f == null || f.Kind != Kind.Factory || f.Owner != player) { why = "Not your factory"; return false; }
+        if (fitting == Fitting.Napalm && !CanFitNapalm(f.Makes)) { why = "These can't carry napalm"; return false; }
+        if (fitting == Fitting.Napalm && SulfurOf(player) == 0) { why = "Needs sulfur: mine a sulfur patch"; return false; }
+        return true;
+    }
+
+    /// <summary>A patch of burning napalm: hurts the other side's ground units standing in it.</summary>
+    public sealed class FirePatch { public FixVec2 At; public Fix Radius; public int Owner, TicksLeft; public Entity By; }
+    readonly List<FirePatch> _fires = new();
+    public IReadOnlyList<FirePatch> Fires => _fires;
+
+    void AddFire(FixVec2 at, Fix radius, Entity by)
+    {
+        foreach (var f in _fires)   // (one already burning there: it flares up again, rather than stacking)
+            if (f.Owner == by.Owner && (f.At - at).LengthSq <= f.Radius * f.Radius / 4)
+            {
+                f.TicksLeft = FireTicks;
+                f.Radius = Fix.Max(f.Radius, radius);
+                return;
+            }
+        _fires.Add(new FirePatch { At = at, Radius = radius, Owner = by.Owner, TicksLeft = FireTicks, By = by });
+    }
+
+    /// <summary>Sets ground alight, as if a napalm hit from `by` landed there (for tests, and the game's --napalm view).</summary>
+    public void Ignite(FixVec2 at, Fix radius, Entity by) => AddFire(at, radius, by);
+
+    /// <summary>Every half second, every unit of the other side's on the ground in a fire takes 2 (1 if armoured).</summary>
+    void BurnFires()
+    {
+        foreach (var f in _fires)
+        {
+            f.TicksLeft--;
+            if (f.TicksLeft % 5 != 0) continue;
+            foreach (var o in Entities)
+            {
+                if (o.Dead || o.Owner == f.Owner || o.Hp <= 0 || o.Stats.Flying || !o.Stats.IsUnit) continue;
+                var reach = f.Radius + o.Stats.Radius;
+                if ((o.Pos - f.At).LengthSq <= reach * reach) _hits.Add((o, o.Stats.Armoured ? 1 : 2, f.By));
+            }
+        }
+        _fires.RemoveAll(f => f.TicksLeft <= 0);
+    }
+
+    /// <summary>A shot's damage now: sulfur boosts explosives; napalm trades some of the hit for the fire.</summary>
+    int ShotDamage(Entity e)
+    {
+        int d = e.Damage;
+        if (e.Stats.Explosive) d = d * (100 + SulfurBonusPercent * SulfurOf(e.Owner)) / 100;
+        if (e.Fitting == Fitting.Napalm) d = d * NapalmHitPercent / 100;
+        return d;
     }
 
     // ---- scouts --------------------------------------------------------------------------------------------
@@ -630,6 +847,7 @@ public sealed class World
         {
             // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
             // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
+            UpdatePower();
             foreach (var c in commands)
                 if (c is PlaceFactory or UpgradeFactory or CancelUpgrades or SetRally or SetAutoScout) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
@@ -637,6 +855,7 @@ public sealed class World
             return;
         }
 
+        UpdatePower();
         foreach (var c in commands) Apply(c);
 
         if (Paused)
@@ -646,6 +865,7 @@ public sealed class World
             return;
         }
 
+        UpdatePower();   // (after this tick's orders: a node sold, or a factory placed)
         var income = new int[Players.Length];
         for (int i = 0; i < Players.Length; i++) income[i] = IncomeOf(i);
         for (int i = 0; i < Players.Length; i++) Players[i].Metal += income[i];
@@ -737,6 +957,9 @@ public sealed class World
     // ---- getting round the water and the ridge (Nav) ---------------------------------------------------------
 
     readonly Nav _nav = new();
+
+    /// <summary>A way round the water and buildings from a to b (corners), or null (for the AI planning its network).</summary>
+    public List<FixVec2> PathBetween(FixVec2 a, FixVec2 b) => _nav.Path(a, b);
 
     /// <summary>One tick's step for a unit heading for `goal`, at most `most` long (before the ground's slope): straight
     /// if the way is clear, else along a found path, corner by corner. The path is found again when the goal has moved
@@ -834,6 +1057,13 @@ public sealed class World
                 var home = BaseFor(pf.Player, pf.Pos, out _);
                 Spawn(Kind.Factory, pf.Player, pf.Pos, pf.Makes).BaseId = home.Id;
                 break;
+            case PlaceNode pn when CanPlaceNode(pn.Player, pn.Pos, out _):
+                p.Metal -= NodeCost;
+                Spawn(Kind.Node, pn.Player, pn.Pos);
+                break;
+            case SetFitting sf when CanSetFitting(sf.Player, sf.FactoryId, sf.Fitting, out _):
+                Find(sf.FactoryId).Fitting = sf.Fitting;
+                break;
             case PlaceExtractor pe when CanPlaceExtractor(pe.Player, pe.Deposit, out _):
                 p.Metal -= ExtractorCost;
                 Spawn(Kind.Extractor, pe.Player, Deposits[pe.Deposit]).Deposit = pe.Deposit;
@@ -914,7 +1144,7 @@ public sealed class World
         {
             var f = Entities[i];
             if (f.Kind == Kind.Hq && !f.Dead) { BuildScouts(f); continue; }
-            if (f.Dead || f.Kind != Kind.Factory || f.Building > 0) continue;   // (making nothing till built)
+            if (f.Dead || f.Kind != Kind.Factory || f.Building > 0 || !f.Powered) continue;   // (making nothing till built, or cut off)
             // At the army cap a factory stands idle, its next unit not started: losses take a full build to replace, so
             // winning a fight opens a window (finished units waiting at the door refilled the army at once: stalemate).
             if (army[f.Owner] >= MaxArmyOf(Players[f.Owner].Civ)) { f.Timer = BuildTicksOf(f); continue; }
@@ -970,6 +1200,7 @@ public sealed class World
     {
         _moves.Clear();
         LandShells();   // shells fired earlier come down now, with everyone where they stood at the start of the tick
+        BurnFires();
         foreach (var e in Entities)
         {
             if (e.Dead || e.Hp <= 0) continue;
@@ -1016,7 +1247,7 @@ public sealed class World
         {
             bool alive = target.Hp > 0;
             target.Hp -= damage;
-            if (alive && target.Hp <= 0) Credit(by);   // the shot that finished it
+            if (alive && target.Hp <= 0 && by != null) Credit(by);   // the shot that finished it
         }
         _hits.Clear();
     }
@@ -1030,10 +1261,12 @@ public sealed class World
     {
         var s = e.Stats;
         e.Cooldown = s.Reload;
+        int damage = ShotDamage(e);
         if (s.Splash.Raw == 0)
         {
             Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, 0));
-            _hits.Add((target, Hurt(e, target, e.Damage), e));
+            _hits.Add((target, Hurt(e, target, damage), e));
+            if (e.Fitting == Fitting.Napalm) AddFire(target.Pos, Fix.Ratio(15, 10), e);
             return;
         }
 
@@ -1042,7 +1275,7 @@ public sealed class World
         // miss, it attacks ground where a unit is but if it's moving it misses").
         int flight = ShellFlightTicks(e.Pos, target.Pos);
         Shots.Add(new Shot(e.Pos, target.Pos, e.Owner, e.Kind, e.Id, target.Id, flight));
-        _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = e.Damage, Splash = s.Splash, By = e, TicksLeft = flight });
+        _shells.Add(new Shell { At = target.Pos, Owner = e.Owner, Damage = damage, Splash = s.Splash, By = e, TicksLeft = flight, Napalm = e.Fitting == Fitting.Napalm });
     }
 
     /// <summary>What a hit from `by` does to `to`: anti-armour weapons do more to armoured things (Stats.VsArmour).</summary>    static int Hurt(Entity by, Entity to, int damage) => to.Stats.Armoured ? damage * by.Stats.VsArmour / 100 : damage;
@@ -1052,7 +1285,7 @@ public sealed class World
     /// <summary>How long a shell is in the air: 0.6 s, and 0.1 s for every 3 units it goes.</summary>
     public static int ShellFlightTicks(FixVec2 from, FixVec2 to) => 6 + (to - from).Length.ToInt() / 3;
 
-    sealed class Shell { public FixVec2 At; public int Owner, Damage, TicksLeft; public Fix Splash; public Entity By; }
+    sealed class Shell { public FixVec2 At; public int Owner, Damage, TicksLeft; public Fix Splash; public Entity By; public bool Napalm; }
     readonly List<Shell> _shells = new();
 
     /// <summary>Shells that come down this tick: their damage joins this tick's hits.</summary>
@@ -1062,6 +1295,7 @@ public sealed class World
         {
             var sh = _shells[i];
             if (--sh.TicksLeft > 0) continue;
+            if (sh.Napalm) AddFire(sh.At, sh.Splash + 1, sh.By);
             foreach (var o in Entities)
             {
                 if (o.Dead || o.Owner == sh.Owner || o.Hp <= 0 || o.Stats.Flying) continue;   // (shells don't reach fliers)
@@ -1191,10 +1425,11 @@ public sealed class World
         foreach (var e in Entities)
         {
             Mix(e.Id); Mix((int)e.Kind); Mix(e.Owner); Mix(e.Pos.X.Raw); Mix(e.Pos.Z.Raw);
-            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0); Mix(e.Building);
+            Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.ScoutQueue); Mix(e.AutoScout ? 1 : 0); Mix(e.Building); Mix(e.Powered ? 1 : 0); Mix((int)e.Fitting);
             foreach (var l in e.Levels) Mix(l);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
         }
+        foreach (var f in _fires) { Mix(f.At.X.Raw); Mix(f.At.Z.Raw); Mix(f.Radius.Raw); Mix(f.Owner); Mix(f.TicksLeft); }
         foreach (var sh in _shells)
         {
             Mix(sh.At.X.Raw); Mix(sh.At.Z.Raw); Mix(sh.Owner); Mix(sh.Damage); Mix(sh.TicksLeft); Mix(sh.By.Id);

@@ -7,15 +7,16 @@ namespace Battler.Sim;
 /// A computer opponent. It sits outside the simulation and only issues commands, exactly like a
 /// human player, so it needs no special handling in a networked match.
 ///
-/// What it does, most urgent first: keeps a couple of scouts; mines every deposit it can reach; sends idle scouts to
-/// the nearest unmined deposit; fills its free factory slots; with every slot full, builds an outpost on the pad by
-/// one of its extractors; and spends what's left on upgrades.
+/// What it does, most urgent first: mines every deposit its network reaches; keeps a scout out; fills free factory
+/// spots on its network; grows the network, node by node, toward the nearest deposit nobody mines (sulfur included);
+/// with no free spot, adds a node at home for more factories; fits napalm once it has sulfur; and spends what's left
+/// on upgrades.
 /// </summary>
 public sealed class SimpleAi
 {
     readonly int _player;
     readonly Rng _rng;
-    const int WantScouts = 2, MaxOutposts = 3;
+    const int WantScouts = 1, MaxNodesGoingUp = 2, MaxFactories = 10;
 
     public SimpleAi(int player, ulong seed)
     {
@@ -30,28 +31,35 @@ public sealed class SimpleAi
         var p = w.Players[_player];
         var mine = w.Entities.FindAll(e => e.Owner == _player && !e.Dead);
         var scouts = mine.FindAll(e => World.IsScout(e.Kind));
-        var outposts = mine.FindAll(e => e.Kind == Kind.Outpost);
 
         if (w.Started)
         {
             SendScouts(w, scouts, issue);
 
-            // Mine whatever it can reach: nearest home first.
+            // Mine whatever the network reaches: nearest home first.
             int best = -1;
             for (int d = 0; d < World.Deposits.Length; d++)
                 if (w.CanPlaceExtractor(_player, d, out _) && (best < 0 || Dist(World.Deposits[d], p.HqPos) < Dist(World.Deposits[best], p.HqPos))) best = d;
             if (best >= 0) { issue(new PlaceExtractor(_player, best)); return; }
+            // The network already reaches a free deposit: save for its extractor (nodes are cheap, and would eat it all).
+            for (int d = 0; d < World.Deposits.Length; d++)
+                if (w.ExtractorOn(d) == null && w.NetworkNear(_player, World.Deposits[d], World.ExtractorReach, false) != null && p.Metal < World.ExtractorCost) return;
 
-            if (w.ScoutCount(_player) < WantScouts)
-            {
-                if (w.CanQueueScout(_player, out _)) { issue(new QueueScout(_player)); return; }
-                if (p.Metal < World.ScoutCost) return;   // saving for it
-            }
+            if (w.ScoutCount(_player) < WantScouts && w.CanQueueScout(_player, out _)) { issue(new QueueScout(_player)); return; }
+
+            // Napalm once there's sulfur: on about half the factories that can take it.
+            if (w.SulfurOf(_player) > 0)
+                foreach (var f in mine)
+                    if (f.Kind == Kind.Factory && World.CanFitNapalm(f.Makes) && f.Fitting == Fitting.Standard && f.Id % 2 == 0)
+                    { issue(new SetFitting(_player, f.Id, Fitting.Napalm)); return; }
         }
 
-        // A free factory slot: fill it (mostly tanks).
-        var freeBase = mine.Find(b => World.IsBase(b) && w.SlotsUsed(b) < World.SlotsOf(b));
-        if (freeBase != null)
+        // A free factory spot: fill it, up to as many factories as its mines can keep busy (three, and two a mine).
+        int factories = mine.FindAll(e => e.Kind == Kind.Factory).Count;
+        int extractors = mine.FindAll(e => e.Kind == Kind.Extractor).Count;
+        bool wantFactory = factories < Math.Min(MaxFactories, 3 + 2 * extractors);
+        var freeBase = mine.Find(b => World.IsBase(b) && b.Building == 0 && b.Powered && w.SlotsUsed(b) < World.SlotsOf(b));
+        if (freeBase != null && wantFactory)
         {
             if (p.Metal < World.FactoryCost) return;   // saving for it
             var roll = _rng.Next(20);
@@ -59,7 +67,7 @@ public sealed class SimpleAi
                 ? (roll < 8 ? Kind.Crawler : roll < 14 ? Kind.Spider : Kind.Piercer)            // crawlers 40%, spiders 30%, piercers 30%
                 : (roll < 7 ? Kind.Tank : roll < 12 ? Kind.LightTank : roll < 16 ? Kind.Artillery : Kind.Mortar);   // tanks 35%, light 25%, artillery 20%, mortars 20%
             var r = World.BaseRadius(freeBase);
-            for (int attempt = 0; attempt < 12; attempt++)
+            for (int attempt = 0; attempt < 16; attempt++)
             {
                 var pos = freeBase.Pos + new FixVec2(_rng.Range(-r.ToInt(), r.ToInt()), _rng.Range(-r.ToInt(), r.ToInt()));
                 if (w.CanPlaceFactory(_player, pos, makes, out _)) { issue(new PlaceFactory(_player, pos, makes)); return; }
@@ -67,17 +75,75 @@ public sealed class SimpleAi
         }
         if (!w.Started) return;
 
-        // Every slot full: an outpost on the pad by one of its extractors (or, half the time, upgrade instead).
-        if (freeBase == null && outposts.Count < MaxOutposts && _rng.Next(2) == 0)
+        // Grow the network: toward the nearest deposit nobody mines, and (with no free spot) a node at home for factories.
+        int goingUp = mine.FindAll(e => e.Kind == Kind.Node && e.Building > 0).Count;
+        if (goingUp < MaxNodesGoingUp && p.Metal >= World.NodeCost)
         {
-            for (int d = 0; d < World.Deposits.Length; d++)
-            {
-                if (!World.HasPad[d] || w.ExtractorOn(d) is not { } rig || rig.Owner != _player) continue;
-                if (w.CanPlaceOutpost(_player, d, out _)) { issue(new PlaceOutpost(_player, d)); return; }
-                if (p.Metal < World.OutpostCost) return;   // a pad is free: saving for it
-            }
+            if (TowardDeposit(w, mine, issue)) return;
+            if (freeBase == null && wantFactory && HomeNode(w, mine, issue)) return;
         }
         MaybeUpgrade(w, mine, issue, p.Metal > 800 ? 1 : 2);   // (with metal piling up, every time)
+    }
+
+    /// <summary>A node a step along the way from the nearest piece of network to the nearest deposit nobody mines.</summary>
+    bool TowardDeposit(World w, List<Entity> mine, Action<Command> issue)
+    {
+        var hq = w.Players[_player].HqPos;
+        int target = -1;
+        for (int d = 0; d < World.Deposits.Length; d++)
+        {
+            if (w.ExtractorOn(d) != null || w.NetworkNear(_player, World.Deposits[d], World.ExtractorReach, false) != null) continue;
+            if (target < 0 || Dist(World.Deposits[d], hq) < Dist(World.Deposits[target], hq)) target = d;
+        }
+        if (target < 0) return false;
+        var goal = World.Deposits[target];
+        Entity from = null;
+        foreach (var e in mine)
+            if (e.Kind is Kind.Hq or Kind.Node && (from == null || Dist(e.Pos, goal) < Dist(from.Pos, goal))) from = e;
+        if (from == null) return false;
+        var path = w.PathBetween(from.Pos, goal);
+        if (path == null) return false;
+        foreach (var step in new[] { 20, 17, 14, 11, 9 })
+        {
+            var at = Along(from.Pos, path, step);
+            if ((at - goal).LengthSq < Fix.FromInt(36)) at = goal + (from.Pos - goal).WithLength(Fix.FromInt(6));   // (beside the deposit, not on it)
+            foreach (var (dx, dz) in new[] { (0, 0), (3, 0), (-3, 0), (0, 3), (0, -3) })
+            {
+                var spot = at + new FixVec2(dx, dz);
+                if (w.CanPlaceNode(_player, spot, out _)) { issue(new PlaceNode(_player, spot)); return true; }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>A node beside one near home (within 50 of the HQ), for more factory spots.</summary>
+    bool HomeNode(World w, List<Entity> mine, Action<Command> issue)
+    {
+        var hq = w.Players[_player].HqPos;
+        var near = mine.FindAll(e => e.Kind is Kind.Hq or Kind.Node && e.Building == 0 && Dist(e.Pos, hq) < 50);
+        if (near.Count == 0) return false;
+        for (int attempt = 0; attempt < 12; attempt++)
+        {
+            var b = near[_rng.Next(near.Count)];
+            var spot = b.Pos + new FixVec2(_rng.Range(-18, 18), _rng.Range(-18, 18));
+            if (w.CanPlaceNode(_player, spot, out _)) { issue(new PlaceNode(_player, spot)); return true; }
+        }
+        return false;
+    }
+
+    /// <summary>The point `dist` along a path of corners starting at `start` (its end if shorter).</summary>
+    static FixVec2 Along(FixVec2 start, List<FixVec2> path, int dist)
+    {
+        var at = start;
+        var left = Fix.FromInt(dist);
+        foreach (var c in path)
+        {
+            var seg = (c - at).Length;
+            if (seg >= left) return at + (c - at).WithLength(left);
+            left -= seg;
+            at = c;
+        }
+        return at;
     }
 
     /// <summary>Idle scouts go to the nearest deposit nobody mines and no other scout of ours is heading for.</summary>
@@ -88,9 +154,8 @@ public sealed class SimpleAi
         foreach (var s in scouts)
         {
             if (s.HasWaypoint) continue;
-            // Staying put by a free deposit until it's mined (or an outpost goes up beside it).
             int here = NearestDeposit(s.Pos, 6);
-            if (here >= 0 && w.ExtractorOn(here) == null) continue;
+            if (here >= 0 && w.ExtractorOn(here) == null) continue;   // (watching a free deposit)
             int best = -1;
             for (int d = 0; d < World.Deposits.Length; d++)
             {
@@ -115,11 +180,11 @@ public sealed class SimpleAi
         return -1;
     }
 
-    /// <summary>One in `oneIn` thinks, buy a random upgrade on a factory or outpost if it can.</summary>
+    /// <summary>One in `oneIn` thinks, buy a random upgrade on a factory if it can.</summary>
     void MaybeUpgrade(World w, List<Entity> mine, Action<Command> issue, int oneIn)
     {
         if (_rng.Next(oneIn) != 0) return;
-        var upgradable = mine.FindAll(e => e.Kind is Kind.Factory or Kind.Outpost);
+        var upgradable = mine.FindAll(e => e.Kind == Kind.Factory);
         if (upgradable.Count == 0) return;
         for (int attempt = 0; attempt < 6; attempt++)   // a few random picks, in case the first is maxed or too dear
         {
