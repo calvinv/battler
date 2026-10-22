@@ -747,8 +747,9 @@ public partial class Main : Node3D
 
     void UpdateCogs(Entity f, Node3D view, float dt)
     {
-        int level = f.Level(Upgrade.Production);
+        int level = f.Building > 0 ? 0 : f.Level(Upgrade.Production);   // (none on a wing still going up)
         if (!_cogs.TryGetValue(f.Id, out var cogs)) _cogs[f.Id] = cogs = new List<Node3D>();
+        cogs.RemoveAll(c => !IsInstanceValid(c) || c.GetParent() != view);   // (gone with a model that was swapped out)
         _brass ??= new StandardMaterial3D { AlbedoColor = new Color(0.86f, 0.64f, 0.26f), Metallic = 0.6f, Roughness = 0.4f };
         while (cogs.Count < level)
         {
@@ -980,6 +981,7 @@ public partial class Main : Node3D
                 old.QueueFree();
                 _views.Remove(e.Id);
                 _rising.Remove(e.Id);
+                _cogs.Remove(e.Id);   // (they went with the old model)
             }
             if (!_views.TryGetValue(e.Id, out var view))
             {
