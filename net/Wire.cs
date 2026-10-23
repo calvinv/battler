@@ -58,8 +58,8 @@ public static class Wire
         switch (c)
         {
             case AddWing aw: w.Write((byte)1); w.Write((byte)aw.Player); w.Write(aw.BaseId); w.Write((byte)aw.Makes); break;
-            case AddWingAt wa: w.Write((byte)17); w.Write((byte)wa.Player); w.Write(wa.BaseId); w.Write((byte)wa.Slot); w.Write((byte)wa.Makes); break;
-            case AddModule am: w.Write((byte)18); w.Write((byte)am.Player); w.Write(am.BaseId); w.Write((byte)am.Slot); w.Write((byte)am.Mod); break;
+            case AddWingAt wa: w.Write((byte)17); w.Write((byte)wa.Player); w.Write(wa.BaseId); w.Write((byte)wa.Slot); w.Write((byte)wa.Makes); w.Write(wa.Toward.X.Raw); w.Write(wa.Toward.Z.Raw); break;
+            case AddModule am: w.Write((byte)18); w.Write((byte)am.Player); w.Write(am.BaseId); w.Write((byte)am.Slot); w.Write((byte)am.Mod); w.Write(am.Toward.X.Raw); w.Write(am.Toward.Z.Raw); break;
             case Pause: w.Write((byte)2); w.Write((byte)c.Player); break;
             case Resume: w.Write((byte)3); w.Write((byte)c.Player); break;
             case UpgradeFactory uf: w.Write((byte)4); w.Write((byte)uf.Player); w.Write(uf.FactoryId); w.Write((byte)uf.Which); break;
@@ -89,8 +89,8 @@ public static class Wire
         return type switch
         {
             1 => new AddWing(player, r.ReadInt32(), (Kind)r.ReadByte()),
-            17 => new AddWingAt(player, r.ReadInt32(), r.ReadByte(), (Kind)r.ReadByte()),
-            18 => new AddModule(player, r.ReadInt32(), r.ReadByte(), (Mod)r.ReadByte()),
+            17 => new AddWingAt(player, r.ReadInt32(), r.ReadByte(), (Kind)r.ReadByte(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
+            18 => new AddModule(player, r.ReadInt32(), r.ReadByte(), (Mod)r.ReadByte(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
             2 => new Pause(player),
             3 => new Resume(player),
             4 => new UpgradeFactory(player, r.ReadInt32(), (Upgrade)r.ReadByte()),

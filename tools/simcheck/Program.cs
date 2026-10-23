@@ -246,11 +246,11 @@ bool BaseTest()
     var post = w.Entities.Find(e => e.Kind == Kind.Outpost && e.Owner == 0);
     while (post != null && post.Building > 0) w.Step(Array.Empty<Command>());
     bool canMine = w.CanPlaceExtractor(0, metalAt, out _);
-    // Wings go on the extractor there (the set-up base takes none); when the extractor falls its wing goes with it.
+    // Wings go on the extractor there (and the set-up base starts lines too); when the extractor falls its wing goes with it.
     w.Step(new Command[] { new PlaceExtractor(0, metalAt) });
     var rig = w.Entities.Find(e => e.Kind == Kind.Extractor && e.Owner == 0 && e.Deposit == metalAt);
     if (rig != null) rig.Building = 0;
-    bool baseTakesNone = post == null || !w.CanAddWing(0, post.Id, Kind.LightTank, out _);
+    bool baseTakesNone = post != null && w.CanAddWing(0, post.Id, Kind.LightTank, out _);   // (now: the base takes them)
     w.Step(new Command[] { new AddWing(0, rig?.Id ?? 0, Kind.LightTank) });
     int wingsThere = rig == null || !baseTakesNone ? -1 : w.SlotsUsed(rig);
     if (rig != null) rig.Hp = 0;

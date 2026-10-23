@@ -100,15 +100,52 @@ public partial class Main
     // ---- sulfur ----------------------------------------------------------------------------------------------
 
     /// <summary>A sulfur patch: a low pale rock bristling with yellow crystals that glow a little.</summary>
-    static Node3D MakeSulfur(int seed)
+    static Node3D MakeSulfur(int seed) => MakeCrystals(seed, new Color(0.36f, 0.31f, 0.2f), new Color(0.72f, 0.62f, 0.22f), new Color(1f, 0.85f, 0.15f), new Color(1f, 0.78f, 0.1f));
+
+    /// <summary>A crystal field (the user, 2026-10-23: "natural resources"): dark rock bristling with tall cyan crystals that glow.</summary>
+    static Node3D MakeCrystal(int seed) => MakeCrystals(seed + 101, new Color(0.22f, 0.24f, 0.28f), new Color(0.3f, 0.42f, 0.5f), new Color(0.45f, 0.95f, 1f), new Color(0.3f, 0.85f, 1f));
+
+    /// <summary>An oil seep: a black glossy pool in a ring of stained rock, a few tar blobs, a sheen on it.</summary>
+    static Node3D MakeOil(int seed)
     {
         var root = new Node3D();
-        var rock = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.31f, 0.2f), Roughness = 0.95f };
-        var crust = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.62f, 0.22f), Roughness = 0.9f };
+        var tar = new StandardMaterial3D { AlbedoColor = new Color(0.02f, 0.02f, 0.025f), Roughness = 0.05f, Metallic = 0.6f, MetallicSpecular = 1f };
+        var sheen = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.4f, 0.2f, 0.6f, 0.25f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.1f,
+            EmissionEnabled = true, Emission = new Color(0.25f, 0.1f, 0.45f), EmissionEnergyMultiplier = 0.4f,
+        };
+        var stain = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.13f, 0.1f), Roughness = 0.95f };
+        root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 2.4f, BottomRadius = 2.6f, Height = 0.12f, RadialSegments = 24 }, MaterialOverride = tar, Position = new Vector3(0, 0.05f, 0) });
+        root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 1.3f, BottomRadius = 1.3f, Height = 0.02f, RadialSegments = 20 }, MaterialOverride = sheen, Position = new Vector3(0.5f, 0.13f, -0.3f) });
+        var rng = new RandomNumberGenerator { Seed = (ulong)(seed * 6007 + 5) };
+        for (int i = 0; i < 9; i++)   // stained rocks round the rim
+        {
+            float ang = Mathf.Tau * i / 9 + rng.RandfRange(-0.2f, 0.2f), r = rng.RandfRange(0.4f, 0.8f);
+            root.AddChild(new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = r, Height = r * 1.1f, RadialSegments = 6, Rings = 3 }, MaterialOverride = stain,
+                Position = new Vector3(Mathf.Cos(ang) * 2.8f, r * 0.2f, Mathf.Sin(ang) * 2.8f),
+            });
+        }
+        for (int i = 0; i < 4; i++)   // tar blobs welling up
+        {
+            float ang = rng.RandfRange(0, Mathf.Tau), d = rng.RandfRange(0.2f, 1.6f), r = rng.RandfRange(0.25f, 0.45f);
+            root.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = r, Height = r, RadialSegments = 8, Rings = 4 }, MaterialOverride = tar, Position = new Vector3(Mathf.Cos(ang) * d, 0.1f, Mathf.Sin(ang) * d) });
+        }
+        return root;
+    }
+
+    /// <summary>A patch of glowing crystals: lumps of rock, some crusted, crystals jutting out of them in clumps.</summary>
+    static Node3D MakeCrystals(int seed, Color rockCol, Color crustCol, Color crystalCol, Color glowCol)
+    {
+        var root = new Node3D();
+        var rock = new StandardMaterial3D { AlbedoColor = rockCol, Roughness = 0.95f };
+        var crust = new StandardMaterial3D { AlbedoColor = crustCol, Roughness = 0.9f };
         var crystal = new StandardMaterial3D
         {
-            AlbedoColor = new Color(1f, 0.85f, 0.15f), Roughness = 0.25f, Metallic = 0.1f,
-            EmissionEnabled = true, Emission = new Color(1f, 0.78f, 0.1f), EmissionEnergyMultiplier = 0.9f,
+            AlbedoColor = crystalCol, Roughness = 0.25f, Metallic = 0.1f,
+            EmissionEnabled = true, Emission = glowCol, EmissionEnergyMultiplier = 0.9f,
         };
         var rng = new RandomNumberGenerator { Seed = (ulong)(seed * 7919 + 13) };
         for (int i = 0; i < 6; i++)   // lumps of rock, crusted yellow

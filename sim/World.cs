@@ -10,7 +10,7 @@ public enum Upgrade { Production, Damage, Armour }
 /// <summary>What a deposit gives (the user, 2026-10-22: resources "impact the way your units can fit and offer upgrades,
 /// like you can find a sulfur patch that could increase explosive damage for all units or give you access to napalm").
 /// Metal is income; the others are mined for what having them does, not stockpiled.</summary>
-public enum Resource { Metal, Sulfur }
+public enum Resource { Metal, Sulfur, Crystal, Oil }
 
 /// <summary>What a factory fits its units with. Napalm needs sulfur: hits do a quarter less, but leave the ground
 /// burning (World.Fires).</summary>
@@ -19,7 +19,7 @@ public enum Fitting { Standard, Napalm }
 /// <summary>What a module does for the wings after it on its line (the user, 2026-10-23: "I want this to be like a
 /// rube goldberg machine ... armoury upgrade, then whatever comes after has more firepower. the modules should be speed,
 /// armour, attack, build speed, energy cost, wildcards"). Stat modules stack; the wildcards change what comes out.</summary>
-public enum Mod { Speed, Armour, Attack, Build, Energy, Twin, Napalm, Shield, Magnet }
+public enum Mod { Speed, Armour, Attack, Build, Energy, Twin, Napalm, Shield, Magnet, Blank }   // (a blank does nothing: it carries the line on)
 
 public sealed class Stats
 {
@@ -174,6 +174,18 @@ public sealed class World
     // the HQ supplies a little; each power plant, on one of the vents beside every metal deposit, supplies more. Every
     // finished wing draws power; drawing more than is supplied, all the side's wings work that much slower.
     public const int HqPower = 4, PlantPower = 6, PlantCost = 300;
+    // The other natural resources (the user, 2026-10-23: "I want to add natural resources"): an oil well powers
+    // wings and pays a little; a crystal field shields everything you make.
+    public const int OilPower = 4, OilIncome = 1, CrystalShieldPercent = 15;
+
+    /// <summary>How many deposits of `res` a player mines (built).</summary>
+    public int MinedOf(int player, Resource res)
+    {
+        int n = 0;
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && DepositResource[e.Deposit] == res) n++;
+        return n;
+    }
     public static int PowerDraw(Kind makes) => makes switch
     {
         Kind.LightTank or Kind.Crawler or Kind.Ranger or Kind.MobileBase => 1,
@@ -312,11 +324,21 @@ public sealed class World
         int sulfurZ = Map.Test ? 30 : 45;
         all.Add((new FixVec2(0, sulfurZ), null));
         all.Add((new FixVec2(0, -sulfurZ), null));
+        int sulfurEnd = all.Count;
+        // Crystal and oil (one of each a side, turned round for player 1; on the big map only where the ground is open).
+        var extra = Map.Test
+            ? new[] { (new FixVec2(-36, 12), Resource.Crystal), (new FixVec2(-82, -24), Resource.Oil) }
+            : new[] { (new FixVec2(-172, 64), Resource.Crystal), (new FixVec2(-250, 36), Resource.Oil) };
+        var extraRes = new List<Resource>();
+        foreach (var (at, res) in extra)
+            foreach (var p in new[] { at, -at })
+                if (Nav.OpenAt(p)) { all.Add((p, null)); extraRes.Add(res); }
         Deposits = all.ConvertAll(d => d.At).ToArray();
         Pads = all.ConvertAll(d => d.Pad ?? d.At).ToArray();
         HasPad = new bool[all.Count];   // (outposts are gone: the network replaced them)
         DepositResource = new Resource[all.Count];
-        for (int i = metal; i < all.Count; i++) DepositResource[i] = Resource.Sulfur;
+        for (int i = metal; i < sulfurEnd; i++) DepositResource[i] = Resource.Sulfur;
+        for (int i = sulfurEnd; i < all.Count; i++) DepositResource[i] = extraRes[i - sulfurEnd];
         var vents = new List<FixVec2>();
         for (int i = 0; i < metal; i++)
         {
@@ -488,6 +510,7 @@ public sealed class World
         SetStats(e);
         e.Hp = e.MaxHp;
         e.Shield = e.MaxHp * ShieldPercent * e.Mods[(int)Mod.Shield] / 100;
+        if (from != null) e.Shield += e.MaxHp * CrystalShieldPercent * MinedOf(owner, Resource.Crystal) / 100;   // (crystal fields)
         if (kind == Kind.Factory && makes != Kind.MobileBase) e.Timer = BuildTicksOf(e);
         e.Building = ConstructionTicks(kind);   // (towers and the HQ stand ready from the start)
         e.Height = Ground.HeightAt(pos);
@@ -631,10 +654,10 @@ public sealed class World
     public static bool IsBase(Entity e) => e.Kind is Kind.Hq or Kind.Outpost;
 
     /// <summary>What wings are built onto: the HQ, extractors and power plants.</summary>
-    public static bool IsWingHost(Entity e) => e.Kind is Kind.Hq or Kind.Extractor or Kind.PowerPlant;
+    public static bool IsWingHost(Entity e) => e.Kind is Kind.Hq or Kind.Outpost or Kind.Extractor or Kind.PowerPlant;
 
     /// <summary>How many wings a host takes: the HQ three, an extractor or power plant two.</summary>
-    public static int SlotsOf(Entity b) => b.Kind == Kind.Hq ? HqWings : IsWingHost(b) ? ResourceWings : 0;
+    public static int SlotsOf(Entity b) => b.Kind is Kind.Hq or Kind.Outpost ? HqWings : IsWingHost(b) ? ResourceWings : 0;
 
     /// <summary>A wing on a sulfur extractor: its units come out enhanced.</summary>
     public bool OnSulfur(Entity wing) => Find(wing.BaseId) is { Kind: Kind.Extractor } x && x.Deposit >= 0 && DepositResource[x.Deposit] == Resource.Sulfur;
@@ -646,7 +669,7 @@ public sealed class World
     public int SlotsUsed(Entity b)
     {
         int n = 0;
-        foreach (var e in Entities) if (!e.Dead && e.Kind == Kind.Factory && e.BaseId == b.Id) n++;
+        foreach (var e in Entities) if (!e.Dead && e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id) n++;
         return n;
     }
 
@@ -664,7 +687,7 @@ public sealed class World
     /// plant, square to the way to the middle of the map (so they sit beside it, clear of its deposit or vent).</summary>
     public static FixVec2 WingSpot(Entity b, int slot)
     {
-        if (b.Kind == Kind.Hq)
+        if (b.Kind is Kind.Hq or Kind.Outpost)
         {
             var off = HqWingSpots[slot];
             return b.Owner == 0 ? b.Pos + off : b.Pos - off;
@@ -675,55 +698,109 @@ public sealed class World
     }
 
     // ---- lines: the base as a machine (the user, 2026-10-23: "like a rube goldberg machine") ------------------
-    // Each wing spot of a host starts a line running straight out from it. Wings and modules snap onto a line one
-    // after another (the first free place along it); a wing gets every finished module before it on its line.
+    // Each wing spot of a host starts a line. Wings, modules and blanks snap onto its end one after another, each a
+    // fixed step from the last in whichever way the player points (bending at most TurnDegrees at a piece), so a line
+    // can be steered out to a resource (the user: "blank blocks that just cost and move us closer, each block is a
+    // certain number of px from the last"). A wing gets every finished module before it on its line.
 
-    public const int ModCount = 9, MaxLink = 4, ShieldPercent = 40, TwinEvery = 3, MagnetPercent = 50;
+    public const int ModCount = 10, MaxLink = 14, ShieldPercent = 40, TwinEvery = 3, MagnetPercent = 50, TurnDegrees = 50;
     public static readonly Fix LineStep = Fix.Ratio(45, 10);   // from one piece of a line to the next
+    static readonly Fix BendCos = Fix.Ratio(643, 1000), BendSin = Fix.Ratio(766, 1000);   // (cos and sin of TurnDegrees)
+    /// <summary>How near a deposit or vent one of your line's pieces has to be to put an extractor or plant on it
+    /// (or a host itself: HostClaimReach).</summary>
+    public static readonly Fix ClaimReach = 9, HostClaimReach = 14;
 
-    /// <summary>What a module costs.</summary>
+    /// <summary>What a module costs (a blank only carries the line on).</summary>
     public static int ModuleCost(Mod m) => m switch
     {
         Mod.Speed => 150, Mod.Armour => 200, Mod.Attack => 250, Mod.Build => 200, Mod.Energy => 150,
-        Mod.Twin => 350, Mod.Napalm => 250, Mod.Shield => 250, Mod.Magnet => 200, _ => 200,
+        Mod.Twin => 350, Mod.Napalm => 250, Mod.Shield => 250, Mod.Magnet => 200, Mod.Blank => 50, _ => 200,
     };
+
+    /// <summary>How long a module takes to put up (a blank is quick).</summary>
+    public static int ModuleBuildTicks(Mod m) => m == Mod.Blank ? 8 * TicksPerSecond : 30 * TicksPerSecond;
 
     /// <summary>A unit's speed, with the speed modules it was made behind (+20% each).</summary>
     public static Fix SpeedOf(Entity e) => e.Mods[(int)Mod.Speed] == 0 ? e.Stats.Speed : e.Stats.Speed * Fix.Ratio(100 + 20 * e.Mods[(int)Mod.Speed], 100);
 
-    /// <summary>Which way line `slot` of host `b` runs (a unit vector, out from the host).</summary>
+    /// <summary>Which way line `slot` of host `b` leaves it (a unit vector, out from the host).</summary>
     public static FixVec2 LineDir(Entity b, int slot) => (WingSpot(b, slot) - b.Pos).WithLength(Fix.One);
 
-    /// <summary>Where place `link` along line `slot` of host `b` is.</summary>
+    /// <summary>Where place `link` would be on a line run dead straight (laying out a showcase base).</summary>
     public static FixVec2 LineSpot(Entity b, int slot, int link) => WingSpot(b, slot) + LineDir(b, slot) * (LineStep * link);
 
-    /// <summary>A line's wing or module at place `link`, or null.</summary>
+    /// <summary>A line's piece at place `link`, or null.</summary>
     public Entity PieceAt(Entity b, int slot, int link) =>
         Entities.Find(e => !e.Dead && e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id && e.Slot == slot && e.Link == link);
 
-    /// <summary>The first free place along a line where a piece fits (on open ground, clear of other buildings than
-    /// the host and its own pieces), or -1 when the line is full or blocked.</summary>
+    /// <summary>The last piece of a line (the furthest along), or null when it has none.</summary>
+    public Entity LineEnd(Entity b, int slot)
+    {
+        Entity end = null;
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id && e.Slot == slot && (end == null || e.Link > end.Link)) end = e;
+        return end;
+    }
+
+    /// <summary>The way a line runs into its piece `e` (its first piece: straight out of the host).</summary>
+    public FixVec2 HeadingOf(Entity e) => e.Heading.LengthSq.Raw != 0 ? e.Heading : Find(e.BaseId) is { } b ? LineDir(b, e.Slot) : new FixVec2(1, 0);
+
+    /// <summary>Where the next piece of a line goes: one step on from its end toward `toward` (zero: straight on),
+    /// bending at most TurnDegrees; the first piece at the host's wing spot. `dir`: the way it runs in.</summary>
+    public FixVec2 NextSpot(Entity b, int slot, FixVec2 toward, out FixVec2 dir)
+    {
+        var end = LineEnd(b, slot);
+        if (end == null) { dir = LineDir(b, slot); return WingSpot(b, slot); }
+        var prev = HeadingOf(end);
+        dir = prev;
+        var want = toward - end.Pos;
+        if (toward.LengthSq.Raw != 0 && want.LengthSq > Fix.Ratio(1, 4))
+        {
+            var w = want.WithLength(Fix.One);
+            if (w.X * prev.X + w.Z * prev.Z >= BendCos) dir = w;
+            else
+            {
+                var left = new FixVec2(-prev.Z, prev.X);
+                var turn = prev * BendCos + left * BendSin;
+                var other = prev * BendCos - left * BendSin;
+                dir = (w.X * left.X + w.Z * left.Z >= Fix.Zero ? turn : other).WithLength(Fix.One);   // (as far round as it may toward it)
+            }
+        }
+        return end.Pos + dir * LineStep;
+    }
+
+    /// <summary>Whether the next piece of a line could stand at `at`: on the map, on open ground, clear of other
+    /// buildings (but the line's end and its host), deposits and vents. `why` when not.</summary>
+    bool SpotOk(Entity b, int slot, FixVec2 at, out string why)
+    {
+        why = null;
+        var r = StatsFor[(int)Kind.Factory].Radius;
+        if (OffMap(at, r) || !Nav.OpenAt(at)) { why = "Off the ground it can stand on"; return false; }
+        foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+            if (!Ground.Passable(at + new FixVec2(dx, dz) * r)) { why = "Off the ground it can stand on"; return false; }
+        var end = LineEnd(b, slot);
+        foreach (var e in Entities)
+        {
+            if (e.Dead || !e.Stats.IsBuilding || e == b || e == end) continue;
+            var gap = e.Stats.Radius + r + 1;
+            if ((e.Pos - at).LengthSq < gap * gap) { why = "Something's in the way"; return false; }
+        }
+        foreach (var d in Deposits)
+            if ((d - at).LengthSq < (DepositRadius + r) * (DepositRadius + r)) { why = "That's a deposit: put an extractor on it"; return false; }
+        foreach (var v in Vents)
+        {
+            var gap = StatsFor[(int)Kind.PowerPlant].Radius + r;
+            if ((v - at).LengthSq < gap * gap) { why = "That's a vent: put a power plant on it"; return false; }
+        }
+        return true;
+    }
+
+    /// <summary>The place a line's next piece takes going straight on, or -1 when it's full or blocked that way.</summary>
     public int FreeLink(Entity b, int slot)
     {
-        var r = StatsFor[(int)Kind.Factory].Radius;
-        for (int link = 0; link <= MaxLink; link++)
-        {
-            if (PieceAt(b, slot, link) != null) continue;
-            var at = LineSpot(b, slot, link);
-            if (OffMap(at, r) || !Nav.OpenAt(at)) return -1;
-            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
-                if (!Ground.Passable(at + new FixVec2(dx, dz) * r)) return -1;
-            foreach (var e in Entities)
-            {
-                if (e.Dead || !e.Stats.IsBuilding || e == b || (e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id)) continue;
-                var gap = e.Stats.Radius + r + 1;
-                if ((e.Pos - at).LengthSq < gap * gap) return -1;
-            }
-            foreach (var d in Deposits)
-                if ((d - at).LengthSq < (DepositRadius + r) * (DepositRadius + r)) return -1;
-            return link;
-        }
-        return -1;
+        int link = (LineEnd(b, slot)?.Link ?? -1) + 1;
+        if (link > MaxLink) return -1;
+        return SpotOk(b, slot, NextSpot(b, slot, FixVec2.Zero, out _), out _) ? link : -1;
     }
 
     /// <summary>The modules (finished) before place `link` on a line, counted by Mod.</summary>
@@ -746,7 +823,7 @@ public sealed class World
             if (link < 0) continue;
             ModsBefore(b, slot, link, mods);
             int n = 0;
-            foreach (var m in mods) n += m;
+            for (int m = 0; m < (int)Mod.Blank; m++) n += mods[m];
             int score = n * 10 - link;   // (modules first; else the shortest line)
             if (score > bestMods) { best = slot; bestMods = score; }
         }
@@ -766,48 +843,65 @@ public sealed class World
         }
     }
 
-    /// <summary>Whether a wing or module can go on line `slot` of host `baseId` now (`makes` for a wing; a module when
-    /// `mod` is given).</summary>
-    public bool CanAddPiece(int player, int baseId, int slot, Kind makes, Mod? mod, out string why)
+    /// <summary>Whether a wing (`makes`) or a module (`mod`) can go on the end of line `slot` of host `baseId` now,
+    /// heading toward `toward` (zero: straight on).</summary>
+    public bool CanAddPiece(int player, int baseId, int slot, Kind makes, Mod? mod, out string why) => CanAddPiece(player, baseId, slot, makes, mod, FixVec2.Zero, out why);
+
+    public bool CanAddPiece(int player, int baseId, int slot, Kind makes, Mod? mod, FixVec2 toward, out string why)
     {
         why = null;
         var p = Players[player];
         var b = Find(baseId);
         if (mod == null && makes != Kind.MobileBase && System.Array.IndexOf(FactoryKindsOf(p.Civ), makes) < 0) { why = "No wing makes that"; return false; }
-        if (b == null || !IsWingHost(b) || b.Owner != player) { why = "Lines start from your HQ, extractors or power plants"; return false; }
+        if (b == null || !IsWingHost(b) || b.Owner != player) { why = "Lines start from your HQ, bases, extractors and power plants"; return false; }
         if (b.Building > 0) { why = "It's still being built"; return false; }
         if (slot < 0 || slot >= SlotsOf(b)) { why = "No line there"; return false; }
         if (p.Metal < (mod is { } m ? ModuleCost(m) : WingCost(makes))) { why = "Not enough metal"; return false; }
-        if (FreeLink(b, slot) < 0) { why = "This line is full"; return false; }
-        return true;
+        if ((LineEnd(b, slot)?.Link ?? -1) + 1 > MaxLink) { why = "This line is as long as it goes"; return false; }
+        return SpotOk(b, slot, NextSpot(b, slot, toward, out _), out why);
     }
 
-    Entity AddPiece(int player, Entity b, int slot, Kind makes, Mod? mod)
+    Entity AddPiece(int player, Entity b, int slot, Kind makes, Mod? mod, FixVec2 toward)
     {
-        int link = FreeLink(b, slot);
+        int link = (LineEnd(b, slot)?.Link ?? -1) + 1;
+        var at = NextSpot(b, slot, toward, out var dir);
         Players[player].Metal -= mod is { } m ? ModuleCost(m) : WingCost(makes);
-        var piece = mod is { } mm ? Spawn(Kind.Module, player, LineSpot(b, slot, link)) : Spawn(Kind.Factory, player, LineSpot(b, slot, link), makes);
-        if (mod is { } m2) piece.Mod = m2;
+        var piece = mod != null ? Spawn(Kind.Module, player, at) : Spawn(Kind.Factory, player, at, makes);
+        if (mod is { } m2) { piece.Mod = m2; piece.Building = ModuleBuildTicks(m2); }
         piece.BaseId = b.Id;
         piece.Slot = slot;
         piece.Link = link;
+        piece.Heading = dir;
         if (piece.Kind == Kind.Factory) { RefreshLines(); if (makes != Kind.MobileBase) piece.Timer = BuildTicksOf(piece); }
         return piece;
     }
 
     /// <summary>Which way a wing's door faces: square to its line (the line runs through it side to side), on the side
     /// toward the enemy.</summary>
-    public FixVec2 DoorDir(Entity wing) => Find(wing.BaseId) is { } b
-        ? DoorDirAt(wing.Owner, b, wing.Slot, wing.Pos)
+    public FixVec2 DoorDir(Entity wing) => Find(wing.BaseId) is not null
+        ? DoorDirAt(wing.Owner, HeadingOf(wing), wing.Pos)
         : (Players[1 - wing.Owner].HqPos - wing.Pos).WithLength(Fix.One);
 
-    /// <summary>Which way a wing at `at` on line `slot` of host `b` would face its door.</summary>
-    public FixVec2 DoorDirAt(int owner, Entity b, int slot, FixVec2 at)
+    /// <summary>Which way a wing at `at` on a line running `lineDir` would face its door.</summary>
+    public FixVec2 DoorDirAt(int owner, FixVec2 lineDir, FixVec2 at)
     {
-        var d = LineDir(b, slot);
-        var side = new FixVec2(-d.Z, d.X);
+        var side = new FixVec2(-lineDir.Z, lineDir.X);
         var toEnemy = Players[1 - owner].HqPos - at;
         return side.X * toEnemy.X + side.Z * toEnemy.Z < Fix.Zero ? -side : side;
+    }
+
+    /// <summary>Whether one of the player's lines reaches `pos`: a finished piece within ClaimReach of it, or one of
+    /// their hosts (the HQ, a base, an extractor, a plant) within HostClaimReach.</summary>
+    public bool LineReaches(int player, FixVec2 pos, bool built = true)
+    {
+        foreach (var e in Entities)
+        {
+            if (e.Dead || e.Owner != player || (built && e.Building > 0)) continue;
+            var d2 = (e.Pos - pos).LengthSq;
+            if (e.Kind is Kind.Factory or Kind.Module && d2 <= ClaimReach * ClaimReach) return true;
+            if (IsWingHost(e) && d2 <= HostClaimReach * HostClaimReach) return true;
+        }
+        return false;
     }
 
     /// <summary>Whether a wing making `makes` (a fighting unit of the player's civilisation, or Kind.MobileBase for the
@@ -920,7 +1014,7 @@ public sealed class World
         if (Players[player].Metal < ExtractorCost) { why = "Not enough metal"; return false; }
         if (ExtractorOn(deposit) != null) { why = "Already mined"; return false; }
         if (GuardNear(Deposits[deposit])) { why = "A derelict guards it: clear it first"; return false; }
-        if (BaseNear(player, Deposits[deposit], BaseReach) == null) { why = $"Needs one of your bases within {BaseReach} (set up a mobile base near it)"; return false; }
+        if (!LineReaches(player, Deposits[deposit])) { why = $"Run a line to within {ClaimReach} of it (blanks carry a line on)"; return false; }
         return true;
     }
 
@@ -930,7 +1024,7 @@ public sealed class World
         int n = 0;
         foreach (var e in Entities)
             if (!e.Dead && e.Kind == Kind.Extractor && e.Owner == player && e.Building == 0 && DepositResource[e.Deposit] == Resource.Metal) n++;   // (mining once built)
-        return TrickleIncome + ExtractorIncome * n;
+        return TrickleIncome + ExtractorIncome * n + OilIncome * MinedOf(player, Resource.Oil);
     }
 
     // ---- power -------------------------------------------------------------------------------------------------
@@ -945,7 +1039,7 @@ public sealed class World
         if (Players[player].Metal < PlantCost) { why = "Not enough metal"; return false; }
         if (PlantOn(vent) != null) { why = "Already taken"; return false; }
         if (GuardNear(Vents[vent])) { why = "A derelict guards it: clear it first"; return false; }
-        if (BaseNear(player, Vents[vent], BaseReach) == null) { why = $"Needs one of your bases within {BaseReach} (set up a mobile base near it)"; return false; }
+        if (!LineReaches(player, Vents[vent])) { why = $"Run a line to within {ClaimReach} of it (blanks carry a line on)"; return false; }
         return true;
     }
 
@@ -958,6 +1052,7 @@ public sealed class World
             if (e.Dead || e.Owner != player || e.Building > 0) continue;
             if (e.Kind == Kind.Hq) n += HqPower;
             if (e.Kind == Kind.PowerPlant) n += PlantPower;
+            if (e.Kind == Kind.Extractor && DepositResource[e.Deposit] == Resource.Oil) n += OilPower;
         }
         return n;
     }
@@ -1453,13 +1548,13 @@ public sealed class World
                 break;
             case AddWing aw when CanAddWing(aw.Player, aw.BaseId, aw.Makes, out _):
                 var onto = Find(aw.BaseId);
-                AddPiece(aw.Player, onto, FreeWingSlot(onto), aw.Makes, null);
+                AddPiece(aw.Player, onto, FreeWingSlot(onto), aw.Makes, null, FixVec2.Zero);
                 break;
-            case AddWingAt wa when CanAddPiece(wa.Player, wa.BaseId, wa.Slot, wa.Makes, null, out _):
-                AddPiece(wa.Player, Find(wa.BaseId), wa.Slot, wa.Makes, null);
+            case AddWingAt wa when CanAddPiece(wa.Player, wa.BaseId, wa.Slot, wa.Makes, null, wa.Toward, out _):
+                AddPiece(wa.Player, Find(wa.BaseId), wa.Slot, wa.Makes, null, wa.Toward);
                 break;
-            case AddModule am when CanAddPiece(am.Player, am.BaseId, am.Slot, Kind.Hq, am.Mod, out _):
-                AddPiece(am.Player, Find(am.BaseId), am.Slot, Kind.Hq, am.Mod);
+            case AddModule am when CanAddPiece(am.Player, am.BaseId, am.Slot, Kind.Hq, am.Mod, am.Toward, out _):
+                AddPiece(am.Player, Find(am.BaseId), am.Slot, Kind.Hq, am.Mod, am.Toward);
                 break;
             case Order od when CanOrder(od.Player, od.WingId, od.What, out _):
                 p.Metal -= OrderCost(od.What);

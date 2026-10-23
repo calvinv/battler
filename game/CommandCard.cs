@@ -236,6 +236,8 @@ public partial class Main
         if (World.IsWingHost(b))
         {
             WingItems(b, items);
+            items.Add(new CardItem(Key.V, "Blank", ModModel(Mod.Blank), null, World.ModuleCost(Mod.Blank), "Blank",
+                ModDoes(Mod.Blank) + $"\nTakes {World.ModuleBuildTicks(Mod.Blank) / World.TicksPerSecond} s.", LineWhy(Kind.Hq, Mod.Blank), () => StartLinePick(Kind.Hq, Mod.Blank)));
             items.Add(new CardItem(Key.G, "Modules", ModModel(Mod.Attack), null, 0, "Modules  \u25b8",
                 "Snap modules onto a line: every wing after them on it gets\nwhat they do (speed, armour, attack, build speed, energy,\nand the wildcards).", null, () => _cardPage = "modules"));
         }
@@ -293,11 +295,11 @@ public partial class Main
     /// <summary>The modules page: each snaps onto the end of a line (picked with the mouse).</summary>
     void ModuleItems(List<CardItem> items)
     {
-        for (int i = 0; i < World.ModCount; i++)
+        for (int i = 0; i < (int)Mod.Blank; i++)
         {
             var m = (Mod)i;
             items.Add(new CardItem(ModuleKeys[i], ModName(m), ModModel(m), null, World.ModuleCost(m), ModName(m) + " module",
-                ModDoes(m) + $"\n\nSnaps onto the end of a line (pick which) in {World.ConstructionTicks(Kind.Module) / World.TicksPerSecond} s.\nOnly wings after it on the line get it: build modules first.",
+                ModDoes(m) + $"\n\nSnaps onto the end of a line (point which way) in {World.ModuleBuildTicks(m) / World.TicksPerSecond} s.\nOnly wings after it on the line get it: build modules first.",
                 LineWhy(Kind.Hq, m), () => StartLinePick(Kind.Hq, m)));
         }
         items.Add(new CardItem(Key.Escape, "Back", null, "\u25c2 Back", 0, "Back", "To the build card.", null, () => _cardPage = "main"));
@@ -307,11 +309,11 @@ public partial class Main
     {
         string xwhy = W.Players[_me].Metal < World.ExtractorCost ? "not enough metal" : null;
         items.Add(new CardItem(Key.X, "Extractor", BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), null, World.ExtractorCost, "Extractor",
-            $"Goes on a deposit within {World.BaseReach} of one of your bases.\nMines {World.ExtractorIncome} metal a second (sulfur: +{World.SulfurBonusPercent}% explosive damage, napalm).\nTakes {World.ConstructionTicks(Kind.Extractor) / World.TicksPerSecond} s to build.",
+            $"Goes on a deposit within {World.ClaimReach} of one of your lines (run blanks out to it).\nMetal: {World.ExtractorIncome} a second. Sulfur: +{World.SulfurBonusPercent}% explosive damage, napalm.\nCrystal: shields on all you make. Oil: +{World.OilPower} power, +{World.OilIncome} metal a second.\nTakes {World.ConstructionTicks(Kind.Extractor) / World.TicksPerSecond} s to build.",
             xwhy, () => _placing = Kind.Extractor));
         string pwhy = W.Players[_me].Metal < World.PlantCost ? "not enough metal" : null;
         items.Add(new CardItem(Key.Z, "Power plant", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, World.PlantCost, "Power plant",
-            $"Goes on a power vent (one beside every metal deposit) within {World.BaseReach} of a base.\n+{World.PlantPower} power. Your wings draw power; short of it, they all build slower.\nYou have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}. Takes {World.ConstructionTicks(Kind.PowerPlant) / World.TicksPerSecond} s to build.",
+            $"Goes on a power vent (one beside every metal deposit) within {World.ClaimReach} of one of your lines.\n+{World.PlantPower} power. Your wings draw power; short of it, they all build slower.\nYou have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}. Takes {World.ConstructionTicks(Kind.PowerPlant) / World.TicksPerSecond} s to build.",
             pwhy, () => _placing = Kind.PowerPlant));
         var keys = new[] { Key.T, Key.F, Key.O, Key.L };
         for (int i = 0; i < World.DefenceKinds.Length; i++)

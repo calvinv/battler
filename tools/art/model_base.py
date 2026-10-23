@@ -4,7 +4,7 @@ picks 2 = HQ core, 8 = hover bay, 11 = mech bay, 15 = wheel bay.) Same flat slat
 units (model_hover.py). Each wing's door is a rig part ("door") the game slides up while a unit rolls out; parts named
 spin_* turn slowly (game/BuildingRig.cs).
 Names: hq factory_lighttank factory_ranger factory_tank connector port factory_mortar factory_artillery factory_mobilebase factory_air outpost extractor powerplant
-       module_speed module_armour module_attack module_build module_energy module_twin module_napalm module_shield module_magnet
+       module_speed module_armour module_attack module_build module_energy module_twin module_napalm module_shield module_magnet module_blank
 Run: blender --background --python tools/art/model_base.py -- hq"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -644,6 +644,20 @@ def module_magnet():
             tube_between((x, 0, top + 5.6), (x, 0, top + 6.2), 0.74, "glow", 10)
         tube_between((0, 0, top + 2.3), (0, 0, top + 1.8), 0.6, "mid", 8)
     finish_toon("module_magnet", 18.0)
+
+
+def module_blank():
+    """Blank: nothing but line, a low plain junction box (no lit feature: it does nothing) with a team stripe and a
+    hatch on its roof; it only carries the line on toward a resource."""
+    k.begin(0.0)
+    k.recolour(glow=(150, 156, 166))   # (grey: not a light)
+    k.box(-6.0, 6.0, -4.0, 4.0, 0.0, 0.5, "mid")
+    plate(-5.2, 5.2, -3.4, 3.4, 0.5, 3.2, "steel", inset=0.6)
+    for a in (-6.0, 5.0):
+        plate(a, a + 1.0, -2.9, 2.9, 0.5, 3.8, "plate", inset=0.2)
+    k.box(-3.5, 3.5, -0.4, 0.4, 3.2, 3.3, "paint")
+    k.box(-1.6, 1.6, 1.0, 2.2, 3.2, 3.35, "dark")
+    finish_toon("module_blank", 16.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()

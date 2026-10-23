@@ -43,23 +43,28 @@ public sealed class SimpleAi
         SendScouts(w, mine.FindAll(e => World.IsScout(e.Kind)), issue);
         DriveBases(w, mine, issue);
 
-        // Mine whatever its bases reach: nearest home first; save for it if short.
+        // Mine what's near its bases: nearest home first. A line has to reach it: grow one out to it with blanks
+        // (giving up on one it can't get a line to); save for it if short.
         int best = -1;
         for (int d = 0; d < World.Deposits.Length; d++)
-            if (w.ExtractorOn(d) == null && w.BaseNear(_player, World.Deposits[d], World.BaseReach) != null
+            if (w.ExtractorOn(d) == null && !_unreachable.Contains(d) && w.BaseNear(_player, World.Deposits[d], Fix.FromInt(Reach)) != null
                 && (best < 0 || Dist(World.Deposits[d], p.HqPos) < Dist(World.Deposits[best], p.HqPos))) best = d;
         if (best >= 0)
         {
             if (w.CanPlaceExtractor(_player, best, out _)) issue(new PlaceExtractor(_player, best));
+            else if (w.LineReaches(_player, World.Deposits[best], built: false)) { }   // (a line's last piece is going up there: wait for it)
+            else if (!w.LineReaches(_player, World.Deposits[best]) && !GrowToward(w, mine, World.Deposits[best], issue) && p.Metal >= World.ModuleCost(Mod.Blank)) _unreachable.Add(best);
             return;
         }
 
         // Power: a plant on a free vent in reach whenever the wings draw (nearly) all there is.
         if (w.PowerDrawOf(_player) >= w.PowerSupply(_player) - 1)
             for (int v = 0; v < World.Vents.Length; v++)
-                if (w.PlantOn(v) == null && w.BaseNear(_player, World.Vents[v], World.BaseReach) != null)
+                if (w.PlantOn(v) == null && !_unreachableVents.Contains(v) && w.BaseNear(_player, World.Vents[v], Fix.FromInt(Reach)) != null)
                 {
                     if (w.CanPlacePlant(_player, v, out _)) issue(new PlacePlant(_player, v));
+                    else if (w.LineReaches(_player, World.Vents[v], built: false)) { }
+                    else if (!w.LineReaches(_player, World.Vents[v]) && !GrowToward(w, mine, World.Vents[v], issue) && p.Metal >= World.ModuleCost(Mod.Blank)) { _unreachableVents.Add(v); continue; }
                     return;   // (or saving for it)
                 }
 
@@ -114,6 +119,30 @@ public sealed class SimpleAi
             }
         }
         MaybeUpgrade(w, mine, issue, p.Metal > 800 ? 1 : 2);   // (with metal piling up, every time)
+    }
+
+    const int Reach = 45;   // how far from a base it will run lines out to a resource
+    readonly HashSet<int> _unreachable = new(), _unreachableVents = new();
+
+    /// <summary>A blank on whichever of its lines ends nearest `goal`, a step toward it. False if no line can.</summary>
+    bool GrowToward(World w, List<Entity> mine, FixVec2 goal, Action<Command> issue)
+    {
+        Entity bestHost = null;
+        int bestSlot = -1, bestDist = int.MaxValue;
+        foreach (var b in mine)
+        {
+            if (!World.IsWingHost(b) || b.Building > 0) continue;
+            for (int slot = 0; slot < World.SlotsOf(b); slot++)
+            {
+                if (!w.CanAddPiece(_player, b.Id, slot, Kind.Hq, Mod.Blank, goal, out _)) continue;
+                int d = Dist(w.NextSpot(b, slot, goal, out _), goal);
+                if (d >= Dist(w.LineEnd(b, slot)?.Pos ?? b.Pos, goal)) continue;   // (it has to get nearer)
+                if (d < bestDist) { bestDist = d; bestHost = b; bestSlot = slot; }
+            }
+        }
+        if (bestHost == null) return false;
+        issue(new AddModule(_player, bestHost.Id, bestSlot, Mod.Blank, goal));
+        return true;
     }
 
     bool Defend(World w, List<Entity> mine, Action<Command> issue)
