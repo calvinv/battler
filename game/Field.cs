@@ -112,12 +112,12 @@ public partial class Main
         var tar = new StandardMaterial3D { AlbedoColor = new Color(0.02f, 0.02f, 0.025f), Roughness = 0.05f, Metallic = 0.6f, MetallicSpecular = 1f };
         var sheen = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.4f, 0.2f, 0.6f, 0.25f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.1f,
-            EmissionEnabled = true, Emission = new Color(0.25f, 0.1f, 0.45f), EmissionEnergyMultiplier = 0.4f,
+            AlbedoColor = new Color(0.3f, 0.25f, 0.45f, 0.1f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Roughness = 0.1f,
+            EmissionEnabled = true, Emission = new Color(0.12f, 0.1f, 0.22f), EmissionEnergyMultiplier = 0.15f,
         };
         var stain = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.13f, 0.1f), Roughness = 0.95f };
         root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 2.4f, BottomRadius = 2.6f, Height = 0.12f, RadialSegments = 24 }, MaterialOverride = tar, Position = new Vector3(0, 0.05f, 0) });
-        root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 1.3f, BottomRadius = 1.3f, Height = 0.02f, RadialSegments = 20 }, MaterialOverride = sheen, Position = new Vector3(0.5f, 0.13f, -0.3f) });
+        root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.9f, BottomRadius = 0.9f, Height = 0.02f, RadialSegments = 20 }, MaterialOverride = sheen, Position = new Vector3(0.6f, 0.13f, -0.4f) });
         var rng = new RandomNumberGenerator { Seed = (ulong)(seed * 6007 + 5) };
         for (int i = 0; i < 9; i++)   // stained rocks round the rim
         {
