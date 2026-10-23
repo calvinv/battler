@@ -120,9 +120,10 @@ def hlathe(x, z, profile, mat, sides=32):
     return ob
 
 
-def wlathe(a, z, profile, mat, sides=32):
+def wlathe(a, z, profile, mat, sides=32, caps=True):
     """A round piece across the width (x) at (a, z), turned from a profile ((radius, x) points): a wheel, a hub, an
-    axle cap, shaded smooth."""
+    axle cap, shaded smooth. caps=False: the profile is a closed loop (first point again at its end) and no end
+    discs are made: a ring, a tyre you can see the spokes through."""
     import bmesh, bpy
     bm = bmesh.new()
     rings = [[bm.verts.new(k.at(a + math.cos(i * math.tau / sides) * max(r, 0.02), x, z + math.sin(i * math.tau / sides) * max(r, 0.02)))
@@ -130,8 +131,9 @@ def wlathe(a, z, profile, mat, sides=32):
     for i in range(len(rings) - 1):
         for j in range(sides):
             bm.faces.new([rings[i][j], rings[i + 1][j], rings[i + 1][(j + 1) % sides], rings[i][(j + 1) % sides]]).smooth = True
-    bm.faces.new(rings[0])
-    bm.faces.new(rings[-1])
+    if caps:
+        bm.faces.new(rings[0])
+        bm.faces.new(rings[-1])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     me = bpy.data.meshes.new("piece")
     bm.to_mesh(me)

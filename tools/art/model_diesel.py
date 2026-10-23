@@ -69,20 +69,97 @@ def prop(a, x, z, r):
 
 # ---- units ----------------------------------------------------------------------------------------------------
 
+def spoked_wheel(a, s, z, r, inner, outer, spokes=10, lugs=30):
+    """A tall spoked wheel on side s: a lugged black tyre, a thin gunmetal rim, round spokes, a bolted hub."""
+    x0, x1 = xs(s, inner, outer)
+    xm = (x0 + x1) / 2
+    out = 1 if s > 0 else -1
+    wlathe(a, z, [(r * 0.8, x0), (r * 0.93, x0), (r, x0 + 0.12), (r, x1 - 0.12), (r * 0.93, x1), (r * 0.8, x1),
+                  (r * 0.8, x0)], "black", 32, caps=False)
+    wlathe(a, z, [(r * 0.81, xm - 0.18), (r * 0.81, xm + 0.18), (r * 0.72, xm + 0.18), (r * 0.72, xm - 0.18),
+                  (r * 0.81, xm - 0.18)], "plate", 32, caps=False)
+    for i in range(spokes):
+        t = i * math.tau / spokes
+        tube_between((a + math.cos(t) * r * 0.2, xm, z + math.sin(t) * r * 0.2),
+                      (a + math.cos(t) * r * 0.74, xm, z + math.sin(t) * r * 0.74), 0.07, "plate", 6)
+    wlathe(a, z, [(r * 0.24, xm - out * 0.3), (r * 0.24, xm + out * 0.3), (r * 0.15, xm + out * 0.45)], "dark", 16)
+    for i in range(6):
+        t = i * math.tau / 6
+        p = (a + math.cos(t) * r * 0.17, xm + out * 0.33, z + math.sin(t) * r * 0.17)
+        tube_between(p, (p[0], p[1] + out * 0.08, p[2]), 0.04, "steel", 6)
+    for i in range(lugs):
+        t = i * math.tau / lugs
+        q = lambda xx: (a + math.cos(t) * (r + 0.06), xx, z + math.sin(t) * (r + 0.06))
+        tube_between(q(x0 + 0.04), q(x1 - 0.04), 0.065, "black", 4)
+
+
 def lighttank():
-    """Light tank: a six-wheeled armoured car, a small turret with a short gun, an exhaust by the rear wheel."""
+    """Light tank, the Girder Crab (FLUX concept flux_crab_1_s91, picked by the user 2026-10-22): an open lattice
+    chassis on six tall spoked wheels, a diesel engine with a big ribbed flywheel at the front, an armoured box at
+    the back carrying a turntable with a double-ended swivel cannon and twin optics; lamps on stalks, hoses."""
     k.begin(0.0)
+    zc = 1.45                                                                               # wheel centres
+    for a in (-3.3, 0.0, 3.3):
+        for s in (1, -1):
+            spoked_wheel(a, s, zc, 1.45, 2.35, 3.15)
+        tube_between((a, -2.5, zc), (a, 2.5, zc), 0.16, "dark", 8)                          # axle
+    # Lattice chassis: two girders (top and bottom chords, posts, diagonals) and cross beams.
     for s in (1, -1):
-        wheels(s, -3.6, 3.6, 3, 1.25, 3.0, 0.9)
-        k.box(-4.4, 4.4, *xs(s, 2.4, 3.6), 2.4, 2.65, "plate")                               # fender
-    plate(-4.8, 5.0, -2.8, 2.8, 0.9, 3.0, "steel", inset=0.4, front=1.8, back=0.6)
-    plate(-1.8, 1.4, -1.6, 1.6, 3.0, 4.4, "steel", inset=0.4, front=0.6)
-    plate(-1.3, 0.9, -1.1, 1.1, 4.4, 4.55, "paint", inset=0.1)
-    barrel(1.2, 6.6, 3.7, 0.24)
-    stack(-4.2, 1.9, 2.4, 1.6, 0.3)
+        x = s * 1.75
+        for zz in (1.15, 2.15):
+            k.box(-4.4, 4.8, *xs(s, 1.55, 1.95), zz - 0.12, zz + 0.12, "dark")
+        for i in range(9):
+            a0 = -4.3 + i * 1.1
+            tube_between((a0, x, 1.15), (a0, x, 2.15), 0.07, "dark", 4)
+            if i < 8:
+                tube_between((a0, x, 1.15 if i % 2 == 0 else 2.15), (a0 + 1.1, x, 2.15 if i % 2 == 0 else 1.15), 0.06, "dark", 4)
+    for a in (-4.3, -1.6, 1.6, 4.7):
+        k.box(a - 0.15, a + 0.15, -1.75, 1.75, 1.9, 2.25, "dark")
+    k.box(4.5, 5.0, -1.9, 1.9, 1.0, 1.6, "plate")                                           # front bumper
+    # The engine at the front: block, cylinder heads, a big ribbed flywheel facing forward, exhaust.
+    k.box(1.4, 4.2, -1.5, 1.1, 2.25, 3.5, "mid")
+    for i in range(3):
+        k.box(1.7 + i * 0.85, 2.3 + i * 0.85, -1.3, 0.9, 3.5, 3.85, "dark")
+        k.drum(2.0 + i * 0.85, -0.2, 0.16, 3.85, 4.1, "steel", 8)
+    hlathe(-0.2, 2.9, [(0.95, 4.2), (1.05, 4.3), (1.05, 4.75), (0.9, 4.85), (0.4, 4.9)], "dark", 32)
+    for i in range(16):
+        t = i * math.tau / 16
+        tube_between((4.32, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), (4.72, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), 0.06, "black", 4)
+    hlathe(-0.2, 2.9, [(0.3, 4.85), (0.3, 5.05)], "steel", 12)
+    hose([(3.6, -1.4, 3.7), (3.2, -1.9, 3.2), (1.6, -1.9, 3.0), (1.2, -1.7, 3.5)], 0.13, "dark")
+    hose([(2.0, 1.1, 3.0), (1.3, 1.6, 2.8), (0.8, 1.9, 3.2)], 0.11, "black")
+    k.drum(2.4, 1.3, 0.22, 3.4, 4.4, "mid", 10)                                             # stubby exhaust
+    k.drum(2.4, 1.3, 0.28, 4.4, 4.6, "black", 10)
+    # The armoured box at the back: riveted plate, a team stripe, corner caps.
+    k.box(-4.3, 1.3, -1.95, 1.95, 2.25, 4.5, "steel")
     for s in (1, -1):
-        lamp(5.0, s * 1.9, 2.3)
-    finish_realistic("lighttank", 24.0, grit=GRIT)
+        k.box(-3.0, -0.6, *xs(s, 1.95, 2.0), 3.6, 3.9, "paint")
+        for a in [-4.1 + i * 0.6 for i in range(10)]:
+            tube_between((a, s * 1.95, 4.35), (a, s * 2.04, 4.35), 0.05, "mid", 6, 0.03)
+            tube_between((a, s * 1.95, 2.4), (a, s * 2.04, 2.4), 0.05, "mid", 6, 0.03)
+    for a in (-4.0, 1.0):
+        for s in (1, -1):
+            k.drum(a, s * 1.65, 0.18, 4.5, 4.85, "dark", 8)
+    # Turntable and the swivel gun house: a long barrel forward, a short heavy one aft, twin optics on a post.
+    k.drum(-1.5, 0, 1.7, 4.5, 4.7, "mid", 32)
+    k.drum(-1.5, 0, 1.45, 4.7, 4.85, "plate", 32)
+    gz = 5.45
+    k.box(-2.5, -0.3, -0.85, 0.85, 4.85, 6.05, "steel")
+    k.box(-2.4, -0.4, -0.75, 0.75, 6.05, 6.15, "paint")
+    hlathe(0, gz, [(0.42, -0.4), (0.42, 0.4), (0.27, 0.45), (0.27, 4.5), (0.35, 4.55), (0.35, 5.0), (0.2, 5.02)], "dark", 20)
+    hlathe(0, gz, [(0.2, -5.0), (0.36, -4.98), (0.36, -4.5), (0.3, -4.45), (0.3, -2.6), (0.42, -2.5)], "dark", 20)
+    k.drum(-1.8, 0, 0.14, 6.15, 6.6, "dark", 8)
+    for x in (-0.28, 0.28):
+        hlathe(x, 6.8, [(0.24, -2.3), (0.27, -2.2), (0.27, -1.3), (0.24, -1.25)], "dark", 16)
+        hlathe(x, 6.8, [(0.18, -1.27), (0.18, -1.2)], "black", 12)
+    k.box(-2.0, -1.6, -0.45, 0.45, 6.55, 6.7, "dark")
+    # Lamps on stalks at the front corners; a hose from the engine up to the gun.
+    for s in (1, -1):
+        tube_between((4.6, s * 1.6, 2.2), (4.6, s * 1.6, 3.3), 0.08, "dark", 6)
+        lamp(4.7, s * 1.6, 3.4, 0.26)
+        k.box(4.4, 4.7, *xs(s, 1.35, 1.85), 3.62, 3.7, "dark")
+    hose([(1.2, 0.9, 3.6), (0.4, 1.0, 4.9), (-0.4, 0.7, 5.3)], 0.1, "black")
+    finish_realistic("lighttank", 24.0, grit=1.0, panels=False, bevel=0.035)
 
 
 def rivet_ring(a, x, z, r, n=28, mat="mid", lo=-0.6, hi=3.75):
