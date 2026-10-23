@@ -3,7 +3,7 @@
 FLUX concept art/_gen/concepts/hover2_slate_0_s301.png, "the barrel needs a bit of work".)
 Flat colours, few big chamfered shapes, no weathering: the game draws them with toon light bands and ink outlines
 (game/toon_unit.gdshader). Moving parts are tagged for the rig (<name>_rig.glb, game/UnitRig.cs).
-Names: hovertank mech
+Names: hovertank mech battlewheel
 Run: blender --background --python tools/art/model_hover.py -- hovertank"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -150,6 +150,81 @@ def mech():
     mark("elbow_L", el[1], "barrel")
     mark("elbow_R", el[-1], "barrel")
     finish_toon("mech", 16.0)
+
+
+def tyre(a, s, z, r, inner, outer, lugs=22):
+    """A big toon tyre on side s: a black ring with a rounded tread and chunky lugs across it, an open rim, a slate
+    hub disc with a bolt circle and team marks on the outer face."""
+    x0, x1 = xs(s, inner, outer)
+    out = 1 if s > 0 else -1
+    face = x1 if s > 0 else x0
+    w = x1 - x0
+    wlathe(a, z, [(r * 0.66, x0), (r * 0.9, x0), (r, x0 + w * 0.15), (r, x1 - w * 0.15), (r * 0.9, x1),
+                  (r * 0.66, x1), (r * 0.66, x0)], "black", 40, caps=False)
+    for i in range(lugs):
+        t = i * math.tau / lugs
+        c, d = math.cos(t), math.sin(t)
+        for xa, xb in ((x0 + 0.08, x0 + w * 0.47), (x0 + w * 0.53, x1 - 0.08)):
+            off = 0.12 if xa < x0 + 0.1 else -0.12                  # (staggered: a chevron tread)
+            cc, dd = math.cos(t + off), math.sin(t + off)
+            k.solid([(a + c * r - 0.22 * d, xa, z + d * r + 0.22 * c), (a + c * r + 0.22 * d, xa, z + d * r - 0.22 * c),
+                     (a + cc * r + 0.22 * dd, xb, z + dd * r - 0.22 * cc), (a + cc * r - 0.22 * dd, xb, z + dd * r + 0.22 * cc)],
+                    [(a + c * (r + 0.28) - 0.18 * d, xa, z + d * (r + 0.28) + 0.18 * c), (a + c * (r + 0.28) + 0.18 * d, xa, z + d * (r + 0.28) - 0.18 * c),
+                     (a + cc * (r + 0.28) + 0.18 * dd, xb, z + dd * (r + 0.28) - 0.18 * cc), (a + cc * (r + 0.28) - 0.18 * dd, xb, z + dd * (r + 0.28) + 0.18 * cc)], "black")
+    wlathe(a, z, [(r * 0.66, face - out * 0.6), (r * 0.66, face - out * 0.1), (r * 0.6, face), (r * 0.36, face),
+                  (r * 0.3, face - out * 0.2)], "plate", 40)
+    wlathe(a, z, [(r * 0.26, face - out * 0.2), (r * 0.26, face + out * 0.15), (r * 0.17, face + out * 0.28)], "mid", 24)
+    for i in range(8):
+        t = i * math.tau / 8
+        p = (a + math.cos(t) * r * 0.21, face + out * 0.13, z + math.sin(t) * r * 0.21)
+        tube_between(p, (p[0], p[1] + out * 0.1, p[2]), 0.06, "dark", 6)
+    for t in (0.4, 0.4 + math.pi):
+        p = (a + math.cos(t) * r * 0.5, face + out * 0.02, z + math.sin(t) * r * 0.5)
+        tube_between(p, (p[0], p[1] + out * 0.05, p[2]), 0.18, "paint", 8)
+
+
+def battlewheel():
+    """Battle wheel (FLUX concept art/_gen/concepts/wheel2_words2_s701.png, "3"; the user, 2026-10-23: "2 large tyres
+    and big round cannon in the middle"): two big lugged tyres on one axle, a round drum body slung between them,
+    a big round cannon out of its front with the amber eye above it, an armoured cap with team stripes on top. The
+    tyres roll (wheel_0/1); the body rocks on the axle; the cannon kicks."""
+    k.begin(0.0)
+    R, zc = 3.0, 3.05                                                                       # tyre radius, axle height
+    for i, s in enumerate((1, -1)):
+        with part("wheel_%d" % i, (0, s * 2.65, zc), parent="root"):
+            tyre(0, s, zc, R, 1.95, 3.35)
+    wlathe(0, zc, [(0.42, -1.95), (0.42, 1.95)], "dark", 16)                                 # the axle
+    # The drum body between the tyres, its ends capped, a seam ring, a vent.
+    wlathe(0, zc + 0.25, [(1.6, -1.85), (2.05, -1.7), (2.15, -1.3), (2.15, 1.3), (2.05, 1.7), (1.6, 1.85)], "steel", 40)
+    for x in (-1.0, 1.0):
+        wlathe(0, zc + 0.25, [(2.2, x - 0.07), (2.2, x + 0.07)], "dark", 40)
+    k.box(-2.25, -2.05, -0.8, 0.8, zc - 0.3, zc + 0.7, "dark")                               # a rear vent
+    for i in range(4):
+        k.box(-2.3, -2.2, -0.7, 0.7, zc - 0.2 + i * 0.25, zc - 0.1 + i * 0.25, "black")
+    # The armoured cap on top with team stripes and a small sensor box.
+    top = zc + 0.25 + 2.1
+    plate(-1.3, 1.1, -1.25, 1.25, top - 0.3, top + 0.55, "plate", inset=0.2, front=0.35)
+    for x in (-0.75, -0.3, 0.3, 0.75):
+        k.box(-0.9, 0.6, x - 0.13, x + 0.13, top + 0.55, top + 0.6, "paint")
+    k.box(-1.0, -0.5, 0.35, 0.85, top + 0.55, top + 0.85, "mid")
+    k.box(-0.52, -0.49, 0.45, 0.75, top + 0.62, top + 0.78, "glow")
+    # The amber eye on the drum's front, above the cannon, in an octagonal frame.
+    ez = zc + 1.35
+    k.tube(1.6, 2.15, 0, ez, 0.62, "dark", 8)
+    k.tube(1.9, 2.25, 0, ez, 0.45, "glow", 24)
+    k.tube(2.25, 2.27, -0.12, ez + 0.14, 0.12, "white", 10)
+    k.box(1.95, 2.2, -0.9, -0.7, ez - 0.3, ez + 0.3, "paint")
+    k.box(1.95, 2.2, 0.7, 0.9, ez - 0.3, ez + 0.3, "paint")
+    # The big round cannon out of the front, low on the drum: a round mantlet, a fat barrel, a team band, a muzzle.
+    gz = zc - 0.35
+    with part("barrel", (1.6, 0, gz)):
+        hlathe(0, gz, [(1.15, 1.2), (1.25, 1.5), (1.25, 2.2), (1.0, 2.45), (0.72, 2.5)], "plate", 32)
+        hlathe(0, gz, [(0.62, 2.45), (0.62, 5.6)], "dark", 28)
+        hlathe(0, gz, [(0.7, 4.1), (0.7, 4.45)], "paint", 28)
+        hlathe(0, gz, [(0.82, 5.5), (0.82, 6.2), (0.72, 6.3)], "mid", 28)
+        hlathe(0, gz, [(0.45, 6.28), (0.45, 6.32)], "black", 20)
+    mark("muzzle", (6.4, 0, gz), "barrel")
+    finish_toon("battlewheel", 20.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()

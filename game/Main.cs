@@ -260,6 +260,7 @@ public partial class Main : Node3D
     Vector3 _reelPos;
     int _reelShots;
     bool _reelHovers;
+    Kind _reelKind;
     static readonly float[] ReelFireAt = { 1.9f, 4.9f, 6.0f, 8.6f };
 
     void BuildReel()
@@ -272,7 +273,8 @@ public partial class Main : Node3D
         _reelUnit = UnitArt.Make(name, TeamColor[0]);
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
-        _reelHovers = name != "mech";
+        _reelHovers = name == "hovertank";
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -305,13 +307,13 @@ public partial class Main : Node3D
             _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
             if (!_reelHovers) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
         }
-        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && !_reelHovers && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
+        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && _reelKind == Kind.Ranger && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
         else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
         {
             _reelShots++;
             _reelRig?.Fire();
             var from = _reelRig?.Muzzle?.GlobalPosition ?? _reelPos + Vector3.Up;
-            _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, _reelHovers ? Kind.LightTank : Kind.Ranger, TeamColor[0]);
+            _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, _reelKind, TeamColor[0]);
         }
         float follow = _distance < 18 ? 0.9f : 0.7f;   // (close up: keep the unit in the middle)
         _focus = _focus.Lerp(_reelPos * follow + _reelTarget.Position * (1 - follow), Mathf.Min(1, dt * 2));
@@ -463,7 +465,8 @@ public partial class Main : Node3D
         var groups = lineup switch
         {
             "mechs" => new[] { (Kind.Ranger, 5) },
-            "mixed" => new[] { (Kind.LightTank, 5), (Kind.Ranger, 5) },
+            "mixed" => new[] { (Kind.Tank, 3), (Kind.LightTank, 5), (Kind.Ranger, 5) },
+            "wheels" => new[] { (Kind.Tank, 5) },
             _ => new[] { (Kind.LightTank, 5) },
         };
         StartMatch(new SkirmishSession((ulong)GD.Randi(), groups));
@@ -787,6 +790,7 @@ public partial class Main : Node3D
     /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
     static string UnitModel(Kind k, Civ civ) => k == Kind.LightTank ? "hovertank"      // (the cel shaded hover tank, being explored: the user, 2026-10-23)
         : k == Kind.Ranger ? "mech"                                                            // (and the bird-legged rifle mech)
+        : k == Kind.Tank ? "battlewheel"                                                       // (and the two-wheeled cannon)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
@@ -1624,7 +1628,8 @@ public partial class Main : Node3D
         _restartButton = MenuButton("Restart match", () => { SetMenu(false); _noFog = false; StartMatch(new LocalSession((ulong)GD.Randi())); });
         MenuButton("Skirmish: 5 v 5 hover tanks", () => { SetMenu(false); StartSkirmish("tanks"); });
         MenuButton("Skirmish: 5 v 5 mechs", () => { SetMenu(false); StartSkirmish("mechs"); });
-        MenuButton("Skirmish: tanks + mechs", () => { SetMenu(false); StartSkirmish("mixed"); });
+        MenuButton("Skirmish: 5 v 5 battle wheels", () => { SetMenu(false); StartSkirmish("wheels"); });
+        MenuButton("Skirmish: everything", () => { SetMenu(false); StartSkirmish("mixed"); });
         MenuButton("Quit to desktop", () => GetTree().Quit());
         panel.AddChild(column);
         centre.AddChild(panel);
