@@ -194,36 +194,39 @@ def battlewheel():
         with part("wheel_%d" % i, (0, s * 2.65, zc), parent="root"):
             tyre(0, s, zc, R, 1.95, 3.35)
     wlathe(0, zc, [(0.42, -1.95), (0.42, 1.95)], "dark", 16)                                 # the axle
-    # The drum body between the tyres, its ends capped, a seam ring, a vent.
-    wlathe(0, zc + 0.25, [(1.6, -1.85), (2.05, -1.7), (2.15, -1.3), (2.15, 1.3), (2.05, 1.7), (1.6, 1.85)], "steel", 40)
-    for x in (-1.0, 1.0):
-        wlathe(0, zc + 0.25, [(2.2, x - 0.07), (2.2, x + 0.07)], "dark", 40)
-    k.box(-2.25, -2.05, -0.8, 0.8, zc - 0.3, zc + 0.7, "dark")                               # a rear vent
-    for i in range(4):
-        k.box(-2.3, -2.2, -0.7, 0.7, zc - 0.2 + i * 0.25, zc - 0.1 + i * 0.25, "black")
-    # The armoured cap on top with team stripes and a small sensor box.
-    top = zc + 0.25 + 2.1
-    plate(-1.3, 1.1, -1.25, 1.25, top - 0.3, top + 0.55, "plate", inset=0.2, front=0.35)
-    for x in (-0.75, -0.3, 0.3, 0.75):
-        k.box(-0.9, 0.6, x - 0.13, x + 0.13, top + 0.55, top + 0.6, "paint")
-    k.box(-1.0, -0.5, 0.35, 0.85, top + 0.55, top + 0.85, "mid")
-    k.box(-0.52, -0.49, 0.45, 0.75, top + 0.62, top + 0.78, "glow")
-    # The amber eye on the drum's front, above the cannon, in an octagonal frame.
-    ez = zc + 1.35
-    k.tube(1.6, 2.15, 0, ez, 0.62, "dark", 8)
-    k.tube(1.9, 2.25, 0, ez, 0.45, "glow", 24)
-    k.tube(2.25, 2.27, -0.12, ez + 0.14, 0.12, "white", 10)
-    k.box(1.95, 2.2, -0.9, -0.7, ez - 0.3, ez + 0.3, "paint")
-    k.box(1.95, 2.2, 0.7, 0.9, ez - 0.3, ez + 0.3, "paint")
-    # The big round cannon out of the front, low on the drum: a round mantlet, a fat barrel, a team band, a muzzle.
-    gz = zc - 0.35
-    with part("barrel", (1.6, 0, gz)):
-        hlathe(0, gz, [(1.15, 1.2), (1.25, 1.5), (1.25, 2.2), (1.0, 2.45), (0.72, 2.5)], "plate", 32)
-        hlathe(0, gz, [(0.62, 2.45), (0.62, 5.6)], "dark", 28)
-        hlathe(0, gz, [(0.7, 4.1), (0.7, 4.45)], "paint", 28)
-        hlathe(0, gz, [(0.82, 5.5), (0.82, 6.2), (0.72, 6.3)], "mid", 28)
-        hlathe(0, gz, [(0.45, 6.28), (0.45, 6.32)], "black", 20)
-    mark("muzzle", (6.4, 0, gz), "barrel")
+    # The drum body (hull) turns on the axle: the game rocks it back so the cannon points up while driving and
+    # tips it level to aim.
+    with part("hull", (0, 0, zc)):
+        # The drum body between the tyres, its ends capped, a seam ring, a vent.
+        wlathe(0, zc + 0.25, [(1.6, -1.85), (2.05, -1.7), (2.15, -1.3), (2.15, 1.3), (2.05, 1.7), (1.6, 1.85)], "steel", 40)
+        for x in (-1.0, 1.0):
+            wlathe(0, zc + 0.25, [(2.2, x - 0.07), (2.2, x + 0.07)], "dark", 40)
+        k.box(-2.25, -2.05, -0.8, 0.8, zc - 0.3, zc + 0.7, "dark")                               # a rear vent
+        for i in range(4):
+            k.box(-2.3, -2.2, -0.7, 0.7, zc - 0.2 + i * 0.25, zc - 0.1 + i * 0.25, "black")
+        # The armoured cap on top with team stripes and a small sensor box.
+        top = zc + 0.25 + 2.1
+        plate(-1.3, 1.1, -1.25, 1.25, top - 0.3, top + 0.55, "plate", inset=0.2, front=0.35)
+        for x in (-0.75, -0.3, 0.3, 0.75):
+            k.box(-0.9, 0.6, x - 0.13, x + 0.13, top + 0.55, top + 0.6, "paint")
+        k.box(-1.0, -0.5, 0.35, 0.85, top + 0.55, top + 0.85, "mid")
+        k.box(-0.52, -0.49, 0.45, 0.75, top + 0.62, top + 0.78, "glow")
+        # The amber eye on the drum's front, above the cannon, in an octagonal frame.
+        ez = zc + 1.35
+        k.tube(1.6, 2.15, 0, ez, 0.62, "dark", 8)
+        k.tube(1.9, 2.25, 0, ez, 0.45, "glow", 24)
+        k.tube(2.25, 2.27, -0.12, ez + 0.14, 0.12, "white", 10)
+        k.box(1.95, 2.2, -0.9, -0.7, ez - 0.3, ez + 0.3, "paint")
+        k.box(1.95, 2.2, 0.7, 0.9, ez - 0.3, ez + 0.3, "paint")
+        # The big round cannon out of the front, low on the drum: a round mantlet, a short wide barrel, a team band, a muzzle.
+        gz = zc - 0.35
+        with part("barrel", (1.6, 0, gz), parent="hull"):
+            hlathe(0, gz, [(1.35, 1.2), (1.5, 1.5), (1.5, 2.3), (1.25, 2.55), (1.0, 2.6)], "plate", 32)
+            hlathe(0, gz, [(0.95, 2.55), (0.95, 4.3)], "dark", 32)
+            hlathe(0, gz, [(1.03, 3.2), (1.03, 3.55)], "paint", 32)
+            hlathe(0, gz, [(1.15, 4.2), (1.15, 4.85), (1.02, 4.95)], "mid", 32)
+            hlathe(0, gz, [(0.7, 4.93), (0.7, 4.97)], "black", 24)
+        mark("muzzle", (5.05, 0, gz), "barrel")
     finish_toon("battlewheel", 20.0)
 
 

@@ -31,6 +31,8 @@ public sealed class UnitRig
     readonly Basis[] _armRest = new Basis[2];
     readonly Vector3[] _armReach = new Vector3[2];
     float _aim;
+    Node3D _hull;                    // a body that pitches on its axle (the battle wheel): cannon up driving, level to aim
+    const float HullCarry = -0.6f;   // radians: nose up
     Basis _barrelBasis = Basis.Identity;
     static readonly Basis Carry = new Basis(Vector3.Up, 0.95f) * new Basis(Vector3.Right, -0.45f);   // across the chest, muzzle up and to its left
     static readonly Vector3 CarryShift = new(0.15f, 0.55f, -0.7f);                                     // drawn in and up, model units
@@ -76,6 +78,7 @@ public sealed class UnitRig
                 else if (name == "body") rig._body = n;
                 else if (name == "muzzle") rig.Muzzle = n;
                 else if (name == "exhaust") rig._exhaust = n;
+                else if (name == "hull") rig._hull = n;
                 else if (name is "arm_L" or "arm_R") rig._arms[name[^1] == 'L' ? 0 : 1] = n;
                 else if (name is "elbow_L" or "elbow_R") rig._elbows[name[^1] == 'L' ? 0 : 1] = n;
                 else if (name.Length > 2 && name[^2] == '_' && (name[^1] == 'L' || name[^1] == 'R'))
@@ -240,6 +243,17 @@ public sealed class UnitRig
                 }
             }
             else _barrel.Position = _barrelRest - new Vector3(0, 0, _kick * k);
+        }
+
+        // A drum on an axle: the cannon points up while it drives and tips down level to aim once it stops with a
+        // target (or fires); it rocks back with each shot and wobbles a little as it rolls.
+        if (_hull != null)
+        {
+            bool aiming = (aimYaw != null || _recoil > 0) && _speed < 0.35f;
+            _aim = Mathf.MoveToward(_aim, aiming ? 1 : 0, dt * (aiming ? 2.2f : 1.6f));
+            float t = _aim * _aim * (3 - 2 * _aim);
+            float wobble = Mathf.Sin(_time * 6.5f + _phase) * 0.04f * Mathf.Clamp(_speed / 2f, 0, 1);
+            _hull.Rotation = new Vector3(HullCarry * (1 - t) - _recoil * _recoil * 0.18f + wobble, 0, 0);
         }
 
         // A walker steps: the gait advances with the ground covered (one stride a cycle, so feet don't skate), each
