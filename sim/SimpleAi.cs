@@ -129,19 +129,28 @@ public sealed class SimpleAi
     {
         Entity bestHost = null;
         int bestSlot = -1, bestDist = int.MaxValue;
+        var bestAim = goal;
         foreach (var b in mine)
         {
             if (!World.IsWingHost(b) || b.Building > 0) continue;
             for (int slot = 0; slot < World.SlotsOf(b); slot++)
             {
-                if (!w.CanAddPiece(_player, b.Id, slot, Kind.Hq, Mod.Blank, goal, out _)) continue;
-                int d = Dist(w.NextSpot(b, slot, goal, out _), goal);
-                if (d >= Dist(w.LineEnd(b, slot)?.Pos ?? b.Pos, goal)) continue;   // (it has to get nearer)
-                if (d < bestDist) { bestDist = d; bestHost = b; bestSlot = slot; }
+                // Straight at it, or (if something's in the way) aimed off to one side or the other to go round.
+                var from = w.LineEnd(b, slot)?.Pos ?? b.Pos;
+                var at = goal - from;
+                var side = at.LengthSq.Raw == 0 ? FixVec2.Zero : new FixVec2(-at.Z, at.X).WithLength(Fix.FromInt(10));
+                for (int k = 0; k < 3; k++)
+                {
+                    var aim = k == 0 ? goal : k == 1 ? goal + side : goal - side;
+                    if (!w.CanAddPiece(_player, b.Id, slot, Kind.Hq, Mod.Blank, aim, out _)) continue;
+                    int d = Dist(w.NextSpot(b, slot, aim, out _), goal);
+                    if (d >= Dist(from, goal) + (k == 0 ? 0 : 3)) continue;   // (it has to get nearer, or nearly, going round)
+                    if (d < bestDist) { bestDist = d; bestHost = b; bestSlot = slot; bestAim = aim; }
+                }
             }
         }
         if (bestHost == null) return false;
-        issue(new AddModule(_player, bestHost.Id, bestSlot, Mod.Blank, goal));
+        issue(new AddModule(_player, bestHost.Id, bestSlot, Mod.Blank, bestAim));
         return true;
     }
 
