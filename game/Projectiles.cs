@@ -21,6 +21,7 @@ public partial class Projectiles : Node3D
         public Color Col;
         public Kind By;
         public bool Burst, Sparks, Trail, Ball;
+        public float Seed;   // (a cannonball: its own spin start)
     }
 
     /// <summary>A beam joining muzzle and target for a moment (the hover tank's laser), thinning as it fades.</summary>
@@ -31,7 +32,8 @@ public partial class Projectiles : Node3D
     readonly List<Round> _rounds = new();
     readonly List<Flash> _flashes = new();
     readonly List<Beam> _beams = new();
-    MultiMesh _roundMesh, _flashMesh, _beamMesh;
+    readonly List<(Vector3 At, float Size, Color Col)> _halos = new();
+    MultiMesh _roundMesh, _flashMesh, _beamMesh, _ballMesh;
     readonly RandomNumberGenerator _rng = new() { Seed = 7 };
 
     /// <summary>Somewhere to puff smoke and dirt (the vehicles' dust).</summary>
@@ -50,6 +52,18 @@ public partial class Projectiles : Node3D
         {
             Multimesh = _roundMesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             MaterialOverride = new StandardMaterial3D { VertexColorUseAsAlbedo = true, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
+        });
+
+        // Cannonballs: iron spheres with glowing seams (cannonball.gdshader), lit, spinning as they fly.
+        _ballMesh = new MultiMesh
+        {
+            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, InstanceCount = 100, VisibleInstanceCount = 0,
+            Mesh = new SphereMesh { Radius = 0.5f, Height = 1f, RadialSegments = 20, Rings = 10 },
+        };
+        AddChild(new MultiMeshInstance3D
+        {
+            Multimesh = _ballMesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
+            MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/cannonball.gdshader") },
         });
 
         // Beams: cylinders stretched between their ends, added on (two per beam: a thin hot core, a wide soft glow).
@@ -158,7 +172,7 @@ public partial class Projectiles : Node3D
                 break;
             case Kind.Tank:   // the battle wheel's cannon: a big glowing ball on a slight arc trailing smoke, a ring of smoke at the muzzle
             {
-                Add(new Round { From = from, To = to, Flight = 0.12f + dist / 38f, Arc = dist * 0.06f, Thick = 0.65f, Length = 0.65f, Col = new Color(1f, 0.6f, 0.22f) * 2f, By = by, Trail = true, Ball = true });
+                Add(new Round { From = from, To = to, Flight = 0.12f + dist / 38f, Arc = dist * 0.06f, Thick = 0.6f, Length = 0.6f, Col = new Color(1f, 0.36f, 0.06f), By = by, Trail = true, Ball = true, Seed = _rng.RandfRange(0f, Mathf.Tau) });
                 AddFlash(from, 2.4f, 0.14f, new Color(1f, 0.7f, 0.3f));
                 var aim = (to - from) with { Y = 0 };
                 aim = aim.LengthSquared() > 1e-4f ? aim.Normalized() : Vector3.Forward;
@@ -206,6 +220,9 @@ public partial class Projectiles : Node3D
             {
                 r.SmokeDue = r.Trail ? 0.03f : 0.05f;
                 Dust?.Add(At(r, r.Age / r.Flight), Vector3.Up * 0.2f, 0.35f, Smoke);
+                if (r.Ball)   // embers shed behind it, cooling as they hang there
+                    AddFlash(At(r, r.Age / r.Flight) + new Vector3(_rng.RandfRange(-0.15f, 0.15f), _rng.RandfRange(-0.1f, 0.2f), _rng.RandfRange(-0.15f, 0.15f)),
+                             _rng.RandfRange(0.25f, 0.45f), _rng.RandfRange(0.25f, 0.45f), new Color(1f, 0.45f, 0.12f));
             }
             _rounds[i] = r;
         }
@@ -262,12 +279,28 @@ public partial class Projectiles : Node3D
 
     void RedrawNow()
     {
-        int n = 0;
+        int n = 0, balls = 0;
+        _halos.Clear();
         foreach (var r in _rounds)
         {
             if (r.Delay > 0) continue;
             float t = r.Age / r.Flight;
             var p = At(r, t);
+            if (r.Ball && balls < 100)
+            {
+                // Spinning forward (topspin about the axis across its path), a little stretched along it at speed,
+                // squashed for a moment as it leaves the barrel. A hot halo round it that pulses.
+                var path = (r.To - r.From) with { Y = 0 };
+                var axis = path.LengthSquared() > 1e-6f ? path.Normalized().Cross(Vector3.Up) : Vector3.Right;
+                var spin = new Basis(axis, -r.Age * 16f) * new Basis(Vector3.Up, r.Seed);
+                float pop = r.Age < 0.08f ? 1f + 0.35f * (1f - r.Age / 0.08f) : 1f;
+                _ballMesh.SetInstanceTransform(balls, new Transform3D(spin.Scaled(Vector3.One * r.Thick * pop), p));
+                _ballMesh.SetInstanceColor(balls, r.Col);
+                balls++;
+                float pulse = 0.85f + 0.15f * Mathf.Sin(r.Age * 40f + r.Seed);
+                _halos.Add((p, r.Thick * 2.6f * pulse, new Color(1f, 0.42f, 0.1f, 0.6f)));
+                continue;
+            }
             var dir = At(r, Mathf.Min(t + 0.02f, 1f)) - p;
             if (dir.LengthSquared() < 1e-8f) dir = r.To - r.From;
             dir = dir.Normalized();
@@ -280,6 +313,7 @@ public partial class Projectiles : Node3D
             n++;
         }
         _roundMesh.VisibleInstanceCount = n;
+        _ballMesh.VisibleInstanceCount = balls;
 
         n = 0;
         foreach (var b in _beams)
@@ -309,6 +343,13 @@ public partial class Projectiles : Node3D
             float t = f.Age / f.Life;
             _flashMesh.SetInstanceTransform(n, new Transform3D(Basis.Identity.Scaled(Vector3.One * f.Size * (0.7f + 0.6f * t)), f.At));
             _flashMesh.SetInstanceColor(n, new Color(f.Col.R, f.Col.G, f.Col.B, 1f - t));
+            n++;
+        }
+        foreach (var (at, size, col) in _halos)
+        {
+            if (n >= MaxFlashes) break;
+            _flashMesh.SetInstanceTransform(n, new Transform3D(Basis.Identity.Scaled(Vector3.One * size), at));
+            _flashMesh.SetInstanceColor(n, col);
             n++;
         }
         _flashMesh.VisibleInstanceCount = n;
