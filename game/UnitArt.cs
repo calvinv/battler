@@ -28,7 +28,7 @@ public static class UnitArt
         model.Scale = Vector3.One * Scale;
         if (!Materials.TryGetValue((name, team), out var mat))
         {
-            bool toon = Toon.Contains(name);
+            bool toon = Toon.Contains(name) || name.StartsWith("module_");
             _teamShader ??= GD.Load<Shader>("res://game/team_paint.gdshader");
             _toonShader ??= GD.Load<Shader>("res://game/toon_unit.gdshader");
             mat = new ShaderMaterial { Shader = toon ? _toonShader : _teamShader };

@@ -174,8 +174,9 @@ public partial class Main
 
     string CardTitle(Entity e) => e.Kind switch
     {
-        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": structures" : e.Kind == Kind.Hq ? $": build   (wings {W.SlotsUsed(e)}/{World.SlotsOf(e)})" : ": build"),
-        Kind.Extractor or Kind.PowerPlant => $"{NameOf(e.Kind)}: wings {W.SlotsUsed(e)}/{World.SlotsOf(e)}",
+        Kind.Hq or Kind.Outpost => (e.Kind == Kind.Hq ? "HQ" : "Base") + (_cardPage == "defences" ? ": structures" : _cardPage == "modules" ? ": modules" : ": build"),
+        Kind.Extractor or Kind.PowerPlant => NameOf(e.Kind) + (_cardPage == "modules" ? ": modules" : ": build"),
+        Kind.Module => ModName(e.Mod) + " module",
         Kind.Factory => World.IsUtility(e) ? "Utility wing" : NameOf(e.Makes) + " wing",
         _ => NameOf(e.Kind),
     };
@@ -190,7 +191,11 @@ public partial class Main
         {
             case Kind.Hq or Kind.Outpost or Kind.Extractor or Kind.PowerPlant:
                 if (_cardPage == "defences" && World.IsBase(e)) DefenceItems(e, items);
+                else if (_cardPage == "modules" && World.IsWingHost(e)) ModuleItems(items);
                 else BaseItems(e, items);
+                break;
+            case Kind.Module:
+                items.Add(SellItem(e));
                 break;
             case Kind.Factory when World.IsUtility(e):
                 var scout = World.ScoutKindOf(MyCiv);
@@ -199,7 +204,6 @@ public partial class Main
                 items.Add(SellItem(e));
                 break;
             case Kind.Factory:
-                UpgradeItems(e, items, false);
                 if (World.CanFitNapalm(e.Makes)) items.Add(NapalmItem(e));
                 if (e.HasRally) items.Add(new CardItem(Key.T, "Rally", null, "Clear\nrally", 0, "Clear rally point", "New units attack straight away (right-click the ground to set one).", null,
                     () => _session.Issue(new SetRally(_me, e.Id, true, FixVec2.Zero))));
@@ -229,7 +233,12 @@ public partial class Main
     /// structures page (the HQ and set-up bases), pack up, sell.</summary>
     void BaseItems(Entity b, List<CardItem> items)
     {
-        if (World.IsWingHost(b)) WingItems(b, items);
+        if (World.IsWingHost(b))
+        {
+            WingItems(b, items);
+            items.Add(new CardItem(Key.G, "Modules", ModModel(Mod.Attack), null, 0, "Modules  \u25b8",
+                "Snap modules onto a line: every wing after them on it gets\nwhat they do (speed, armour, attack, build speed, energy,\nand the wildcards).", null, () => _cardPage = "modules"));
+        }
         if (World.IsBase(b))
             items.Add(new CardItem(Key.N, "Structures", BuildingModel(Kind.PowerPlant, Kind.Hq, MyCiv), null, 0, "Structures  \u25b8",
                 $"Extractors, power plants and defences, placed within {World.BaseReach} of a base.", W.Started ? null : "once the battle starts", () => _cardPage = "defences"));
@@ -255,15 +264,43 @@ public partial class Main
         for (int i = 0; i < kinds.Length; i++)
         {
             var kind = kinds[i];
-            W.CanAddWing(_me, b.Id, kind, out var why);
+            var why = LineWhy(kind, null);
             items.Add(new CardItem(keys[i], NameOf(kind), UnitModel(kind, MyCiv), null, World.WingCost(kind), $"{NameOf(kind)} {(MyCiv == Civ.Lattice ? "nest" : "wing")}",
-                $"Built onto this in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)} for as long as it stands.{HostNote(b)}\nPower draw {(b.Kind == Kind.PowerPlant ? World.PowerDraw(kind) / 2 : World.PowerDraw(kind))}  (you have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}).\n\n" + UnitStats(kind),
-                why?.ToLowerInvariant(), () => _session.Issue(new AddWing(_me, b.Id, kind))));
+                $"Snaps onto the end of a line (pick which) in {World.ConstructionTicks(Kind.Factory) / World.TicksPerSecond} s; then makes {Plural(kind)}\nfor as long as it stands, with every module before it on the line.{HostNote(b)}\nPower draw {(b.Kind == Kind.PowerPlant ? World.PowerDraw(kind) / 2 : World.PowerDraw(kind))}  (you have {W.PowerDrawOf(_me)} drawn of {W.PowerSupply(_me)}).\n\n" + UnitStats(kind),
+                why, () => StartLinePick(kind, null)));
         }
-        W.CanAddWing(_me, b.Id, Kind.MobileBase, out var uwhy);
+        var uwhy = LineWhy(Kind.MobileBase, null);
         items.Add(new CardItem(Key.U, "Utility", BuildingModel(Kind.Factory, Kind.MobileBase, MyCiv), null, World.WingCost(Kind.MobileBase), MyCiv == Civ.Lattice ? "Utility nest" : "Utility wing",
-            $"Builds scouts ({World.ScoutCost}) and mobile bases ({World.MobileBaseCost}) to order.\nMobile bases are how you expand.", uwhy?.ToLowerInvariant(),
-            () => _session.Issue(new AddWing(_me, b.Id, Kind.MobileBase))));
+            $"Builds scouts ({World.ScoutCost}) and mobile bases ({World.MobileBaseCost}) to order.\nMobile bases are how you expand.", uwhy,
+            () => StartLinePick(Kind.MobileBase, null)));
+    }
+
+    /// <summary>Why nothing of this can go on any of my lines just now (null if it can somewhere).</summary>
+    string LineWhy(Kind makes, Mod? mod)
+    {
+        string why = "no line of yours has room";
+        foreach (var h in W.Entities)
+        {
+            if (h.Dead || h.Owner != _me || !World.IsWingHost(h)) continue;
+            for (int slot = 0; slot < World.SlotsOf(h); slot++)
+                if (W.CanAddPiece(_me, h.Id, slot, makes, mod, out var w)) return null; else why = w;
+        }
+        return why?.ToLowerInvariant();
+    }
+
+    static readonly Key[] ModuleKeys = { Key.Q, Key.W, Key.E, Key.R, Key.T, Key.A, Key.S, Key.D, Key.F };
+
+    /// <summary>The modules page: each snaps onto the end of a line (picked with the mouse).</summary>
+    void ModuleItems(List<CardItem> items)
+    {
+        for (int i = 0; i < World.ModCount; i++)
+        {
+            var m = (Mod)i;
+            items.Add(new CardItem(ModuleKeys[i], ModName(m), ModModel(m), null, World.ModuleCost(m), ModName(m) + " module",
+                ModDoes(m) + $"\n\nSnaps onto the end of a line (pick which) in {World.ConstructionTicks(Kind.Module) / World.TicksPerSecond} s.\nOnly wings after it on the line get it: build modules first.",
+                LineWhy(Kind.Hq, m), () => StartLinePick(Kind.Hq, m)));
+        }
+        items.Add(new CardItem(Key.Escape, "Back", null, "\u25c2 Back", 0, "Back", "To the build card.", null, () => _cardPage = "main"));
     }
 
     void DefenceItems(Entity b, List<CardItem> items)

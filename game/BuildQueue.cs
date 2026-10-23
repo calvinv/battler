@@ -110,8 +110,8 @@ public partial class Main
             if (e.Building > 0)
             {
                 int total = World.ConstructionTicks(e.Kind);
-                list.Add(new Queued(BuildingModel(e.Kind, e.Makes, civ), 1f - e.Building / (float)total, "",
-                    $"{Mathf.CeilToInt(e.Building / (float)tps)} s", e.Id, BarBuild, "Going up: " + Describe(e.Kind, e.Makes)));
+                list.Add(new Queued(ModelFor(e), 1f - e.Building / (float)total, "",
+                    $"{Mathf.CeilToInt(e.Building / (float)tps)} s", e.Id, BarBuild, "Going up: " + (e.Kind == Kind.Module ? ModName(e.Mod) + " module" : Describe(e.Kind, e.Makes))));
                 continue;
             }
             if (World.IsUtility(e))   // what's ordered: the one being built, then the rest waiting
@@ -130,7 +130,7 @@ public partial class Main
                 int cost = World.UpgradeCost(level);
                 float ready = i == 0 ? Mathf.Clamp(W.Players[_me].Metal / (float)cost, 0, 1) : 0;
                 var names = World.IsDefence(e.Kind) ? OutpostUpgradeShort : UpgradeShort;
-                list.Add(new Queued(BuildingModel(e.Kind, e.Makes, civ), ready, "+" + names[(int)which][0] + level,
+                list.Add(new Queued(ModelFor(e), ready, "+" + names[(int)which][0] + level,
                     $"{names[(int)which]} {cost}", e.Id, BarWait, $"{names[(int)which]} {level} queued, waiting for {cost} metal"));
             }
             if (e.Kind == Kind.Factory && !World.IsUtility(e))

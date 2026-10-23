@@ -4,6 +4,7 @@ picks 2 = HQ core, 8 = hover bay, 11 = mech bay, 15 = wheel bay.) Same flat slat
 units (model_hover.py). Each wing's door is a rig part ("door") the game slides up while a unit rolls out; parts named
 spin_* turn slowly (game/BuildingRig.cs).
 Names: hq factory_lighttank factory_ranger factory_tank connector port factory_mortar factory_artillery factory_mobilebase factory_air outpost extractor powerplant
+       module_speed module_armour module_attack module_build module_energy module_twin module_napalm module_shield module_magnet
 Run: blender --background --python tools/art/model_base.py -- hq"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -481,6 +482,168 @@ def powerplant():
         c, d = math.cos(t), math.sin(t)
         tube_between((c * 6.9, d * 6.9, 5.0), (c * 9.2, d * 9.2, 0.6), 0.6, "dark", 8)
     finish_toon("powerplant", 26.0)
+
+
+# ---- modules: links in a line (the user, 2026-10-23: "like a rube goldberg machine ... the modules should be speed,
+# armour, attack, build speed, energy cost, wildcards"). The line runs through each along its length (a); each has
+# its own light colour and a feature on top that says what it does. Moving parts spin_* turn (BuildingRig).
+
+def module_core(colour):
+    """A module's body: a low armoured block the line runs through, collars at both ends where the connectors meet
+    it, lit strips down its sides and a lit badge on its roof, in the module's own colour."""
+    k.recolour(glow=colour)
+    k.box(-6.4, 6.4, -5.0, 5.0, 0.0, 0.6, "mid")
+    plate(-5.6, 5.6, -4.3, 4.3, 0.6, 4.0, "steel", inset=0.5)
+    for a in (-6.2, 5.2):
+        plate(a, a + 1.0, -3.0, 3.0, 0.6, 4.3, "plate", inset=0.2)
+        k.box(a + 0.2, a + 0.8, -3.05, 3.05, 3.0, 3.4, "paint")
+    for s_ in (1, -1):
+        k.box(-4.5, 4.5, *sorted((s_ * 4.25, s_ * 4.32)), 1.6, 2.1, "glow")
+    return 4.0
+
+
+def module_speed():
+    """Speed: two turbine housings on its roof with fans turning in them, swept fins either side. Cyan."""
+    k.begin(0.0)
+    top = module_core((70, 225, 255))
+    for a in (-2.3, 2.3):
+        k.drum(a, 0, 2.0, top, top + 0.9, "plate", 16)
+        k.drum(a, 0, 1.7, top + 0.9, top + 0.95, "black", 16)
+        with part("spin_fan%d" % (a > 0), (a, 0, top + 1.0)):
+            for i in range(6):
+                t = i * math.tau / 6
+                k.solid([(a, 0, top + 1.0), (a + math.cos(t) * 1.5, math.sin(t) * 1.5, top + 1.0), (a + math.cos(t + 0.45) * 1.5, math.sin(t + 0.45) * 1.5, top + 1.0)],
+                        [(a, 0, top + 1.2), (a + math.cos(t) * 1.5, math.sin(t) * 1.5, top + 1.2), (a + math.cos(t + 0.45) * 1.5, math.sin(t + 0.45) * 1.5, top + 1.2)], "mid")
+            k.drum(a, 0, 0.35, top + 0.9, top + 1.35, "glow", 8)
+    for s_ in (1, -1):
+        k.solid([(-4.0, s_ * 4.3, top - 1.2), (2.0, s_ * 4.3, top - 1.2), (-2.0, s_ * 6.2, top - 1.2)],
+                [(-4.0, s_ * 4.3, top - 0.9), (2.0, s_ * 4.3, top - 0.9), (-2.0, s_ * 6.2, top - 0.9)], "plate")
+    finish_toon("module_speed", 18.0)
+
+
+def module_armour():
+    """Armour: heavy plates stacked on its roof, each smaller, riveted, a big chevron on the front plate. Pale blue."""
+    k.begin(0.0)
+    top = module_core((120, 190, 255))
+    plate(-4.6, 4.6, -3.6, 3.6, top, top + 1.0, "plate", inset=0.5)
+    plate(-3.6, 3.6, -2.8, 2.8, top + 1.0, top + 1.9, "steel", inset=0.5)
+    plate(-2.6, 2.6, -2.0, 2.0, top + 1.9, top + 2.6, "plate", inset=0.4)
+    for s_ in (1, -1):
+        for a in (-3.8, -1.3, 1.3, 3.8):
+            k.drum(a, s_ * 3.0, 0.2, top + 0.9, top + 1.1, "dark", 6)
+        k.solid([(-1.2, 0, top + 2.6), (1.2, 0, top + 2.6), (0.2, s_ * 1.4, top + 2.6), (-0.6, s_ * 1.4, top + 2.6)],
+                [(-1.2, 0, top + 2.68), (1.2, 0, top + 2.68), (0.2, s_ * 1.4, top + 2.68), (-0.6, s_ * 1.4, top + 2.68)], "glow")
+    finish_toon("module_armour", 18.0)
+
+
+def module_attack():
+    """Attack: a gun turret on its roof with two long barrels pointing out along the line, red sights. Red."""
+    k.begin(0.0)
+    top = module_core((255, 70, 50))
+    hexagon(0, 0, 2.6, top, top + 1.0, "plate", r1=2.3, sides=8, turn=math.pi / 8)
+    plate(-1.8, 1.8, -1.6, 1.6, top + 1.0, top + 2.4, "steel", inset=0.3, front=0.6)
+    for x in (-0.65, 0.65):
+        k.tube(1.6, 6.0, x, top + 1.7, 0.28, "dark", 10)
+        k.tube(5.6, 6.2, x, top + 1.7, 0.36, "dark", 10)
+        k.tube(6.2, 6.3, x, top + 1.7, 0.2, "glow", 10)
+    k.box(1.2, 1.3, -1.1, 1.1, top + 1.9, top + 2.15, "glow")
+    finish_toon("module_attack", 18.0)
+
+
+def module_build():
+    """Build speed: an assembly arm on its roof that turns, a gear at its foot, a lamp on the arm's hand. Yellow."""
+    k.begin(0.0)
+    top = module_core((255, 214, 64))
+    k.drum(0, 0, 2.6, top, top + 0.5, "dark", 12)
+    for i in range(12):
+        t = i * math.tau / 12
+        k.box(math.cos(t) * 2.7 - 0.25, math.cos(t) * 2.7 + 0.25, math.sin(t) * 2.7 - 0.25, math.sin(t) * 2.7 + 0.25, top, top + 0.5, "dark")
+    with part("spin_arm", (0, 0, top + 0.5)):
+        k.drum(0, 0, 1.2, top + 0.5, top + 1.6, "plate", 10)
+        tube_between((0, 0, top + 1.4), (2.6, 0, top + 3.8), 0.4, "steel", 8)
+        tube_between((2.6, 0, top + 3.8), (4.4, 0, top + 2.4), 0.3, "steel", 8)
+        k.drum(2.6, 0, 0.5, top + 3.4, top + 4.2, "mid", 8)
+        k.drum(4.4, 0, 0.45, top + 1.9, top + 2.5, "glow", 8)
+    finish_toon("module_build", 18.0)
+
+
+def module_energy():
+    """Energy: three coil pylons in a row on its roof, rings round them, glowing tips. Lime."""
+    k.begin(0.0)
+    top = module_core((190, 255, 60))
+    for a in (-3.2, 0.0, 3.2):
+        k.drum(a, 0, 0.9, top, top + 0.6, "plate", 10)
+        k.drum(a, 0, 0.35, top + 0.6, top + 4.2, "dark", 8)
+        for z in (top + 1.2, top + 2.1, top + 3.0):
+            k.drum(a, 0, 0.75, z, z + 0.25, "mid", 12)
+        k.drum(a, 0, 0.55, top + 4.2, top + 4.9, "glow", 10)
+    for x in (-2.4, 2.4):
+        tube_between((-4.5, x, top + 0.3), (4.5, x, top + 0.3), 0.3, "glow", 6)
+    finish_toon("module_energy", 18.0)
+
+
+def module_twin():
+    """Twin feed: two hoppers side by side on its roof feeding one split chute, a split arrow on its deck. Magenta."""
+    k.begin(0.0)
+    top = module_core((255, 70, 220))
+    for x in (-1.9, 1.9):
+        k.drum(-1.0, x, 1.7, top + 1.0, top + 3.2, "plate", 8, r1=2.0)
+        k.drum(-1.0, x, 1.0, top, top + 1.0, "dark", 8, r1=1.7)
+        k.drum(-1.0, x, 2.0, top + 3.2, top + 3.35, "glow", 8)
+        k.drum(-1.0, x, 1.6, top + 3.2, top + 3.4, "black", 8)
+    plate(1.4, 4.6, -1.2, 1.2, top, top + 0.8, "mid", inset=0.2)
+    for s_ in (1, -1):
+        k.solid([(2.2, 0, top + 0.8), (2.8, 0, top + 0.8), (4.4, s_ * 1.1, top + 0.8), (3.8, s_ * 1.1, top + 0.8)],
+                [(2.2, 0, top + 0.88), (2.8, 0, top + 0.88), (4.4, s_ * 1.1, top + 0.88), (3.8, s_ * 1.1, top + 0.88)], "glow")
+    finish_toon("module_twin", 18.0)
+
+
+def module_napalm():
+    """Napalm: two fat fuel tanks lying along its roof with hazard bands, a burner nozzle at the front with a flame
+    lamp. Orange."""
+    k.begin(0.0)
+    top = module_core((255, 120, 30))
+    for x in (-1.8, 1.8):
+        hlathe(x, top + 1.4, [(0.6, -4.6), (1.3, -4.2), (1.4, -3.6), (1.4, 3.0), (1.3, 3.6), (0.6, 4.0)], "plate", 20)
+        for a in (-2.0, 1.4):
+            hlathe(x, top + 1.4, [(1.45, a), (1.45, a + 0.5)], "paint", 20)
+        k.box(-3.0, 2.5, x - 0.2, x + 0.2, top, top + 0.4, "dark")
+    k.tube(4.0, 5.4, 0, top + 1.0, 0.5, "dark", 10)
+    k.tube(5.4, 5.6, 0, top + 1.0, 0.45, "glow", 10)
+    finish_toon("module_napalm", 18.0)
+
+
+def module_shield():
+    """Shield coil: a domed emitter on its roof under a ring that turns, lit nodes round the ring. Teal."""
+    k.begin(0.0)
+    top = module_core((60, 255, 200))
+    k.drum(0, 0, 2.6, top, top + 0.7, "plate", 20)
+    k.drum(0, 0, 2.2, top + 0.7, top + 1.6, "steel", 20, r1=1.8)
+    k.drum(0, 0, 1.8, top + 1.6, top + 2.4, "glow", 20, r1=0.9)
+    k.drum(0, 0, 0.9, top + 2.4, top + 2.7, "white", 16, r1=0.4)
+    with part("spin_ring", (0, 0, top + 1.3)):
+        k.drum(0, 0, 3.6, top + 1.1, top + 1.5, "dark", 24, r1=3.6)
+        for i in range(4):
+            t = i * math.tau / 4
+            k.drum(math.cos(t) * 3.6, math.sin(t) * 3.6, 0.45, top + 1.0, top + 1.7, "glow", 8)
+    finish_toon("module_shield", 18.0)
+
+
+def module_magnet():
+    """Salvage magnet: a big horseshoe magnet raised on a pivot that turns slowly, lit poles. Purple."""
+    k.begin(0.0)
+    top = module_core((180, 90, 255))
+    k.drum(0, 0, 1.6, top, top + 1.0, "plate", 12)
+    with part("spin_magnet", (0, 0, top + 1.0)):
+        k.drum(0, 0, 0.6, top + 1.0, top + 2.4, "dark", 8)
+        pts = [(math.cos(t) * 2.4, 0, top + 4.2 + math.sin(t) * 2.4) for t in [math.pi + i * math.pi / 8 for i in range(9)]]
+        for p0, p1 in zip(pts, pts[1:]):
+            tube_between(p0, p1, 0.7, "paint", 10)
+        for x in (-2.4, 2.4):
+            tube_between((x, 0, top + 4.2), (x, 0, top + 5.6), 0.72, "steel", 10)
+            tube_between((x, 0, top + 5.6), (x, 0, top + 6.2), 0.74, "glow", 10)
+        tube_between((0, 0, top + 2.3), (0, 0, top + 1.8), 0.6, "mid", 8)
+    finish_toon("module_magnet", 18.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()

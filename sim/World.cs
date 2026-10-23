@@ -735,10 +735,10 @@ public sealed class World
     }
 
     /// <summary>The line a wing would go on when none is named (the AI's): the one with the most modules before its
-    /// free place, the first such; -1 if none has room.</summary>
+    /// free place, then the shortest, the first such; -1 if none has room.</summary>
     public int FreeWingSlot(Entity b)
     {
-        int best = -1, bestMods = -1;
+        int best = -1, bestMods = int.MinValue;
         var mods = new int[ModCount];
         for (int slot = 0; slot < SlotsOf(b); slot++)
         {
@@ -747,7 +747,8 @@ public sealed class World
             ModsBefore(b, slot, link, mods);
             int n = 0;
             foreach (var m in mods) n += m;
-            if (n > bestMods) { best = slot; bestMods = n; }
+            int score = n * 10 - link;   // (modules first; else the shortest line)
+            if (score > bestMods) { best = slot; bestMods = score; }
         }
         return best;
     }
@@ -796,12 +797,16 @@ public sealed class World
 
     /// <summary>Which way a wing's door faces: square to its line (the line runs through it side to side), on the side
     /// toward the enemy.</summary>
-    public FixVec2 DoorDir(Entity wing)
+    public FixVec2 DoorDir(Entity wing) => Find(wing.BaseId) is { } b
+        ? DoorDirAt(wing.Owner, b, wing.Slot, wing.Pos)
+        : (Players[1 - wing.Owner].HqPos - wing.Pos).WithLength(Fix.One);
+
+    /// <summary>Which way a wing at `at` on line `slot` of host `b` would face its door.</summary>
+    public FixVec2 DoorDirAt(int owner, Entity b, int slot, FixVec2 at)
     {
-        if (Find(wing.BaseId) is not { } b) return (Players[1 - wing.Owner].HqPos - wing.Pos).WithLength(Fix.One);
-        var d = LineDir(b, wing.Slot);
+        var d = LineDir(b, slot);
         var side = new FixVec2(-d.Z, d.X);
-        var toEnemy = Players[1 - wing.Owner].HqPos - wing.Pos;
+        var toEnemy = Players[1 - owner].HqPos - at;
         return side.X * toEnemy.X + side.Z * toEnemy.Z < Fix.Zero ? -side : side;
     }
 
