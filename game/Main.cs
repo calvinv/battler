@@ -114,6 +114,7 @@ public partial class Main : Node3D
             DisplayServer.WindowSetTitle("Battler - client");
         }
         else if (args.Contains("--lineup")) { BuildLineup(); return; }
+        else if (args.Contains("--reel")) { BuildReel(); return; }
         else StartMatch(new LocalSession((ulong)GD.Randi()));
 
         if (args.Contains("--shot"))
@@ -247,6 +248,68 @@ public partial class Main : Node3D
             _distance = 11;
         }
         else GetTree().Quit();
+    }
+
+    // ---- --reel: one rigged unit driving past a target, its turret tracking, stopping, firing and pulling away,
+    // to judge its animation. Record it: godot --write-movie screenshots/reel/f.png --fixed-fps 30 --quit-after 300 -- --reel
+
+    Node3D _reelUnit, _reelTarget;
+    UnitRig _reelRig;
+    float _reelT = -1, _reelSpeed, _reelHeading;
+    Vector3 _reelPos;
+    int _reelShots;
+    static readonly float[] ReelFireAt = { 1.9f, 4.9f, 6.0f, 8.6f };
+
+    void BuildReel()
+    {
+        _reelTarget = UnitArt.Make("tank", TeamColor[1]);
+        AddChild(_reelTarget);
+        _reelTarget.Position = new Vector3(0, _terrain.HeightAt(0, 0), 0);
+        _reelTarget.Basis = Basis.LookingAt(new Vector3(-1, 0, 0.6f).Normalized(), Vector3.Up);
+        string name = OS.GetEnvironment("REEL_UNIT") is { Length: > 0 } u ? u : "lighttank";
+        _reelUnit = UnitArt.Make(name, TeamColor[0]);
+        AddChild(_reelUnit);
+        _reelRig = UnitRig.Find(_reelUnit, 1);
+        _reelPos = new Vector3(-13, 0, 7);
+        _reelHeading = 0;
+        _banner.Text = "";
+        _focus = _reelPos;
+        _distance = 24;
+        _reelT = 0;
+    }
+
+    void StepReel(float dt)
+    {
+        float t = _reelT += dt;
+        // Speed: pull away, cruise, brake to a stop, stand and shoot, pull away again turning.
+        float want = t < 3.5f ? 3f : t < 6.6f ? 0f : 3f;
+        float rate = want > _reelSpeed ? 5f : 4f;
+        _reelSpeed = Mathf.MoveToward(_reelSpeed, want, rate * dt);
+        if (t > 7.2f) _reelHeading += Mathf.DegToRad(28) * dt;
+        var dir = new Vector3(Mathf.Cos(_reelHeading), 0, -Mathf.Sin(_reelHeading));
+        float moved = _reelSpeed * dt;
+        _reelPos += dir * moved;
+        _reelPos.Y = _terrain.HeightAt(_reelPos.X, _reelPos.Z);
+        _reelUnit.Position = _reelPos;
+        _reelUnit.Basis = Basis.LookingAt(dir, Vector3.Up);
+        var toTarget = _reelTarget.Position - _reelPos;
+        toTarget.Y = 0;
+        float yaw = dir.SignedAngleTo(toTarget.Normalized(), Vector3.Up);
+        _reelRig?.Update(dt, moved, yaw);
+        float r = World.StatsFor[(int)Kind.LightTank].Radius.ToFloat();
+        if (_reelSpeed > 0.05f)
+        {
+            _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
+            _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
+        }
+        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
+        {
+            _reelShots++;
+            _reelRig?.Fire();
+            var from = _reelRig?.Muzzle?.GlobalPosition ?? _reelPos + Vector3.Up;
+            _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, Kind.LightTank, TeamColor[0]);
+        }
+        _focus = _focus.Lerp(_reelPos * 0.7f + _reelTarget.Position * 0.3f, Mathf.Min(1, dt * 2));
     }
 
     public override void _ExitTree()
@@ -715,6 +778,9 @@ public partial class Main : Node3D
     };
 
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
+    readonly Dictionary<int, UnitRig> _rigs = new();
+    readonly Dictionary<int, Vector3> _drawnAt = new();
+
     Node3D MakeView(Entity e)
     {
         if (e.Stats.IsUnit)
@@ -905,6 +971,7 @@ public partial class Main : Node3D
         MoveCamera((float)delta);
 
         if (_lineupFrame >= 0) { StepLineup(); return; }
+        if (_reelT >= 0) { StepReel((float)delta); return; }
         if (_session == null)
         {
             PollConnection();
@@ -960,6 +1027,11 @@ public partial class Main : Node3D
             dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Right;
             if (World.StatsFor[(int)s.By].IsUnit) _facing.TryAdd(s.ShooterId, dir);
             var from = at + Vector3.Up * MuzzleOf(s.By) + dir * BarrelOf(s.By);
+            if (_rigs.TryGetValue(s.ShooterId, out var shooter))   // a rigged unit: the barrel kicks, the shot leaves its muzzle
+            {
+                shooter.Fire();
+                if (shooter.Muzzle != null && shooter.Muzzle.IsInsideTree()) from = shooter.Muzzle.GlobalPosition;
+            }
             var target = W.Find(s.TargetId);
             var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
             if (s.Flight > 0) aimAt = to;   // shells burst on the ground
@@ -1016,6 +1088,7 @@ public partial class Main : Node3D
                 view = MakeView(e);
                 AddChild(view);
                 _views[e.Id] = view;
+                if (e.Stats.IsUnit && UnitRig.Find(view, e.Id) is { } newRig) _rigs[e.Id] = newRig;
             }
             if (_rising.Contains(e.Id))
                 UnitArt.SetBuilt(view, 1f - e.Building / (float)World.ConstructionTicks(e.Kind));
@@ -1055,6 +1128,21 @@ public partial class Main : Node3D
                 // Tilt with the ground under it.
                 float ahead = _terrain.HeightAt(pos.X + face.X, pos.Z + face.Z), behind = _terrain.HeightAt(pos.X - face.X, pos.Z - face.Z);
                 view.Basis = Basis.LookingAt(new Vector3(face.X, (ahead - behind) * 0.5f, face.Z), Vector3.Up);
+                // Moving parts (UnitRig): wheels roll the ground covered, the turret tracks its target.
+                if (_rigs.TryGetValue(e.Id, out var unitRig))
+                {
+                    var lastAt = _drawnAt.TryGetValue(e.Id, out var la) ? la : pos;
+                    _drawnAt[e.Id] = pos;
+                    float rolled = W.Paused ? 0 : new Vector2(pos.X - lastAt.X, pos.Z - lastAt.Z).Length();
+                    float? turretYaw = null;
+                    if (_aim.TryGetValue(e.Id, out var held) && held.Until >= W.Tick && W.Find(held.Target) is { Dead: false } aimed)
+                    {
+                        var toAimed = ToV3(aimed.Pos) - pos;
+                        toAimed.Y = 0;
+                        if (toAimed.LengthSquared() > 1e-4f) turretYaw = face.SignedAngleTo(toAimed.Normalized(), Vector3.Up);
+                    }
+                    unitRig.Update(W.Paused ? 0 : _frameDt, rolled, turretYaw);
+                }
                 // A walker sways side to side and bobs as it steps (its legs are one piece with it).
                 if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger && moving && !W.Paused)
                 {
@@ -1079,6 +1167,8 @@ public partial class Main : Node3D
         {
             _views[id].QueueFree();
             _views.Remove(id);
+            _rigs.Remove(id);
+            _drawnAt.Remove(id);
             _prevPos.Remove(id);
             _facing.Remove(id);
             _aim.Remove(id);

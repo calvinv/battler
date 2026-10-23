@@ -97,6 +97,94 @@ def apron(half_a, half_x, h=0.5, lines=True):
 
 # ---- detail (the user, 2026-10-20: "can we make more detailed models of the units and buildings") ------------------
 
+RIG = []       # moving parts: (name, pivot (a, x, z), parent name or None, first piece, end piece)
+MARKS = []     # points the game wants: (name, (a, x, z), parent name or None)
+
+
+class part:
+    """`with part("wheel_0", (a, x, z)):` the pieces made inside move as one in the game, turning about the pivot.
+    `parent`: the part it rides on (a barrel on its turret). Everything outside any part is the "body". The baked
+    model stays one mesh for painting; finish_realistic then also writes <name>_rig.glb split into these parts."""
+
+    def __init__(self, name, pivot, parent=None):
+        self.name, self.pivot, self.parent = name, pivot, parent
+
+    def __enter__(self):
+        self.start = len(k.pieces)
+        return self
+
+    def __exit__(self, *exc):
+        RIG.append((self.name, self.pivot, self.parent, self.start, len(k.pieces)))
+
+
+def mark(name, where, parent=None):
+    """A named point on the model for the game (a muzzle, an exhaust): an empty in the rig, riding `parent`."""
+    MARKS.append((name, where, parent))
+
+
+def _tag_parts():
+    """Every piece gets a face attribute "rig": 0 for the body, i + 1 for RIG[i] (kept through the join)."""
+    owner = {}
+    for i, (_, _, _, a, b) in enumerate(RIG):
+        for ob in k.pieces[a:b]:
+            owner.setdefault(ob.name, i + 1)      # (a part nested in another keeps its own pieces)
+    for ob in k.pieces:
+        at = ob.data.attributes.get("rig") or ob.data.attributes.new("rig", "INT", "FACE")
+        v = owner.get(ob.name, 0)
+        for d in at.data:
+            d.value = v
+
+
+def _export_rig(name, folder):
+    """<name>_rig.glb: the finished model cut into its parts (same UVs, same texture), each with its origin at its
+    pivot and parented as RIG says, plus the MARKS as empties. The game animates the parts by name."""
+    import bpy, bmesh
+    if not RIG and not MARKS:
+        return
+    ship = bpy.data.objects[name]
+    made = {}
+    names = ["body"] + [r[0] for r in RIG]
+    pivots = [(0.0, 0.0, 0.0)] + [r[1] for r in RIG]
+    parents = [None] + [None if r[2] == "root" else (r[2] or "body") for r in RIG]      # ("root": not on the body, e.g. wheels, which stay on the ground while it rocks)
+    for g, pname in enumerate(names):
+        me = ship.data.copy()
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        layer = bm.faces.layers.int.get("rig")
+        bmesh.ops.delete(bm, geom=[fc for fc in bm.faces if fc[layer] != g], context="FACES")
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        p = k.at(*pivots[g])
+        for v in bm.verts:
+            v.co -= p
+        bm.to_mesh(me)
+        bm.free()
+        me.materials.clear()
+        ob = bpy.data.objects.new(pname, me)
+        bpy.context.scene.collection.objects.link(ob)
+        made[pname] = (ob, p)
+    for g, pname in enumerate(names):
+        ob, p = made[pname]
+        if parents[g]:
+            par, pp = made[parents[g]]
+            ob.parent = par
+            ob.location = p - pp
+        else:
+            ob.location = p
+    for mname, where, parent in MARKS:
+        e = bpy.data.objects.new(mname, None)
+        bpy.context.scene.collection.objects.link(e)
+        par, pp = made[parent or "body"]
+        e.parent = par
+        e.location = k.at(*where) - pp
+        made[mname] = (e, k.at(*where))
+    bpy.ops.object.select_all(action="DESELECT")
+    for ob, _ in made.values():
+        ob.select_set(True)
+    bpy.ops.export_scene.gltf(filepath="%s/%s_rig.glb" % (folder, name), use_selection=True, export_format="GLB",
+                              export_materials="NONE", export_normals=True, export_texcoords=True, export_yup=True)
+    print("%s: rig with %s" % (name, ", ".join(names[1:] + [m[0] for m in MARKS])))
+
+
 def hlathe(x, z, profile, mat, sides=32):
     """A round piece lying along the length (a) at (x, z), turned from a profile ((radius, a) points, back first) and
     shaded smooth: a drum, a domed nose, a barrel that's really round."""
@@ -165,6 +253,7 @@ def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
     if bpy.context.scene.world is None:
         bpy.context.scene.world = bpy.data.worlds.new("bake_world")
     bpy.context.scene.world.light_settings.distance = 0.9
+    _tag_parts()
     tris = sum(len(p.vertices) - 2 for ob in k.pieces for p in ob.data.polygons)
     print("%s: %d triangles" % (name, tris))
     k.finish(name, span, folder)
@@ -610,3 +699,4 @@ def finish_realistic(name, span, style="coalition", serial="07", folder=None, be
         cam.rotation_euler = (Vector((0, 0, 0)) - Vector(place)).to_track_quat("-Z", "Y").to_euler()
         sc.render.filepath = "%s/_%s_real_%s.png" % (k.WORK, name, label)
         bpy.ops.render.render(write_still=True)
+    _export_rig(name, folder)

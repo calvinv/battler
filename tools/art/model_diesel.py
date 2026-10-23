@@ -99,9 +99,10 @@ def lighttank():
     the back carrying a turntable with a double-ended swivel cannon and twin optics; lamps on stalks, hoses."""
     k.begin(0.0)
     zc = 1.45                                                                               # wheel centres
-    for a in (-3.3, 0.0, 3.3):
-        for s in (1, -1):
-            spoked_wheel(a, s, zc, 1.45, 2.35, 3.15)
+    for i, a in enumerate((-3.3, 0.0, 3.3)):
+        for j, s in enumerate((1, -1)):
+            with part("wheel_%d" % (i * 2 + j), (a, s * 2.75, zc), parent="root"):
+                spoked_wheel(a, s, zc, 1.45, 2.35, 3.15)
         tube_between((a, -2.5, zc), (a, 2.5, zc), 0.16, "dark", 8)                          # axle
     # Lattice chassis: two girders (top and bottom chords, posts, diagonals) and cross beams.
     for s in (1, -1):
@@ -121,11 +122,13 @@ def lighttank():
     for i in range(3):
         k.box(1.7 + i * 0.85, 2.3 + i * 0.85, -1.3, 0.9, 3.5, 3.85, "dark")
         k.drum(2.0 + i * 0.85, -0.2, 0.16, 3.85, 4.1, "steel", 8)
-    hlathe(-0.2, 2.9, [(0.95, 4.2), (1.05, 4.3), (1.05, 4.75), (0.9, 4.85), (0.4, 4.9)], "dark", 32)
-    for i in range(16):
-        t = i * math.tau / 16
-        tube_between((4.32, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), (4.72, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), 0.06, "black", 4)
-    hlathe(-0.2, 2.9, [(0.3, 4.85), (0.3, 5.05)], "steel", 12)
+    with part("flywheel", (4.5, -0.2, 2.9)):
+        hlathe(-0.2, 2.9, [(0.95, 4.2), (1.05, 4.3), (1.05, 4.75), (0.9, 4.85), (0.4, 4.9)], "dark", 32)
+        for i in range(16):
+            t = i * math.tau / 16
+            tube_between((4.32, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), (4.72, -0.2 + math.cos(t) * 1.08, 2.9 + math.sin(t) * 1.08), 0.06, "black", 4)
+        k.box(4.86, 4.95, -0.35, -0.05, 2.0, 3.8, "steel")                                  # a spoke you can see turn
+        hlathe(-0.2, 2.9, [(0.3, 4.85), (0.3, 5.05)], "steel", 12)
     hose([(3.6, -1.4, 3.7), (3.2, -1.9, 3.2), (1.6, -1.9, 3.0), (1.2, -1.7, 3.5)], 0.13, "dark")
     hose([(2.0, 1.1, 3.0), (1.3, 1.6, 2.8), (0.8, 1.9, 3.2)], 0.11, "black")
     k.drum(2.4, 1.3, 0.22, 3.4, 4.4, "mid", 10)                                             # stubby exhaust
@@ -142,23 +145,26 @@ def lighttank():
             k.drum(a, s * 1.65, 0.18, 4.5, 4.85, "dark", 8)
     # Turntable and the swivel gun house: a long barrel forward, a short heavy one aft, twin optics on a post.
     k.drum(-1.5, 0, 1.7, 4.5, 4.7, "mid", 32)
-    k.drum(-1.5, 0, 1.45, 4.7, 4.85, "plate", 32)
     gz = 5.45
-    k.box(-2.5, -0.3, -0.85, 0.85, 4.85, 6.05, "steel")
-    k.box(-2.4, -0.4, -0.75, 0.75, 6.05, 6.15, "paint")
-    hlathe(0, gz, [(0.42, -0.4), (0.42, 0.4), (0.27, 0.45), (0.27, 4.5), (0.35, 4.55), (0.35, 5.0), (0.2, 5.02)], "dark", 20)
-    hlathe(0, gz, [(0.2, -5.0), (0.36, -4.98), (0.36, -4.5), (0.3, -4.45), (0.3, -2.6), (0.42, -2.5)], "dark", 20)
-    k.drum(-1.8, 0, 0.14, 6.15, 6.6, "dark", 8)
-    for x in (-0.28, 0.28):
-        hlathe(x, 6.8, [(0.24, -2.3), (0.27, -2.2), (0.27, -1.3), (0.24, -1.25)], "dark", 16)
-        hlathe(x, 6.8, [(0.18, -1.27), (0.18, -1.2)], "black", 12)
-    k.box(-2.0, -1.6, -0.45, 0.45, 6.55, 6.7, "dark")
-    # Lamps on stalks at the front corners; a hose from the engine up to the gun.
+    with part("turret", (-1.5, 0, 4.7)):
+        k.drum(-1.5, 0, 1.45, 4.7, 4.85, "plate", 32)
+        k.box(-2.5, -0.3, -0.85, 0.85, 4.85, 6.05, "steel")
+        k.box(-2.4, -0.4, -0.75, 0.75, 6.05, 6.15, "paint")
+        with part("barrel", (-0.4, 0, gz), parent="turret"):
+            hlathe(0, gz, [(0.42, -0.4), (0.42, 0.4), (0.27, 0.45), (0.27, 4.5), (0.35, 4.55), (0.35, 5.0), (0.2, 5.02)], "dark", 20)
+        hlathe(0, gz, [(0.2, -5.0), (0.36, -4.98), (0.36, -4.5), (0.3, -4.45), (0.3, -2.6), (0.42, -2.5)], "dark", 20)
+        k.drum(-1.8, 0, 0.14, 6.15, 6.6, "dark", 8)
+        for x in (-0.28, 0.28):
+            hlathe(x, 6.8, [(0.24, -2.3), (0.27, -2.2), (0.27, -1.3), (0.24, -1.25)], "dark", 16)
+            hlathe(x, 6.8, [(0.18, -1.27), (0.18, -1.2)], "black", 12)
+        k.box(-2.0, -1.6, -0.45, 0.45, 6.55, 6.7, "dark")
+    mark("muzzle", (5.1, 0, gz), "barrel")
+    mark("exhaust", (2.4, 1.3, 4.65))
+    # Lamps on stalks at the front corners.
     for s in (1, -1):
         tube_between((4.6, s * 1.6, 2.2), (4.6, s * 1.6, 3.3), 0.08, "dark", 6)
         lamp(4.7, s * 1.6, 3.4, 0.26)
         k.box(4.4, 4.7, *xs(s, 1.35, 1.85), 3.62, 3.7, "dark")
-    hose([(1.2, 0.9, 3.6), (0.4, 1.0, 4.9), (-0.4, 0.7, 5.3)], 0.1, "black")
     finish_realistic("lighttank", 24.0, grit=1.0, panels=False, bevel=0.035)
 
 

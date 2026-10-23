@@ -16,7 +16,9 @@ public static class UnitArt
 
     public static Node3D Make(string name, Color team)
     {
-        var model = GD.Load<PackedScene>($"res://art/units/{name}.glb").Instantiate<Node3D>();
+        // A model with moving parts has a rig beside it (same texture): the game animates it (UnitRig).
+        string rig = $"res://art/units/{name}_rig.glb";
+        var model = GD.Load<PackedScene>(ResourceLoader.Exists(rig) ? rig : $"res://art/units/{name}.glb").Instantiate<Node3D>();
         model.Scale = Vector3.One * Scale;
         if (!Materials.TryGetValue((name, team), out var mat))
         {
