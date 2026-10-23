@@ -18,6 +18,37 @@ public interface ISession
 }
 
 /// <summary>Against the computer: no network, the AI issues the other side's commands.</summary>
+/// <summary>A straight fight to watch, no bases or economy: `count` units of `kind` a side, facing each other across
+/// the middle of the map (the user, 2026-10-23: "place 5 of these on a battlefield and have them fight"). They close
+/// and fight on their own; the winners go on to the enemy HQ.</summary>
+public sealed class SkirmishSession : ISession
+{
+    readonly List<Command> _pending = new();
+
+    public SkirmishSession(ulong seed, Kind kind, int count, int apart = 34)
+    {
+        World = new World(seed) { Started = true };
+        for (int i = 0; i < count; i++)
+        {
+            int across = (i - count / 2) * 4;
+            World.Spawn(kind, 0, new FixVec2(-apart / 2, across));
+            World.Spawn(kind, 1, new FixVec2(apart / 2, -across));
+        }
+    }
+
+    public World World { get; }
+    public int LocalPlayer => 0;
+    public string Problem => null;
+    public void Issue(Command c) => _pending.Add(c);
+
+    public bool TryStep()
+    {
+        World.Step(_pending.ToList());
+        _pending.Clear();
+        return true;
+    }
+}
+
 public sealed class LocalSession : ISession
 {
     readonly SimpleAi _ai;

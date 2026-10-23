@@ -115,6 +115,7 @@ public partial class Main : Node3D
         }
         else if (args.Contains("--lineup")) { BuildLineup(); return; }
         else if (args.Contains("--reel")) { BuildReel(); return; }
+        else if (args.Contains("--skirmish")) StartSkirmish();
         else StartMatch(new LocalSession((ulong)GD.Randi()));
 
         if (args.Contains("--shot"))
@@ -454,6 +455,16 @@ public partial class Main : Node3D
         UpdateFog();
     }
 
+    /// <summary>Five hover tanks a side in the middle of the map, fighting it out; fog lifted, the camera on them.</summary>
+    void StartSkirmish()
+    {
+        StartMatch(new SkirmishSession((ulong)GD.Randi(), Kind.LightTank, 5));
+        _noFog = true;
+        UpdateFog();
+        _focus = Vector3.Zero;
+        _distance = 42;
+    }
+
     /// <summary>The build-range ring around my HQ.</summary>
     /// <summary>The build-range rings: round my HQ and each of my outposts (redrawn each frame: outposts come, go
     /// and grow their reach). They follow the ground.</summary>
@@ -595,6 +606,12 @@ public partial class Main : Node3D
         var groundMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/ground_fog.gdshader") };
         groundMat.SetShaderParameter("fog", _fogTexture);
         groundMat.SetShaderParameter("half_size", new Vector2(World.MapHalfX.ToFloat(), World.MapHalfZ.ToFloat()));
+        // The ground's noise, made once: seamless fractal value noise, 32 px a unit of the shader's p (it tiles every 16).
+        groundMat.SetShaderParameter("noise_tex", new NoiseTexture2D
+        {
+            Width = 512, Height = 512, Seamless = true, GenerateMipmaps = true,
+            Noise = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Value, Frequency = 1f / 32f, FractalType = FastNoiseLite.FractalTypeEnum.Fbm, FractalOctaves = 5, Seed = 7 },
+        });
         foreach (var soil in new[] { "dirt", "mud", "gravel", "scorched" })
             groundMat.SetShaderParameter(soil + "_tex", GD.Load<Texture2D>($"res://art/ground/{soil}.png"));
         AddChild(_terrain.BuildGround(groundMat));
@@ -1595,7 +1612,8 @@ public partial class Main : Node3D
             return b;
         }
         MenuButton("Resume  (Esc)", () => SetMenu(false));
-        _restartButton = MenuButton("Restart match", () => { SetMenu(false); StartMatch(new LocalSession((ulong)GD.Randi())); });
+        _restartButton = MenuButton("Restart match", () => { SetMenu(false); _noFog = false; StartMatch(new LocalSession((ulong)GD.Randi())); });
+        MenuButton("Skirmish: 5 v 5 hover tanks", () => { SetMenu(false); StartSkirmish(); });
         MenuButton("Quit to desktop", () => GetTree().Quit());
         panel.AddChild(column);
         centre.AddChild(panel);

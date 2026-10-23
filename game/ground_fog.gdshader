@@ -23,16 +23,17 @@ float hash(vec2 p) {
 	return float(n) * (1.0 / 4294967295.0);
 }
 
+// Noise from a seamless fractal noise texture made once at load (Main: FastNoiseLite, 512 px = 16 units of p), so a
+// pixel reads it instead of hashing dozens of lattice points (the user, 2026-10-23: "why is the performance so bad?":
+// the ground's per-pixel noise was most of a full-screen frame).
+uniform sampler2D noise_tex : filter_linear_mipmap, repeat_enable;
+
 float noise(vec2 p) {
-	vec2 i = floor(p), f = fract(p);
-	vec2 u = f * f * (3.0 - 2.0 * f);
-	return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+	return texture(noise_tex, p * 0.0625 + vec2(0.37, 0.71)).r;
 }
 
 float fbm(vec2 p) {
-	float s = 0.0, a = 0.5;
-	for (int i = 0; i < 5; i++) { s += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
-	return s;
+	return 0.47 + (texture(noise_tex, p * 0.0625).r - 0.5) * 0.7;   // (the texture is stretched to 0..1: narrowed to the old spread)
 }
 
 
@@ -127,11 +128,13 @@ void fragment() {
 	SPECULAR = mix(0.25, 0.5, wet);
 
 	// The light catches the small relief (world-space tilt, carried into view space: the mesh has no tangents).
-	// Off the soil itself (lighter reads as higher): stones and clods stand up from the ground.
-	float e = 0.05;
-	float dx = (bumps(p + vec2(e, 0.0)) * 0.3 + lum(texture(dirt_tex, (p + vec2(e, 0.0)) / 1.5).rgb) * 0.6 - bumps(p) * 0.3 - lum(texture(dirt_tex, p / 1.5).rgb) * 0.6) / e;
-	float dz = (bumps(p + vec2(0.0, e)) * 0.3 + lum(texture(dirt_tex, (p + vec2(0.0, e)) / 1.5).rgb) * 0.6 - bumps(p) * 0.3 - lum(texture(dirt_tex, p / 1.5).rgb) * 0.6) / e;
+	// Off the soil itself (lighter reads as higher): stones and clods stand up from the ground. The height's slope
+	// comes from the screen-space derivatives (one height per pixel, not three), bent into the normal.
 	float strength = 0.10 + rocky * 0.12 + stony * 0.1;
-	vec3 tilt = (VIEW_MATRIX * vec4(-dx * strength, 0.0, -dz * strength, 0.0)).xyz;
-	NORMAL = normalize(NORMAL + tilt);
+	float hgt = (bumps(p) * 0.3 + lum(texture(dirt_tex, p / 1.5).rgb) * 0.6) * strength;
+	vec3 dpdx = dFdx(VERTEX), dpdy = dFdy(VERTEX);
+	vec3 r1 = cross(dpdy, NORMAL), r2 = cross(NORMAL, dpdx);
+	float det = dot(dpdx, r1);
+	vec3 grad = sign(det) * (dFdx(hgt) * r1 + dFdy(hgt) * r2);
+	NORMAL = normalize(abs(det) * NORMAL - grad);
 }
