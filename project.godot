@@ -21,3 +21,4 @@ project/assembly_name="Battler"
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4

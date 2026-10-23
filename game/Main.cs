@@ -571,8 +571,10 @@ public partial class Main : Node3D
             ShadowEnabled = true,
             DirectionalShadowMaxDistance = 420f,        // the whole view at the widest zoom
             DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel4Splits,
-            LightAngularDistance = 0.6f,                // slightly soft shadow edges
-            ShadowBlur = 1.2f,
+            // Crisp shadow edges, smoothed by filtering only: a sun with size (angular distance) samples its soft
+            // edges with noise, which speckled the flat cel shaded hover tank (the user, 2026-10-23: "dark spots").
+            ShadowBlur = 1.0f,
+            ShadowNormalBias = 1.5f,
         });
         var fillFrom = new Vector3(1, 0.4f, 0.2f).Normalized();
         AddChild(new DirectionalLight3D
