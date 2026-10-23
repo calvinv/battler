@@ -875,7 +875,7 @@ public partial class Main : Node3D
     readonly HashSet<int> _rising = new();
 
     // ---- the modular base: wings plug into the HQ (the user, 2026-10-23: "can you make the main bases modular") ----
-    // Every wing spot on an HQ is a docking port on its wall; a finished wing is joined to its port by an armoured
+    // Every wing spot on an HQ, extractor or power plant is a docking port on its wall; a finished wing is joined to its port by an armoured
     // connector (art/units/connector.glb, 10 long in model units) stretched across the gap; empty ports stay capped.
 
     readonly Dictionary<(int Base, int Slot), Node3D> _ports = new();
@@ -894,7 +894,8 @@ public partial class Main : Node3D
         var wanted = new HashSet<int>();
         foreach (var b in W.Entities)
         {
-            if (b.Dead || b.Kind != Kind.Hq) continue;
+            if (b.Dead || !World.IsWingHost(b) || b.Building > 0) continue;
+            float wall = b.Kind == Kind.Hq ? HqWall : 1.3f;   // (an extractor's or power plant's deck)
             var centre = ToV3(b.Pos);
             for (int slot = 0; slot < World.SlotsOf(b); slot++)
             {
@@ -909,7 +910,7 @@ public partial class Main : Node3D
                     AddChild(port);
                     _ports[(b.Id, slot)] = port;
                 }
-                var at = centre + dir * HqWall;
+                var at = centre + dir * wall;
                 port.Position = at with { Y = _terrain.HeightAt(at.X, at.Z) };
                 port.Basis = Basis.LookingAt(dir, Vector3.Up);
                 port.Visible = wing == null && Shown(b);
@@ -923,7 +924,7 @@ public partial class Main : Node3D
                     _links[wing.Id] = link;
                 }
                 var wingAt = ToV3(wing.Pos);
-                float gap = (wingAt - centre).Dot(dir) - WingBack(BuildingModel(wing.Kind, wing.Makes, CivOf(wing.Owner))) - HqWall + 0.15f;
+                float gap = (wingAt - centre).Dot(dir) - WingBack(BuildingModel(wing.Kind, wing.Makes, CivOf(wing.Owner))) - wall + 0.15f;
                 link.Position = at with { Y = _terrain.HeightAt(at.X, at.Z) };
                 link.Basis = Basis.LookingAt(dir, Vector3.Up) * Basis.FromScale(new Vector3(1, 1, Mathf.Max(gap, 0.2f) / (10 * UnitArt.Scale)));
                 link.Visible = Shown(b) || Shown(wing);

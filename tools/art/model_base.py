@@ -3,7 +3,7 @@
 picks 2 = HQ core, 8 = hover bay, 11 = mech bay, 15 = wheel bay.) Same flat slate + team paint + warm lights as the
 units (model_hover.py). Each wing's door is a rig part ("door") the game slides up while a unit rolls out; parts named
 spin_* turn slowly (game/BuildingRig.cs).
-Names: hq factory_lighttank factory_ranger factory_tank connector port factory_mortar factory_artillery factory_mobilebase factory_air
+Names: hq factory_lighttank factory_ranger factory_tank connector port factory_mortar factory_artillery factory_mobilebase factory_air outpost extractor powerplant
 Run: blender --background --python tools/art/model_base.py -- hq"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -392,6 +392,95 @@ def factory_air():
     with part("spin_radar", (-7.5, 4.5, 11.0)):
         k.box(-7.7, -7.3, 3.0, 6.0, 11.0, 11.6, "mid")
     finish_toon("factory_air", 26.0)
+
+
+def outpost():
+    """Outpost (a mobile base set up in the field): a small hexagonal hub in two tiers, team bands, a light twin gun
+    on top facing out, a radar dish turning on a mast behind it, stabiliser legs braced out round it."""
+    k.begin(0.0)
+    base_slab(12.5, 0.6)
+    hexagon(0, 0, 10.0, 0.6, 4.5, "steel", r1=9.2, sides=6, turn=math.pi / 6)
+    hexagon(0, 0, 9.4, 4.5, 5.3, "plate", r1=7.6, sides=6, turn=math.pi / 6)
+    hexagon(0, 0, 7.2, 5.3, 7.4, "steel", r1=6.6, sides=6, turn=math.pi / 6)
+    for i in range(6):
+        t = i * math.tau / 6
+        c, d = math.cos(t), math.sin(t)
+        tube_between((c * 9.0, d * 9.0, 3.4), (c * 12.0, d * 12.0, 0.6), 0.5, "dark", 6)    # stabiliser legs
+        k.drum(c * 12.0, d * 12.0, 0.9, 0.6, 1.0, "plate", 8)
+        t2 = t + math.pi / 6
+        c2, d2 = math.cos(t2), math.sin(t2)
+        tube_between((c2 * 9.55 - d2 * 1.6, d2 * 9.55 + c2 * 1.6, 2.8), (c2 * 9.55 + d2 * 1.6, d2 * 9.55 - c2 * 1.6, 2.8), 0.3, "glow", 4)
+        tube_between((c2 * 8.3 - d2 * 2.0, d2 * 8.3 + c2 * 2.0, 4.9), (c2 * 8.3 + d2 * 2.0, d2 * 8.3 - c2 * 2.0, 4.9), 0.35, "paint", 4)
+    # The gun: a turret block with two short barrels, facing out (forward).
+    hexagon(1.0, 0, 3.0, 7.4, 8.6, "plate", r1=2.6, sides=8, turn=math.pi / 8)
+    plate(0.0, 3.0, -1.6, 1.6, 8.6, 10.0, "mid", inset=0.3, front=0.6)
+    for x in (-0.7, 0.7):
+        k.tube(3.0, 7.0, x, 9.3, 0.28, "dark", 10)
+        k.tube(6.6, 7.1, x, 9.3, 0.36, "dark", 10)
+    k.box(2.9, 3.0, -1.2, 1.2, 9.6, 9.8, "glow")
+    k.drum(-4.0, 0, 0.3, 7.4, 11.5, "dark", 6)
+    with part("spin_radar", (-4.0, 0, 11.5)):
+        k.drum(-4.0, 0, 0.6, 11.5, 12.0, "mid", 8)
+        k.box(-4.4, -3.6, -2.4, 2.4, 12.0, 13.2, "plate")
+        k.box(-3.62, -3.55, -2.0, 2.0, 12.3, 12.9, "glow")
+    finish_toon("outpost", 30.0)
+
+
+def extractor():
+    """Extractor: an octagonal deck over the deposit, a four-legged derrick tapering up over a glowing bore, a drill
+    head turning in it (spin_drill), two ore hoppers and a conveyor."""
+    k.begin(0.0)
+    base_slab(9.5, 0.6)
+    hexagon(0, 0, 7.6, 0.6, 2.2, "steel", r1=7.0, sides=8, turn=math.pi / 8)
+    k.drum(0, 0, 3.0, 2.2, 2.35, "glow", 20)                                               # the glowing bore
+    k.drum(0, 0, 2.4, 2.2, 2.4, "black", 20)
+    for c in ((1, 1), (1, -1), (-1, 1), (-1, -1)):                                          # the derrick legs
+        tube_between((c[0] * 3.6, c[1] * 3.6, 2.2), (c[0] * 1.0, c[1] * 1.0, 13.0), 0.35, "plate", 6)
+    for z, r in ((6.0, 2.85), (9.5, 1.95)):                                                  # cross bracing rings
+        hexagon(0, 0, r + 0.2, z, z + 0.4, "dark", sides=4, turn=math.pi / 4)
+    plate(-1.6, 1.6, -1.6, 1.6, 13.0, 14.0, "mid", inset=0.3)
+    k.box(-0.4, 0.4, -1.7, 1.7, 13.2, 13.8, "paint")
+    k.drum(0, 0, 0.3, 14.0, 15.2, "glow", 8)
+    with part("spin_drill", (0, 0, 2.4)):
+        k.drum(0, 0, 0.5, 2.4, 12.5, "dark", 8)
+        for z in (3.5, 6.0, 8.5, 11.0):
+            for i in range(3):
+                t = i * math.tau / 3 + z
+                tube_between((0, 0, z), (math.cos(t) * 1.3, math.sin(t) * 1.3, z + 0.6), 0.2, "mid", 6)
+    for x in (-5.0, 5.0):                                                                  # ore hoppers
+        k.drum(-4.0, x, 1.6, 2.2, 5.6, "steel", 8, r1=1.9)
+        k.drum(-4.0, x, 1.95, 5.6, 5.8, "paint", 8)
+        k.drum(-4.0, x, 1.6, 5.8, 5.85, "black", 8)
+    tube_between((-4.0, -5.0, 6.0), (-1.0, 0, 3.0), 0.4, "mid", 6)
+    tube_between((-4.0, 5.0, 6.0), (-1.0, 0, 3.0), 0.4, "mid", 6)
+    finish_toon("extractor", 24.0)
+
+
+def powerplant():
+    """Power plant on a vent: a round reactor drum ringed with glowing coils, two turbine fans turning in housings
+    on its top, heavy pipes down to the vent."""
+    k.begin(0.0)
+    base_slab(10.5, 0.6)
+    k.drum(0, 0, 7.4, 0.6, 3.0, "steel", 24, r1=7.0)
+    k.drum(0, 0, 6.8, 3.0, 8.5, "plate", 24, r1=6.2)
+    for z in (4.0, 5.6, 7.2):
+        k.drum(0, 0, 6.85 - (z - 3.0) * 0.11, z, z + 0.45, "glow", 24)
+    k.drum(0, 0, 6.3, 8.5, 9.2, "mid", 24, r1=5.6)
+    k.drum(0, 0, 7.15, 2.0, 2.6, "paint", 24)
+    for x in (-2.6, 2.6):                                                                  # fan housings
+        k.drum(0, x, 2.4, 9.2, 10.4, "dark", 16)
+        k.drum(0, x, 1.9, 10.4, 10.45, "black", 16)
+        with part("spin_fan" + ("L" if x > 0 else "R"), (0, x, 10.0)):
+            for i in range(5):
+                t = i * math.tau / 5
+                k.solid([(0, x, 9.95), (math.cos(t) * 1.85, x + math.sin(t) * 1.85, 9.95), (math.cos(t + 0.5) * 1.85, x + math.sin(t + 0.5) * 1.85, 9.95)],
+                        [(0, x, 10.15), (math.cos(t) * 1.85, x + math.sin(t) * 1.85, 10.15), (math.cos(t + 0.5) * 1.85, x + math.sin(t + 0.5) * 1.85, 10.15)], "mid")
+            k.drum(0, x, 0.4, 9.9, 10.3, "glow", 8)
+    for i in range(4):                                                                     # pipes to the vent
+        t = i * math.tau / 4 + math.pi / 4
+        c, d = math.cos(t), math.sin(t)
+        tube_between((c * 6.9, d * 6.9, 5.0), (c * 9.2, d * 9.2, 0.6), 0.6, "dark", 8)
+    finish_toon("powerplant", 26.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()
