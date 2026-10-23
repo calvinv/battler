@@ -20,14 +20,18 @@ public partial class Projectiles : Node3D
         public float Delay, Age, Flight, Arc, Thick, Length, SmokeDue;
         public Color Col;
         public Kind By;
-        public bool Burst, Sparks;
+        public bool Burst, Sparks, Trail, Ball;
     }
+
+    /// <summary>A beam joining muzzle and target for a moment (the hover tank's laser), thinning as it fades.</summary>
+    struct Beam { public Vector3 From, To; public float Age, Life, Width; public Color Core, Glow; }
 
     struct Flash { public Vector3 At; public float Age, Life, Size; public Color Col; }
 
     readonly List<Round> _rounds = new();
     readonly List<Flash> _flashes = new();
-    MultiMesh _roundMesh, _flashMesh;
+    readonly List<Beam> _beams = new();
+    MultiMesh _roundMesh, _flashMesh, _beamMesh;
     readonly RandomNumberGenerator _rng = new() { Seed = 7 };
 
     /// <summary>Somewhere to puff smoke and dirt (the vehicles' dust).</summary>
@@ -46,6 +50,22 @@ public partial class Projectiles : Node3D
         {
             Multimesh = _roundMesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             MaterialOverride = new StandardMaterial3D { VertexColorUseAsAlbedo = true, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
+        });
+
+        // Beams: cylinders stretched between their ends, added on (two per beam: a thin hot core, a wide soft glow).
+        _beamMesh = new MultiMesh
+        {
+            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, InstanceCount = 200, VisibleInstanceCount = 0,
+            Mesh = new CylinderMesh { TopRadius = 0.5f, BottomRadius = 0.5f, Height = 1f, RadialSegments = 8, Rings = 1 },
+        };
+        AddChild(new MultiMeshInstance3D
+        {
+            Multimesh = _beamMesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            MaterialOverride = new StandardMaterial3D
+            {
+                VertexColorUseAsAlbedo = true, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+            },
         });
 
         var soft = new GradientTexture2D
@@ -79,7 +99,15 @@ public partial class Projectiles : Node3D
         var hot = new Color(1f, 0.85f, 0.45f);
         switch (by)
         {
-            case Kind.Scout or Kind.Ranger:   // a short burst of light tracers
+            case Kind.Ranger:   // the mech's rifle: a quick rattle of four small bright tracers, little flashes, dirt where they land
+                for (int i = 0; i < 4; i++)
+                {
+                    var miss = new Vector3(_rng.RandfRange(-0.3f, 0.3f), _rng.RandfRange(-0.05f, 0.25f), _rng.RandfRange(-0.3f, 0.3f));
+                    Add(new Round { From = from, To = to + miss, Delay = i * 0.06f, Flight = dist / 85f, Thick = 0.06f, Length = 0.9f, Col = new Color(1f, 0.92f, 0.55f).Lerp(team, 0.15f) * 1.6f, By = by, Sparks = true });
+                    AddFlash(from, 0.55f, 0.05f, new Color(1f, 0.85f, 0.45f), i * 0.06f);
+                }
+                break;
+            case Kind.Scout:   // a short burst of light tracers
                 for (int i = 0; i < 3; i++)
                 {
                     var miss = new Vector3(_rng.RandfRange(-0.35f, 0.35f), _rng.RandfRange(-0.1f, 0.3f), _rng.RandfRange(-0.35f, 0.35f));
@@ -97,11 +125,14 @@ public partial class Projectiles : Node3D
                 AddFlash(from, 1.5f, 0.12f, new Color(1f, 0.6f, 0.25f));
                 Dust?.Add(from, new Vector3(0, 1f, 0), 0.6f, Smoke);
                 break;
-            case Kind.LightTank:   // the hover tank's laser: a long hot bolt, near instant, a bright flash at the emitter
+            case Kind.LightTank:   // the hover tank's laser: a beam joining emitter and target for a moment, sparks at the hit
             {
-                var beam = new Color(1f, 0.85f, 0.35f).Lerp(team, 0.25f) * 2.2f;   // over 1: it blooms
-                Add(new Round { From = from, To = to, Flight = dist / 160f, Thick = 0.08f, Length = Mathf.Min(dist * 0.7f, 5f), Col = beam, By = by, Sparks = true });
-                AddFlash(from, 0.7f, 0.07f, new Color(1f, 0.9f, 0.5f));
+                if (_beams.Count < 90)
+                    _beams.Add(new Beam { From = from, To = to, Life = 0.22f, Width = 0.13f, Core = new Color(1f, 0.97f, 0.8f) * 1.6f, Glow = new Color(1f, 0.75f, 0.3f).Lerp(team, 0.6f) });
+                AddFlash(from, 1.0f, 0.12f, new Color(1f, 0.9f, 0.55f));
+                AddFlash(to, 1.3f, 0.16f, new Color(1f, 0.8f, 0.45f));
+                for (int i = 0; i < 4; i++) AddFlash(to + new Vector3(_rng.RandfRange(-0.4f, 0.4f), _rng.RandfRange(0f, 0.5f), _rng.RandfRange(-0.4f, 0.4f)), 0.3f, 0.2f + i * 0.04f, new Color(1f, 0.7f, 0.3f));
+                Dust?.Add(to, Vector3.Up * 0.6f, 0.4f, Smoke);
                 break;
             }
             case Kind.Flier:   // a quick light round
@@ -125,7 +156,22 @@ public partial class Projectiles : Node3D
                 AddFlash(from, 1.8f, 0.12f, new Color(1f, 0.6f, 0.2f));
                 Dust?.Add(from, new Vector3(0, 0.6f, 0), 0.5f, Smoke);
                 break;
-            default:   // tanks, towers, outposts, the HQ: one fast shell
+            case Kind.Tank:   // the battle wheel's cannon: a big glowing ball on a slight arc trailing smoke, a ring of smoke at the muzzle
+            {
+                Add(new Round { From = from, To = to, Flight = 0.12f + dist / 38f, Arc = dist * 0.06f, Thick = 0.65f, Length = 0.65f, Col = new Color(1f, 0.6f, 0.22f) * 2f, By = by, Trail = true, Ball = true });
+                AddFlash(from, 2.4f, 0.14f, new Color(1f, 0.7f, 0.3f));
+                var aim = (to - from) with { Y = 0 };
+                aim = aim.LengthSquared() > 1e-4f ? aim.Normalized() : Vector3.Forward;
+                var across = aim.Cross(Vector3.Up);
+                for (int i = 0; i < 8; i++)   // the ring: puffs thrown out round the muzzle, drifting forward
+                {
+                    float t = i * Mathf.Tau / 8;
+                    var outward = across * Mathf.Cos(t) + Vector3.Up * Mathf.Sin(t);
+                    Dust?.Add(from + outward * 0.25f, outward * 1.6f + aim * 1.2f, 0.55f, Smoke);
+                }
+                break;
+            }
+            default:   // towers, outposts, the HQ: one fast shell
                 float thick = by == Kind.Outpost ? 0.1f : 0.16f;
                 Add(new Round { From = from, To = to, Flight = dist / 45f, Thick = thick, Length = 2.2f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, by == Kind.Outpost ? 0.9f : 1.6f, 0.1f, new Color(1f, 0.75f, 0.35f));
@@ -143,7 +189,7 @@ public partial class Projectiles : Node3D
         if (_flashes.Count < MaxFlashes) _flashes.Add(new Flash { At = at, Size = size, Life = life, Col = col, Age = -delay });
     }
 
-    public void Clear() { _rounds.Clear(); _flashes.Clear(); Redraw(); }
+    public void Clear() { _rounds.Clear(); _flashes.Clear(); _beams.Clear(); Redraw(); }
 
     public override void _Process(double delta) => Advance((float)delta);
 
@@ -156,12 +202,19 @@ public partial class Projectiles : Node3D
             if (r.Delay > 0) { r.Delay -= dt; _rounds[i] = r; continue; }
             r.Age += dt;
             if (r.Age >= r.Flight) { Land(r); _rounds[i] = _rounds[^1]; _rounds.RemoveAt(_rounds.Count - 1); continue; }
-            if (r.Burst && (r.SmokeDue -= dt) <= 0)   // a thin smoke trail behind the shell
+            if ((r.Burst || r.Trail) && (r.SmokeDue -= dt) <= 0)   // a thin smoke trail behind the shell
             {
-                r.SmokeDue = 0.05f;
+                r.SmokeDue = r.Trail ? 0.03f : 0.05f;
                 Dust?.Add(At(r, r.Age / r.Flight), Vector3.Up * 0.2f, 0.35f, Smoke);
             }
             _rounds[i] = r;
+        }
+        for (int i = _beams.Count - 1; i >= 0; i--)
+        {
+            var b = _beams[i];
+            b.Age += dt;
+            if (b.Age >= b.Life) { _beams[i] = _beams[^1]; _beams.RemoveAt(_beams.Count - 1); continue; }
+            _beams[i] = b;
         }
         for (int i = _flashes.Count - 1; i >= 0; i--)
         {
@@ -184,6 +237,14 @@ public partial class Projectiles : Node3D
             AddFlash(r.To + Vector3.Up * big, 6f * big, 0.25f, new Color(1f, 0.55f, 0.2f));
             for (int i = 0; i < (r.By == Kind.Mortar ? 4 : 8); i++)   // dirt thrown up
                 Dust?.Add(r.To, new Vector3(_rng.RandfRange(-2.5f, 2.5f), _rng.RandfRange(2f, 4.5f), _rng.RandfRange(-2.5f, 2.5f)), _rng.RandfRange(0.9f, 1.6f), new Color(0.38f, 0.32f, 0.25f));
+        }
+        else if (r.Ball)   // the cannonball hits: a hot flash, a fireball, dirt and smoke thrown up
+        {
+            AddFlash(r.To + Vector3.Up * 0.5f, 3.4f, 0.22f, new Color(1f, 0.6f, 0.2f));
+            AddFlash(r.To + Vector3.Up * 0.8f, 1.8f, 0.4f, new Color(1f, 0.45f, 0.12f));
+            for (int i = 0; i < 6; i++)
+                Dust?.Add(r.To, new Vector3(_rng.RandfRange(-1.8f, 1.8f), _rng.RandfRange(1.5f, 3.2f), _rng.RandfRange(-1.8f, 1.8f)), _rng.RandfRange(0.7f, 1.2f), new Color(0.38f, 0.32f, 0.25f));
+            Dust?.Add(r.To, Vector3.Up * 1.2f, 1.1f, Smoke);
         }
         else if (r.Sparks)
         {
@@ -219,6 +280,27 @@ public partial class Projectiles : Node3D
             n++;
         }
         _roundMesh.VisibleInstanceCount = n;
+
+        n = 0;
+        foreach (var b in _beams)
+        {
+            float t = b.Age / b.Life, fade = 1f - t * t;
+            var dir = b.To - b.From;
+            float len = dir.Length();
+            if (len < 1e-3f) continue;
+            dir /= len;
+            var side = Mathf.Abs(dir.Y) > 0.95f ? Vector3.Right : Vector3.Up;
+            var basis = Basis.LookingAt(dir, side) * new Basis(Vector3.Right, Mathf.Pi / 2);   // the cylinder's Y onto the beam
+            var mid = (b.From + b.To) * 0.5f;
+            foreach (var (w, col) in new[] { (b.Width * (1.2f - 0.7f * t), b.Core), (b.Width * (4f - 2f * t), b.Glow * 0.6f) })
+            {
+                if (n >= 200) break;
+                _beamMesh.SetInstanceTransform(n, new Transform3D(new Basis(basis.X * w, basis.Y * len, basis.Z * w), mid));
+                _beamMesh.SetInstanceColor(n, new Color(col.R, col.G, col.B, fade));
+                n++;
+            }
+        }
+        _beamMesh.VisibleInstanceCount = n;
 
         n = 0;
         foreach (var f in _flashes)
