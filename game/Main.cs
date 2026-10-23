@@ -450,7 +450,7 @@ public partial class Main : Node3D
         foreach (var v in _views.Values) v.QueueFree();
         foreach (var v in _ports.Values.Concat(_links.Values)) v.QueueFree();
         _ports.Clear(); _links.Clear(); _buildingRigs.Clear(); _wingTimer.Clear(); _wingCounting.Clear(); _rigs.Clear();
-        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
+        _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear(); _rollOut.Clear();
         _proj?.Clear(); _booms?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
         ClearFieldViews();
         _session = session;
@@ -1005,16 +1005,29 @@ public partial class Main : Node3D
             ghost.Name = kind.ToString();
             AddChild(ghost);
             _ghosts[f.Id] = ghost;
-            // At the wing's door, facing out, where the sim rolls the unit out (World.DoorOf, without its little spread).
+            // At the wing's door, facing out, where the sim rolls the unit out (World.DoorOf, without its little spread);
+            // a wing with a bay builds it in its open doorway instead, and it drives out when done.
             var dir = W.Find(f.BaseId) is { } home && home != f ? f.Pos - home.Pos : W.Players[1 - f.Owner].HqPos - f.Pos;
+            var face = DoorFace(BuildingModel(f.Kind, f.Makes, CivOf(f.Owner)));
             dir = dir.WithLength(f.Stats.Radius + World.StatsFor[(int)kind].Radius + 1);
-            ghost.Position = ToV3(f.Pos + dir);
+            var flat = new Vector3(dir.X.ToFloat(), 0, dir.Z.ToFloat()).Normalized();
+            ghost.Position = face is float inBay ? ToV3(f.Pos) + flat * inBay : ToV3(f.Pos + dir);
             ghost.Basis = Basis.LookingAt(new Vector3(dir.X.ToFloat(), 0, dir.Z.ToFloat()).Normalized(), Vector3.Up);
         }
         ghost.Visible = Shown(f) && W.Started && W.Winner < 0 && f.Building == 0;
         int total = World.IsUtility(f) ? World.StatsFor[(int)kind].BuildTicks : World.BuildTicksOf(f);
         UnitArt.SetBuilt(ghost, 1f - f.Timer / (float)total);
     }
+
+    /// <summary>A wing with a bay (model_base.py): how far its door is in front of its centre, world units. Its units
+    /// are built in the doorway and drive out. Null: built outside the door.</summary>
+    static float? DoorFace(string model) => model switch
+    {
+        "factory_lighttank" => 0.45f, "factory_ranger" => 0.7f, "factory_tank" => 1.75f, _ => null,
+    };
+
+    readonly Dictionary<int, (Vector3 From, Vector3 Dir, float Age)> _rollOut = new();   // units driving out of their bay
+    const float RollOutTime = 1.1f;
 
     readonly Dictionary<int, Node3D> _flags = new();
     ImmediateMesh _rallyLine;
@@ -1222,12 +1235,27 @@ public partial class Main : Node3D
                 if (e.Stats.IsUnit && UnitRig.Find(view, e.Id) is { } newRig) _rigs[e.Id] = newRig;
                 if (!e.Stats.IsUnit && e.Building == 0 && BuildingRig.Find(view) is { } bRig) _buildingRigs[e.Id] = bRig;
                 if (e.Stats.IsUnit && _buildingRigs.TryGetValue(e.FactoryId, out var maker)) maker.Made();   // (its wing's door is open for it)
+                if (e.Stats.IsUnit && W.Find(e.FactoryId) is { Kind: Kind.Factory } bay && DoorFace(BuildingModel(bay.Kind, bay.Makes, CivOf(bay.Owner))) is float inBay
+                    && _ghosts.TryGetValue(bay.Id, out var formed))
+                {
+                    var outward = (ToV3(e.Pos) - ToV3(bay.Pos)) with { Y = 0 };
+                    outward = outward.LengthSquared() > 1e-4f ? outward.Normalized() : Vector3.Forward;
+                    _rollOut[e.Id] = (formed.Position, outward, 0f);   // from where it was formed, out to where it stands
+                    _facing[e.Id] = outward;
+                }
             }
             if (_rising.Contains(e.Id))
                 UnitArt.SetBuilt(view, 1f - e.Building / (float)World.ConstructionTicks(e.Kind));
             var cur = ToV3(e.Pos);
             var prev = _prevPos.TryGetValue(e.Id, out var p) ? p : cur;
             var pos = prev.Lerp(cur, alpha);
+            if (_rollOut.TryGetValue(e.Id, out var roll))   // driving out of its bay
+            {
+                roll.Age += W.Paused ? 0 : _frameDt;
+                float t = Mathf.Clamp(roll.Age / RollOutTime, 0, 1);
+                pos = roll.From.Lerp(pos, t * t * (3 - 2 * t));
+                if (t >= 1) _rollOut.Remove(e.Id); else _rollOut[e.Id] = roll;
+            }
             float walkBob = 0;
             if (e.Stats.IsUnit)
             {
@@ -1305,7 +1333,9 @@ public partial class Main : Node3D
                     if (e.Timer < last) _wingCounting.Add(e.Id); else _wingCounting.Remove(e.Id);
                 }
                 _wingTimer[e.Id] = e.Timer;
-                bool soon = e.Kind == Kind.Factory && _wingCounting.Contains(e.Id) && e.Timer <= World.TicksPerSecond * 1.2f;
+                // A bay's door stands open while a unit is being built in it; a wing without one opens just before.
+                bool bayed = DoorFace(BuildingModel(e.Kind, e.Makes, CivOf(e.Owner))) != null;
+                bool soon = e.Kind == Kind.Factory && _wingCounting.Contains(e.Id) && (bayed || e.Timer <= World.TicksPerSecond * 1.2f);
                 bRigNow.Update(W.Paused ? 0 : _frameDt, soon);
             }
         }
@@ -1316,6 +1346,7 @@ public partial class Main : Node3D
             _views.Remove(id);
             _rigs.Remove(id);
             _buildingRigs.Remove(id);
+            _rollOut.Remove(id);
             _wingTimer.Remove(id);
             _wingCounting.Remove(id);
             _drawnAt.Remove(id);

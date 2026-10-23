@@ -143,7 +143,7 @@ public partial class Main
         foreach (var (kind, m) in making)
         {
             var tick = (1 - m.Best) * World.StatsFor[(int)kind].BuildTicks;
-            list.Add(new Queued(ModelOf(kind), m.Best, m.Factories > 1 ? "x" + m.Factories : "",
+            list.Add(new Queued(UnitModel(kind, civ), m.Best, m.Factories > 1 ? "x" + m.Factories : "",
                 full ? "army full" : $"{Mathf.CeilToInt(tick / tps)} s", m.Id, full ? BarStuck : BarMake,
                 $"{NameOf(kind)}: {m.Factories} factor{(m.Factories > 1 ? "ies" : "y")} making them"));
         }

@@ -48,12 +48,13 @@ public sealed class BuildingRig
     /// <summary>A unit has just come out: the door stays open a moment for it, then closes.</summary>
     public void Made() => _sinceMade = 0;
 
-    /// <summary>One frame. `soon`: a unit is about to be finished, so the door opens ready.</summary>
+    /// <summary>One frame. `soon`: a unit is on the way, so the door opens ready (after letting the last one out, it
+    /// shuts for a moment between them).</summary>
     public void Update(float dt, bool soon)
     {
         if (dt <= 0) return;
         _sinceMade += dt;
-        bool open = soon || _sinceMade < 1.6f;
+        bool open = _sinceMade < 1.2f || (soon && _sinceMade > 2.4f);
         _open = Mathf.MoveToward(_open, open ? 1f : 0f, dt * (open ? 1.6f : 1.1f));
         if (_door != null)
         {
