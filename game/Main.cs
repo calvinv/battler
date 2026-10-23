@@ -1065,7 +1065,9 @@ public partial class Main : Node3D
             var from = at + Vector3.Up * MuzzleOf(s.By) + dir * BarrelOf(s.By);
             if (_rigs.TryGetValue(s.ShooterId, out var shooter))   // a rigged unit: the barrel kicks, the shot leaves its muzzle
             {
-                shooter.Fire();
+                float? yaw = null;
+                if (_facing.TryGetValue(s.ShooterId, out var hull)) yaw = hull.SignedAngleTo(dir, Vector3.Up);
+                shooter.Fire(yaw);
                 if (shooter.Muzzle != null && shooter.Muzzle.IsInsideTree()) from = shooter.Muzzle.GlobalPosition;
             }
             var target = W.Find(s.TargetId);

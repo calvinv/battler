@@ -37,7 +37,7 @@ public sealed class UnitRig
     static readonly Basis Carry = new Basis(Vector3.Up, 0.95f) * new Basis(Vector3.Right, -0.45f);   // across the chest, muzzle up and to its left
     static readonly Vector3 CarryShift = new(0.15f, 0.55f, -0.7f);                                     // drawn in and up, model units
 
-    const float TurretTurn = 2.2f;      // radians a second
+    const float TurretTurn = 4f;      // radians a second
     const float Kick = 0.9f;            // how far the barrel slides back, model units
 
     UnitRig(float phase) => _phase = phase;
@@ -191,7 +191,17 @@ public sealed class UnitRig
     }
 
     /// <summary>It fired: the barrel kicks back and the body rocks.</summary>
-    public void Fire() => _recoil = 1f;
+    /// <summary>The gun fires: the barrel kicks, and a turret that hasn't swung round yet snaps onto `aimYaw` (radians
+    /// from straight ahead) so the shot leaves along its barrel.</summary>
+    public void Fire(float? aimYaw = null)
+    {
+        _recoil = 1f;
+        if (_turret != null && aimYaw is float y)
+        {
+            _yaw = y;
+            _turret.Rotation = new Vector3(0, _yaw, 0);
+        }
+    }
 
     /// <summary>One frame. `moved`: world distance driven since the last frame. `aimYaw`: the turret's wanted turn
     /// from straight ahead (radians, about up), or null to bring it home.</summary>
