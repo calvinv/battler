@@ -116,6 +116,7 @@ public partial class Main : Node3D
         }
         else if (args.Contains("--lineup")) { BuildLineup(); return; }
         else if (args.Contains("--reel")) { BuildReel(); return; }
+        else if (args.Contains("--base")) StartShowcase();
         else if (args.IndexOf("--skirmish") is int sk and >= 0) StartSkirmish(sk + 1 < args.Count && !args[sk + 1].StartsWith("-") ? args[sk + 1] : "tanks");
         else StartMatch(new LocalSession((ulong)GD.Randi()));
 
@@ -462,6 +463,28 @@ public partial class Main : Node3D
 
     /// <summary>A straight fight in the middle of the map, fog lifted, the camera on it: "tanks" (5 hover tanks a side),
     /// "mechs" (5 rifle mechs) or "mixed" (both).</summary>
+    /// <summary>The base on show (--base): my HQ with a hover bay, a mech bay and a wheel bay already up, their first
+    /// units a few seconds apart so each door opens in turn; no opponent moving.</summary>
+    void StartShowcase()
+    {
+        StartMatch(new SkirmishSession((ulong)GD.Randi(), System.Array.Empty<(Kind, int)>()));
+        var hq = W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+        if (hq == null) return;
+        var makes = new[] { Kind.LightTank, Kind.Ranger, Kind.Tank };
+        for (int i = 0; i < makes.Length; i++)
+        {
+            var wing = W.Spawn(Kind.Factory, 0, World.WingSpot(hq, i), makes[i]);
+            wing.BaseId = hq.Id;
+            wing.Slot = i;
+            wing.Building = 0;   // (already up)
+            wing.Timer = (3 + i * 4) * World.TicksPerSecond;
+        }
+        _noFog = true;
+        UpdateFog();
+        _focus = ToV3(hq.Pos) + TowardEnemy(0) * 3;
+        _distance = 26;
+    }
+
     void StartSkirmish(string lineup = "tanks")
     {
         var groups = lineup switch
@@ -819,6 +842,9 @@ public partial class Main : Node3D
 
     /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
     readonly Dictionary<int, UnitRig> _rigs = new();
+    readonly Dictionary<int, BuildingRig> _buildingRigs = new();   // buildings with moving parts: wing doors, the HQ's eye
+    readonly Dictionary<int, int> _wingTimer = new();               // each wing's build timer as last drawn
+    readonly HashSet<int> _wingCounting = new();                    // wings whose timer is counting down
     readonly Dictionary<int, Vector3> _drawnAt = new();
 
     Node3D MakeView(Entity e)
@@ -1131,6 +1157,8 @@ public partial class Main : Node3D
                 AddChild(view);
                 _views[e.Id] = view;
                 if (e.Stats.IsUnit && UnitRig.Find(view, e.Id) is { } newRig) _rigs[e.Id] = newRig;
+                if (!e.Stats.IsUnit && e.Building == 0 && BuildingRig.Find(view) is { } bRig) _buildingRigs[e.Id] = bRig;
+                if (e.Stats.IsUnit && _buildingRigs.TryGetValue(e.FactoryId, out var maker)) maker.Made();   // (its wing's door is open for it)
             }
             if (_rising.Contains(e.Id))
                 UnitArt.SetBuilt(view, 1f - e.Building / (float)World.ConstructionTicks(e.Kind));
@@ -1205,12 +1233,27 @@ public partial class Main : Node3D
             if (e.Kind == Kind.Factory) UpdateCogs(e, view, _frameDt);
             if (e.Kind is Kind.Factory or Kind.Hq) UpdateRallyFlag(e);
             if (e.Kind == Kind.Factory) UpdateBuildGhost(e);
+            if (_buildingRigs.TryGetValue(e.Id, out var bRigNow))
+            {
+                // A wing's door opens in the last second of a unit's build (only while it is counting down: at the
+                // army cap its timer is held full).
+                if (_wingTimer.TryGetValue(e.Id, out var last) && e.Timer != last)
+                {
+                    if (e.Timer < last) _wingCounting.Add(e.Id); else _wingCounting.Remove(e.Id);
+                }
+                _wingTimer[e.Id] = e.Timer;
+                bool soon = e.Kind == Kind.Factory && _wingCounting.Contains(e.Id) && e.Timer <= World.TicksPerSecond * 1.2f;
+                bRigNow.Update(W.Paused ? 0 : _frameDt, soon);
+            }
         }
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
             _views[id].QueueFree();
             _views.Remove(id);
             _rigs.Remove(id);
+            _buildingRigs.Remove(id);
+            _wingTimer.Remove(id);
+            _wingCounting.Remove(id);
             _drawnAt.Remove(id);
             _prevPos.Remove(id);
             _facing.Remove(id);
