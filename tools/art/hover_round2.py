@@ -41,26 +41,31 @@ def pixelate(img, across=64, colours=20):
     return small.resize(img.size, Image.Resampling.NEAREST)
 
 
-args = sys.argv[1:]
-seed = int(args[args.index("--seed") + 1]) if "--seed" in args else 301
-TRIES, S = 4, 300
-font = ImageFont.truetype("arialbd.ttf", 18)
-rows = [(k, l, w, px) for k, l, w in SCHEMES for px in (False, True)]
-sheet = Image.new("RGB", (190 + S * TRIES, 40 + S * len(rows)), (14, 14, 20))
-d = ImageDraw.Draw(sheet)
-d.text((12, 8), "HOVER LIGHT TANK (FLUX): turret on the rear edge, empty front deck; each also as 64 px pixel art", font=font, fill=(255, 240, 200))
-for r, (key, label, colours, px) in enumerate(rows):
-    d.text((10, 40 + r * S + S // 2 - 10), label + ("  PIXELS" if px else ""), font=font, fill=(255, 255, 255))
-    for c in range(TRIES):
-        path = os.path.join(OUT, "hover2_%s_%d_s%d.png" % (key, c, seed))
-        if not os.path.exists(path):
-            fluxgen.image("%s %s %s" % (WHAT, colours, STYLE), seed + c).convert("RGB").save(path)
-            print("done", key, c, flush=True)
-        img = Image.open(path).convert("RGB")
-        if px:
-            pxpath = path.replace(".png", "_px.png")
-            img = pixelate(img)
-            img.save(pxpath)
-        sheet.paste(img.resize((S, S), Image.Resampling.NEAREST if px else Image.Resampling.LANCZOS), (190 + c * S, 40 + r * S))
-sheet.save(os.path.join(OUT, "hover2_sheet_s%d.png" % seed))
-print("sheet", os.path.abspath(os.path.join(OUT, "hover2_sheet_s%d.png" % seed)))
+def main():
+    args = sys.argv[1:]
+    seed = int(args[args.index("--seed") + 1]) if "--seed" in args else 301
+    TRIES, S = 4, 300
+    font = ImageFont.truetype("arialbd.ttf", 18)
+    rows = [(k, l, w, px) for k, l, w in SCHEMES for px in (False, True)]
+    sheet = Image.new("RGB", (190 + S * TRIES, 40 + S * len(rows)), (14, 14, 20))
+    d = ImageDraw.Draw(sheet)
+    d.text((12, 8), "HOVER LIGHT TANK (FLUX): turret on the rear edge, empty front deck; each also as 64 px pixel art", font=font, fill=(255, 240, 200))
+    for r, (key, label, colours, px) in enumerate(rows):
+        d.text((10, 40 + r * S + S // 2 - 10), label + ("  PIXELS" if px else ""), font=font, fill=(255, 255, 255))
+        for c in range(TRIES):
+            path = os.path.join(OUT, "hover2_%s_%d_s%d.png" % (key, c, seed))
+            if not os.path.exists(path):
+                fluxgen.image("%s %s %s" % (WHAT, colours, STYLE), seed + c).convert("RGB").save(path)
+                print("done", key, c, flush=True)
+            img = Image.open(path).convert("RGB")
+            if px:
+                pxpath = path.replace(".png", "_px.png")
+                img = pixelate(img)
+                img.save(pxpath)
+            sheet.paste(img.resize((S, S), Image.Resampling.NEAREST if px else Image.Resampling.LANCZOS), (190 + c * S, 40 + r * S))
+    sheet.save(os.path.join(OUT, "hover2_sheet_s%d.png" % seed))
+    print("sheet", os.path.abspath(os.path.join(OUT, "hover2_sheet_s%d.png" % seed)))
+
+
+if __name__ == "__main__":
+    main()
