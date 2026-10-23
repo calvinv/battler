@@ -65,6 +65,7 @@ public partial class Main : Node3D
     readonly Dictionary<int, Vector3> _facing = new();
     readonly Dictionary<int, (int Target, int Until)> _aim = new();   // per shooter: what it last fired at, and until which tick it keeps facing it
     Projectiles _proj;
+    Explosions _booms;
     Tracks _tracks;
     Forest _forest;
     bool _watchFelled, _felledFocused;
@@ -131,6 +132,7 @@ public partial class Main : Node3D
                 StepWorld();
                 FadeBlasts((float)TickLength);
                 _proj.Advance((float)TickLength);
+                _booms?.Advance((float)TickLength);
             }
             _focus = Vector3.Zero;
             _distance = 60;
@@ -446,7 +448,7 @@ public partial class Main : Node3D
     {
         foreach (var v in _views.Values) v.QueueFree();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
-        _proj?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
+        _proj?.Clear(); _booms?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
         ClearFieldViews();
         _session = session;
         _me = session.LocalPlayer;
@@ -685,7 +687,9 @@ public partial class Main : Node3D
         AddChild(_tracks);
         _dust = new Dust();
         AddChild(_dust);
-        _proj = new Projectiles { Dust = _dust };
+        _booms = new Explosions { Dust = _dust, GroundAt = (x, z) => _terrain.HeightAt(x, z) };
+        AddChild(_booms);
+        _proj = new Projectiles { Dust = _dust, Booms = _booms };
         _proj.OnShellLands = (at, by) => { if (SeenAt(at)) Blast(at, World.StatsFor[(int)by].Splash.ToFloat()); };
         AddChild(_proj);
         _rallyLine = new ImmediateMesh();
@@ -1648,7 +1652,7 @@ public partial class Main : Node3D
         _menuNote.Text = local ? "The battle is stopped." : "A LAN match can't stop here: it plays on.\nP calls one of your tactical pauses.";
         // Shells, dust and tread marks hold still with the battle.
         var effects = MenuHoldsGame ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
-        foreach (Node n in new Node[] { _dust, _proj, _tracks }) if (n != null) n.ProcessMode = effects;
+        foreach (Node n in new Node[] { _dust, _proj, _booms, _tracks }) if (n != null) n.ProcessMode = effects;
     }
 
     // ---- input -------------------------------------------------------------------------------

@@ -40,6 +40,8 @@ public partial class Projectiles : Node3D
     public Dust Dust;
     /// <summary>Called when an artillery shell lands, for the big blast.</summary>
     public System.Action<Vector3, Kind> OnShellLands;
+    /// <summary>Where impact explosions play (the cannonball's).</summary>
+    public Explosions Booms;
 
     public override void _Ready()
     {
@@ -257,11 +259,12 @@ public partial class Projectiles : Node3D
         }
         else if (r.Ball)   // the cannonball hits: a hot flash, a fireball, dirt and smoke thrown up
         {
-            AddFlash(r.To + Vector3.Up * 0.5f, 3.4f, 0.22f, new Color(1f, 0.6f, 0.2f));
-            AddFlash(r.To + Vector3.Up * 0.8f, 1.8f, 0.4f, new Color(1f, 0.45f, 0.12f));
-            for (int i = 0; i < 6; i++)
-                Dust?.Add(r.To, new Vector3(_rng.RandfRange(-1.8f, 1.8f), _rng.RandfRange(1.5f, 3.2f), _rng.RandfRange(-1.8f, 1.8f)), _rng.RandfRange(0.7f, 1.2f), new Color(0.38f, 0.32f, 0.25f));
-            Dust?.Add(r.To, Vector3.Up * 1.2f, 1.1f, Smoke);
+            if (Booms != null)   // (on the near face of what it hit, not inside it)
+            {
+                var back = (r.From - r.To) with { Y = 0 };
+                Booms.Boom(r.To + (back.LengthSquared() > 1e-4f ? back.Normalized() * 1.1f : Vector3.Zero) + Vector3.Up * 0.3f);
+            }
+            else AddFlash(r.To + Vector3.Up * 0.5f, 3.4f, 0.22f, new Color(1f, 0.6f, 0.2f));
         }
         else if (r.Sparks)
         {
