@@ -3,7 +3,7 @@
 picks 2 = HQ core, 8 = hover bay, 11 = mech bay, 15 = wheel bay.) Same flat slate + team paint + warm lights as the
 units (model_hover.py). Each wing's door is a rig part ("door") the game slides up while a unit rolls out; parts named
 spin_* turn slowly (game/BuildingRig.cs).
-Names: hq factory_lighttank factory_ranger factory_tank
+Names: hq factory_lighttank factory_ranger factory_tank connector port
 Run: blender --background --python tools/art/model_base.py -- hq"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -212,6 +212,52 @@ def factory_tank():
     for s in (1, -1):
         light_bar(-1.0, 1.0, *sorted((s * 8.9, s * 9.05)), 1.6, 2.2)
     finish_toon("factory_tank", 26.0)
+
+
+def connector():
+    """A wing's link to its base (the user, 2026-10-23: "make the main bases modular": wings snap onto the HQ): an
+    armoured corridor 10 long from a = 0 (the base end) to a = 10 (the wing end), ribbed, a team stripe and two
+    conduits along its roof, lit strips down its sides, glowing chevrons pointing out toward the wing. The game
+    stretches it to the gap."""
+    k.begin(0.0)
+    k.box(0, 10, -2.7, 2.7, 0.0, 0.5, "mid")
+    plate(0, 10, -2.3, 2.3, 0.5, 3.6, "steel", inset=0.45, front=0.0, back=0.0)
+    for a in (0.0, 3.3, 6.6, 9.4):                                                         # ribs
+        plate(a, a + 0.6, -2.55, 2.55, 0.5, 3.85, "plate", inset=0.5, front=0.0, back=0.0)
+    k.box(0, 10, -0.5, 0.5, 3.6, 3.7, "paint")
+    for x in (-1.2, 1.2):
+        tube_between((0, x, 3.85), (10, x, 3.85), 0.28, "dark", 8)
+    for s in (1, -1):
+        k.box(0.8, 9.2, *sorted((s * 2.27, s * 2.33)), 1.6, 1.85, "glow")
+    for a in (1.6, 4.9, 8.0):                                                              # chevrons on the roof
+        for s in (1, -1):
+            k.solid([(a, 0, 3.72), (a + 0.6, 0, 3.72), (a - 0.4, s * 0.9, 3.72), (a - 1.0, s * 0.9, 3.72)],
+                    [(a, 0, 3.8), (a + 0.6, 0, 3.8), (a - 0.4, s * 0.9, 3.8), (a - 1.0, s * 0.9, 3.8)], "glow")
+    finish_toon("connector", 14.0)
+
+
+def port():
+    """An empty docking port on a base's wall: a short stub of the connector's corridor standing out from the wall,
+    capped with a big hatch framed in hazard bars and a lamp each side, waiting for a wing."""
+    k.begin(0.0)
+    k.box(0, 5.0, -2.9, 2.9, 0.0, 0.5, "mid")
+    plate(0, 4.2, -2.3, 2.3, 0.5, 3.6, "steel", inset=0.45, front=0.0, back=0.0)
+    plate(1.4, 2.0, -2.55, 2.55, 0.5, 3.85, "plate", inset=0.5, front=0.0, back=0.0)
+    k.box(0, 4.2, -0.5, 0.5, 3.6, 3.7, "paint")
+    for x in (-1.2, 1.2):
+        tube_between((0, x, 3.85), (4.2, x, 3.85), 0.28, "dark", 8)
+    # The cap: a collar bigger than the corridor, a round hatch in it, hazard bars round the hatch.
+    plate(4.0, 5.0, -2.9, 2.9, 0.5, 4.4, "plate", inset=0.2, front=0.15, back=0.0)
+    k.tube(4.95, 5.15, 0, 2.3, 1.45, "dark", 20)
+    k.tube(5.15, 5.25, 0, 2.3, 1.15, "black", 20)
+    k.box(5.2, 5.3, -0.08, 0.08, 1.2, 3.4, "dark")
+    for i in range(8):
+        t = i * math.tau / 8 + math.pi / 8
+        c, d = math.cos(t), math.sin(t)
+        k.box(4.98, 5.08, c * 1.75 - 0.22, c * 1.75 + 0.22, 2.3 + d * 1.75 - 0.22, 2.3 + d * 1.75 + 0.22, "paint" if i % 2 else "glow")
+    for s_ in (1, -1):
+        k.box(4.9, 5.2, s_ * 2.4 - 0.25, s_ * 2.4 + 0.25, 3.9, 4.6, "glow")
+    finish_toon("port", 12.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()

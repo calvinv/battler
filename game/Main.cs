@@ -448,6 +448,8 @@ public partial class Main : Node3D
     void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
+        foreach (var v in _ports.Values.Concat(_links.Values)) v.QueueFree();
+        _ports.Clear(); _links.Clear(); _buildingRigs.Clear(); _wingTimer.Clear(); _wingCounting.Clear(); _rigs.Clear();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear();
         _proj?.Clear(); _booms?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
         ClearFieldViews();
@@ -471,7 +473,8 @@ public partial class Main : Node3D
         var hq = W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
         if (hq == null) return;
         var makes = new[] { Kind.LightTank, Kind.Ranger, Kind.Tank };
-        for (int i = 0; i < makes.Length; i++)
+        int count = int.TryParse(OS.GetEnvironment("BASE_WINGS"), out var bw) ? Mathf.Clamp(bw, 0, makes.Length) : makes.Length;   // (fewer: empty ports show)
+        for (int i = 0; i < count; i++)
         {
             var wing = W.Spawn(Kind.Factory, 0, World.WingSpot(hq, i), makes[i]);
             wing.BaseId = hq.Id;
@@ -483,6 +486,7 @@ public partial class Main : Node3D
         UpdateFog();
         _focus = ToV3(hq.Pos) + TowardEnemy(0) * 3;
         _distance = 26;
+        if (float.TryParse(OS.GetEnvironment("BASE_YAW"), out var turn)) _yaw = Mathf.DegToRad(turn);   // (a turned view)
     }
 
     void StartSkirmish(string lineup = "tanks")
@@ -866,7 +870,66 @@ public partial class Main : Node3D
         return building;
     }
 
-    readonly HashSet<int> _rising = new();   // buildings drawn as a hologram while they go up
+    readonly HashSet<int> _rising = new();
+
+    // ---- the modular base: wings plug into the HQ (the user, 2026-10-23: "can you make the main bases modular") ----
+    // Every wing spot on an HQ is a docking port on its wall; a finished wing is joined to its port by an armoured
+    // connector (art/units/connector.glb, 10 long in model units) stretched across the gap; empty ports stay capped.
+
+    readonly Dictionary<(int Base, int Slot), Node3D> _ports = new();
+    readonly Dictionary<int, Node3D> _links = new();   // by wing
+    const float HqWall = 2.3f;                          // world units from an HQ's centre to where a port sits
+
+    /// <summary>How far a wing's back wall is behind its centre (world units), where its connector meets it.</summary>
+    static float WingBack(string model) => model switch
+    {
+        "factory_lighttank" => 1.5f, "factory_ranger" => 0.85f, "factory_tank" => 1.55f, _ => 1.55f,
+    };
+
+    void UpdateDocks()
+    {
+        var wanted = new HashSet<int>();
+        foreach (var b in W.Entities)
+        {
+            if (b.Dead || b.Kind != Kind.Hq) continue;
+            var centre = ToV3(b.Pos);
+            for (int slot = 0; slot < World.SlotsOf(b); slot++)
+            {
+                var dir = (ToV3(World.WingSpot(b, slot)) - centre) with { Y = 0 };
+                if (dir.LengthSquared() < 1e-4f) continue;
+                dir = dir.Normalized();
+                var wing = W.Entities.Find(w => !w.Dead && w.Kind == Kind.Factory && w.BaseId == b.Id && w.Slot == slot);
+                // The port: capped while the spot is empty.
+                if (!_ports.TryGetValue((b.Id, slot), out var port))
+                {
+                    port = UnitArt.Make("port", TeamColor[b.Owner]);
+                    AddChild(port);
+                    _ports[(b.Id, slot)] = port;
+                }
+                var at = centre + dir * HqWall;
+                port.Position = at with { Y = _terrain.HeightAt(at.X, at.Z) };
+                port.Basis = Basis.LookingAt(dir, Vector3.Up);
+                port.Visible = wing == null && Shown(b);
+                if (wing == null) continue;
+                // The connector, from the HQ's wall to the wing's back wall.
+                wanted.Add(wing.Id);
+                if (!_links.TryGetValue(wing.Id, out var link))
+                {
+                    link = UnitArt.Make("connector", TeamColor[b.Owner]);
+                    AddChild(link);
+                    _links[wing.Id] = link;
+                }
+                var wingAt = ToV3(wing.Pos);
+                float gap = (wingAt - centre).Dot(dir) - WingBack(BuildingModel(wing.Kind, wing.Makes, CivOf(wing.Owner))) - HqWall + 0.15f;
+                link.Position = at with { Y = _terrain.HeightAt(at.X, at.Z) };
+                link.Basis = Basis.LookingAt(dir, Vector3.Up) * Basis.FromScale(new Vector3(1, 1, Mathf.Max(gap, 0.2f) / (10 * UnitArt.Scale)));
+                link.Visible = Shown(b) || Shown(wing);
+            }
+            foreach (var key in _ports.Keys.Where(k => k.Base == b.Id && k.Slot >= World.SlotsOf(b)).ToList()) { _ports[key].QueueFree(); _ports.Remove(key); }
+        }
+        foreach (var key in _ports.Keys.Where(k => W.Find(k.Base) is not { Dead: false }).ToList()) { _ports[key].QueueFree(); _ports.Remove(key); }
+        foreach (var id in _links.Keys.Where(id => !wanted.Contains(id)).ToList()) { _links[id].QueueFree(); _links.Remove(id); }
+    }   // buildings drawn as a hologram while they go up
 
     // ---- production cogs: one brass cog over a factory per production upgrade, spinning ------------------------
 
@@ -1246,6 +1309,7 @@ public partial class Main : Node3D
                 bRigNow.Update(W.Paused ? 0 : _frameDt, soon);
             }
         }
+        UpdateDocks();
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
             _views[id].QueueFree();
