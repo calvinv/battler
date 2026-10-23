@@ -473,6 +473,8 @@ public partial class Main : Node3D
         var hq = W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
         if (hq == null) return;
         var makes = new[] { Kind.LightTank, Kind.Ranger, Kind.Tank };
+        if (OS.GetEnvironment("BASE_MAKES") is { Length: > 0 } list)   // other wings: BASE_MAKES=Mortar,Artillery,Flier
+            makes = list.Split(',').Select(n => System.Enum.Parse<Kind>(n.Trim(), true)).Take(World.SlotsOf(hq)).ToArray();
         int count = int.TryParse(OS.GetEnvironment("BASE_WINGS"), out var bw) ? Mathf.Clamp(bw, 0, makes.Length) : makes.Length;   // (fewer: empty ports show)
         for (int i = 0; i < count; i++)
         {
@@ -883,7 +885,8 @@ public partial class Main : Node3D
     /// <summary>How far a wing's back wall is behind its centre (world units), where its connector meets it.</summary>
     static float WingBack(string model) => model switch
     {
-        "factory_lighttank" => 1.5f, "factory_ranger" => 0.85f, "factory_tank" => 1.55f, _ => 1.55f,
+        "factory_lighttank" => 1.5f, "factory_ranger" => 0.85f, "factory_tank" => 1.55f,
+        "factory_mortar" => 1.3f, "factory_artillery" => 1.65f, "factory_mobilebase" => 1.4f, "factory_air" => 1.65f, _ => 1.55f,
     };
 
     void UpdateDocks()
@@ -1023,7 +1026,8 @@ public partial class Main : Node3D
     /// are built in the doorway and drive out. Null: built outside the door.</summary>
     static float? DoorFace(string model) => model switch
     {
-        "factory_lighttank" => 0.45f, "factory_ranger" => 0.7f, "factory_tank" => 1.75f, _ => null,
+        "factory_lighttank" => 0.45f, "factory_ranger" => 0.7f, "factory_tank" => 1.75f,
+        "factory_mortar" => 0.45f, "factory_artillery" => 0.45f, _ => null,
     };
 
     readonly Dictionary<int, (Vector3 From, Vector3 Dir, float Age)> _rollOut = new();   // units driving out of their bay

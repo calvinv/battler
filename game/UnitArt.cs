@@ -15,7 +15,8 @@ public static class UnitArt
     static ShaderMaterial _outline;
 
     /// <summary>Models in the cel shaded look (tools/art/model_hover.py): toon light bands and an ink outline.</summary>
-    static readonly HashSet<string> Toon = new() { "hovertank", "mech", "battlewheel", "hq", "factory_lighttank", "factory_ranger", "factory_tank", "connector", "port" };
+    static readonly HashSet<string> Toon = new() { "hovertank", "mech", "battlewheel", "hq", "factory_lighttank", "factory_ranger", "factory_tank", "connector", "port",
+                                                          "factory_mortar", "factory_artillery", "factory_mobilebase", "factory_air" };
     static readonly Dictionary<(string, Color), ShaderMaterial> Materials = new();
 
     public static Node3D Make(string name, Color team)

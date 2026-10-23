@@ -3,7 +3,7 @@
 picks 2 = HQ core, 8 = hover bay, 11 = mech bay, 15 = wheel bay.) Same flat slate + team paint + warm lights as the
 units (model_hover.py). Each wing's door is a rig part ("door") the game slides up while a unit rolls out; parts named
 spin_* turn slowly (game/BuildingRig.cs).
-Names: hq factory_lighttank factory_ranger factory_tank connector port
+Names: hq factory_lighttank factory_ranger factory_tank connector port factory_mortar factory_artillery factory_mobilebase factory_air
 Run: blender --background --python tools/art/model_base.py -- hq"""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
@@ -258,6 +258,140 @@ def port():
     for s_ in (1, -1):
         k.box(4.9, 5.2, s_ * 2.4 - 0.25, s_ * 2.4 + 0.25, 3.9, 4.6, "glow")
     finish_toon("port", 12.0)
+
+
+def bay_hall(back, front, half, high, door_half, door_high, roof=True):
+    """A wing's hall with a bay: foundation, walls, a thick roof overhanging the front, a door frame with team bars,
+    a dark bay inside, a light along its top, the shutter door (a rig part). Returns the roof height."""
+    plate(back - 0.6, front + 0.4, -half - 0.6, half + 0.6, 0.0, 0.6, "mid", inset=0.3)
+    plate(back, front, -half, half, 0.6, high, "steel", inset=0.3, front=0.0, back=0.8)
+    top = high
+    if roof:
+        plate(back - 0.3, front + 0.6, -half - 0.3, half + 0.3, high, high + 1.2, "plate", inset=0.5, front=0.0, back=0.6)
+        top = high + 1.2
+    k.box(front - 2.5, front + 0.2, -door_half, door_half, 0.6, door_high, "black")
+    k.box(front - 2.4, front - 2.2, -door_half + 0.4, door_half - 0.4, door_high - 0.7, door_high - 0.4, "glow")
+    for s_ in (1, -1):
+        plate(front - 1.0, front + 0.6, *sorted((s_ * door_half, s_ * (door_half + 2.0))), 0.6, high, "plate", inset=0.15)
+        z = 1.5
+        while z < door_high - 0.5:
+            k.box(front + 0.6, front + 0.68, *sorted((s_ * (door_half + 0.2), s_ * (door_half + 1.4))), z, z + 0.5, "paint")
+            z += 1.5
+    wing_door(front + 0.2, -door_half, door_half, 0.6, door_high)
+    for s_ in (1, -1):
+        light_bar(back + 1.5, back + 5.0, *sorted((s_ * half, s_ * (half + 0.1))), high * 0.6, high * 0.6 + 0.6)
+    return top
+
+
+def pad(a0, a1, half):
+    """A lit apron in front of a bay, landing marks in team paint."""
+    k.box(a0, a1, -half, half, 0.6, 0.7, "dark")
+    for s_ in (1, -1):
+        k.box(a0 + 0.4, a1 - 0.4, s_ * (half - 0.3) - 0.15, s_ * (half - 0.3) + 0.15, 0.7, 0.75, "glass_lit")
+        a = a0 + 1.4
+        while a < a1 - 1.0:
+            k.box(a - 0.5, a + 0.5, s_ * (half * 0.45) - 0.12, s_ * (half * 0.45) + 0.12, 0.7, 0.75, "paint")
+            a += 2.4
+
+
+def factory_mortar():
+    """Mortar bay: a squat square bay, and on its roof a rack of three stubby launch tubes tilted up and out,
+    ammunition bins beside them."""
+    k.begin(0.0)
+    top = bay_hall(-7.5, 2.5, 7.0, 6.2, 5.4, 5.6)
+    pad(2.5, 9.0, 5.6)
+    plate(-6.5, 0.5, -5.0, 5.0, top, top + 0.8, "mid", inset=0.4)
+    for x in (-2.6, 0.0, 2.6):
+        base = (-3.4, x, top + 0.8)
+        tip = (-0.6, x, top + 5.0)
+        tube_between(base, tip, 1.0, "dark", 14)
+        mid = ((base[0] + tip[0]) / 2, x, (base[2] + tip[2]) / 2)
+        tube_between((mid[0] - 0.2, x, mid[2] - 0.3), (mid[0] + 0.2, x, mid[2] + 0.3), 1.15, "paint", 14)
+        tube_between(tip, (tip[0] + 0.18, x, tip[2] + 0.27), 0.75, "black", 14)
+    for x in (-5.0, 4.0):
+        plate(-6.0, -4.0, x, x + 1.2, top + 0.8, top + 2.0, "plate", inset=0.15)
+        k.box(-5.6, -4.4, x + 0.2, x + 1.0, top + 2.0, top + 2.08, "glow")
+    finish_toon("factory_mortar", 22.0)
+
+
+def factory_artillery():
+    """Artillery works: a long low hall, and over its pad a tall gantry crane on two legs with a long gun barrel
+    slung under its beam, lamps on the legs."""
+    k.begin(0.0)
+    top = bay_hall(-9.5, 2.5, 7.0, 6.6, 5.4, 6.0)
+    pad(2.5, 10.0, 5.6)
+    for x in (-3.5, 0.0, 3.5):
+        k.box(-8.0, -2.0, x - 0.8, x + 0.8, top, top + 0.5, "dark")
+    for s_ in (1, -1):
+        plate(8.6, 9.8, *sorted((s_ * 6.4, s_ * 7.6)), 0.6, 11.0, "plate", inset=0.2)
+        k.box(9.85, 9.95, *sorted((s_ * 6.7, s_ * 7.3)), 3.0, 9.0, "glow")
+    for s_ in (1, -1):                                                                     # rails back over the roof
+        plate(-4.0, 10.4, *sorted((s_ * 6.4, s_ * 7.6)), 11.0, 12.0, "steel", inset=0.15, front=0.0, back=0.0)
+    plate(8.6, 9.8, -7.6, 7.6, 11.0, 12.4, "steel", inset=0.2)                             # the crossbeam
+    for x in (-4.0, 0.0, 4.0):
+        k.box(9.8, 9.9, x - 0.9, x + 0.9, 11.4, 12.0, "paint")
+    plate(0.6, 2.2, -7.6, 7.6, 11.0, 12.0, "plate", inset=0.15)                            # a trolley beam
+    for (a0, x0) in ((1.0, -0.6),):
+        k.box(a0, a0 + 0.8, x0, x0 + 1.2, 9.9, 11.0, "mid")
+    tube_between((1.0, 0, 9.4), (9.5, 0, 9.4), 0.55, "dark", 12)
+    tube_between((8.6, 0, 9.4), (9.9, 0, 9.4), 0.7, "mid", 12)
+    for a in (2.5, 7.0):
+        tube_between((a, 0, 10.0), (a, 0, 11.0), 0.12, "black", 6)
+    finish_toon("factory_artillery", 26.0)
+
+
+def factory_mobilebase():
+    """Utility yard: a wide low garage with three doors (the mobile bases are too big for a bay: they roll out of
+    the yard), a crane turning over the yard, a radio mast, stacked supply crates."""
+    k.begin(0.0)
+    plate(-8.5, 10.5, -9.0, 9.0, 0.0, 0.6, "mid", inset=0.3)
+    plate(-8.0, -1.0, -8.5, 8.5, 0.6, 6.0, "steel", inset=0.3, back=0.8, front=0.0)
+    plate(-8.3, -0.7, -8.8, 8.8, 6.0, 7.0, "plate", inset=0.4, front=0.0)
+    for x in (-4.5, 0.0, 4.5):
+        k.box(-1.3, -0.9, x - 1.8, x + 1.8, 0.6, 4.6, "dark")
+        for z in (1.2, 2.2, 3.2):
+            k.box(-0.9, -0.85, x - 1.6, x + 1.6, z, z + 0.15, "black")
+        k.box(-0.95, -0.85, x - 1.8, x + 1.8, 4.6, 4.9, "paint")
+    pad(-1.0, 9.5, 7.0)
+    for i, (a, x, z) in enumerate(((6.6, -7.8, 0.6), (8.2, -7.8, 0.6), (7.4, -7.8, 2.0), (6.6, 6.4, 0.6))):
+        plate(a, a + 1.4, x, x + 1.4, z, z + 1.4, "plate" if i % 2 else "mid", inset=0.1)
+        k.box(a + 0.3, a + 1.1, x + 1.4, x + 1.45, z + 0.5, z + 0.9, "paint")
+    with part("spin_crane", (-3.0, 5.0, 7.0)):
+        k.drum(-3.0, 5.0, 1.0, 7.0, 8.2, "mid", 10)
+        tube_between((-3.0, 5.0, 8.0), (5.5, 5.0, 10.0), 0.45, "plate", 8)
+        tube_between((5.3, 5.0, 9.9), (5.3, 5.0, 6.5), 0.08, "black", 4)
+        k.box(4.9, 5.7, 4.6, 5.4, 6.0, 6.5, "glow")
+    k.drum(-6.5, -6.5, 0.2, 7.0, 13.0, "dark", 6)
+    k.drum(-6.5, -6.5, 0.4, 13.0, 13.4, "glow", 6)
+    finish_toon("factory_mobilebase", 28.0)
+
+
+def factory_air():
+    """Air pad: a raised octagonal landing deck with a ring of lights, a team circle and an H, a hangar block behind
+    it with a control cab and a turning radar, fuel tanks."""
+    k.begin(0.0)
+    hexagon(1.5, 0, 8.6, 0.0, 1.4, "plate", r1=8.0, sides=8, turn=math.pi / 8)
+    hexagon(1.5, 0, 7.6, 1.4, 1.5, "dark", sides=8, turn=math.pi / 8)
+    k.drum(1.5, 0, 5.2, 1.5, 1.56, "paint", 32)
+    k.drum(1.5, 0, 4.5, 1.5, 1.58, "dark", 32)
+    for x in (-1.6, 1.6):
+        k.box(-0.2, 3.2, x - 0.3, x + 0.3, 1.58, 1.62, "white")
+    k.box(1.2, 1.8, -1.6, 1.6, 1.58, 1.62, "white")
+    for i in range(8):
+        t = i * math.tau / 8
+        k.drum(1.5 + math.cos(t) * 6.9, math.sin(t) * 6.9, 0.3, 1.5, 1.75, "glow", 6)
+    plate(-9.5, -5.0, -6.5, 6.5, 0.0, 5.0, "steel", inset=0.3)
+    k.box(-5.4, -5.0, -4.5, 4.5, 0.6, 4.0, "black")
+    plate(-9.0, -6.0, 3.0, 6.0, 5.0, 8.5, "plate", inset=0.3)
+    k.box(-6.3, -5.9, 3.4, 5.6, 6.6, 7.6, "glass_lit")
+    k.box(-9.2, -5.4, -6.2, 6.2, 4.2, 4.6, "paint")
+    for x in (-4.6, -2.4):
+        k.drum(-10.8, x, 1.0, 0.0, 3.4, "mid", 12)
+        k.drum(-10.8, x, 1.05, 2.4, 2.7, "paint", 12)
+    k.drum(-7.5, 4.5, 0.15, 8.5, 11.0, "dark", 6)
+    with part("spin_radar", (-7.5, 4.5, 11.0)):
+        k.box(-7.7, -7.3, 3.0, 6.0, 11.0, 11.6, "mid")
+    finish_toon("factory_air", 26.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()
