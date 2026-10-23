@@ -19,6 +19,7 @@ public sealed class UnitRig
     CpuParticles3D _smoke;
     float _roll, _spin, _recoil, _yaw, _lean, _speed, _time;
     readonly float _phase;
+    bool _hover;
 
     const float TurretTurn = 2.2f;      // radians a second
     const float Kick = 0.9f;            // how far the barrel slides back, model units
@@ -31,6 +32,8 @@ public sealed class UnitRig
         var rig = new UnitRig(seed * 1.7f);
         Walk(view, rig);
         if (rig._wheels.Count == 0 && rig._turret == null) return null;
+        rig._hover = rig._wheels.Count == 0;      // no wheels: it floats
+        if (rig._hover) rig.AddHoverGlow(view);
         if (rig._barrel != null) rig._barrelRest = rig._barrel.Position;
         if (rig._body != null) rig._bodyRest = rig._body.Position;
         if (rig._exhaust != null) rig.AddSmoke(view);
@@ -123,6 +126,29 @@ public sealed class UnitRig
         return _dot = ImageTexture.CreateFromImage(img);
     }
 
+    MeshInstance3D _glow;
+
+    /// <summary>A soft cyan pool of light on the ground under a hover unit, pulsing a little with its bob.</summary>
+    void AddHoverGlow(Node3D view)
+    {
+        var mat = new StandardMaterial3D
+        {
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            AlbedoColor = new Color(0.35f, 0.9f, 1f, 0.55f),
+            AlbedoTexture = SoftDot(),
+        };
+        _glow = new MeshInstance3D
+        {
+            Mesh = new PlaneMesh { Size = new Vector2(2.2f, 2.8f) },
+            MaterialOverride = mat,
+            Position = new Vector3(0, 0.04f, 0),
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+        view.AddChild(_glow);
+    }
+
     /// <summary>It fired: the barrel kicks back and the body rocks.</summary>
     public void Fire() => _recoil = 1f;
 
@@ -160,9 +186,19 @@ public sealed class UnitRig
             _barrel.Position = _barrelRest - new Vector3(0, 0, Kick * k);
         }
 
+        // A hover unit floats: a slow bob, its nose lifting as it pulls away and dipping as it stops, a sway.
+        if (_body != null && _hover)
+        {
+            float lean = Mathf.Clamp(-accel * 0.02f, -0.1f, 0.1f) - _recoil * _recoil * 0.06f;
+            _lean = Mathf.Lerp(_lean, lean, Mathf.Min(1, dt * 4));
+            float bob = Mathf.Sin(_time * 2.1f + _phase) * 0.18f + Mathf.Sin(_time * 3.7f + _phase * 2) * 0.06f;
+            _body.Position = _bodyRest + new Vector3(0, bob, 0);
+            _body.Rotation = new Vector3(_lean, 0, Mathf.Sin(_time * 1.6f + _phase) * 0.025f);
+            if (_glow != null) _glow.Scale = Vector3.One * (1f - bob * 0.4f);
+        }
         // The body on its springs: leans back when it pulls away, dips when it brakes, rocks when it fires,
         // shudders with the engine and bumps over the ground while driving.
-        if (_body != null)
+        else if (_body != null)
         {
             float lean = Mathf.Clamp(-accel * 0.012f, -0.06f, 0.06f) - _recoil * _recoil * 0.05f;
             _lean = Mathf.Lerp(_lean, lean, Mathf.Min(1, dt * 6));

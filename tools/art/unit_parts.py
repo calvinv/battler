@@ -135,7 +135,7 @@ def _tag_parts():
             d.value = v
 
 
-def _export_rig(name, folder):
+def _export_rig(name, folder, outline=False):
     """<name>_rig.glb: the finished model cut into its parts (same UVs, same texture), each with its origin at its
     pivot and parented as RIG says, plus the MARKS as empties. The game animates the parts by name."""
     import bpy, bmesh
@@ -159,6 +159,12 @@ def _export_rig(name, folder):
         bm.to_mesh(me)
         bm.free()
         me.materials.clear()
+        if outline:      # (smoothed normals for the game's ink outline, as a colour: glTF axes, 0..1)
+            col = me.color_attributes.new("outline", "FLOAT_COLOR", "POINT")
+            for v in me.vertices:
+                n = v.normal
+                col.data[v.index].color = (n.x * 0.5 + 0.5, n.z * 0.5 + 0.5, -n.y * 0.5 + 0.5, 1.0)
+            me.color_attributes.active_color = col
         ob = bpy.data.objects.new(pname, me)
         bpy.context.scene.collection.objects.link(ob)
         made[pname] = (ob, p)
@@ -180,9 +186,21 @@ def _export_rig(name, folder):
     bpy.ops.object.select_all(action="DESELECT")
     for ob, _ in made.values():
         ob.select_set(True)
+    extra = {"export_vertex_color": "ACTIVE"} if outline else {}
     bpy.ops.export_scene.gltf(filepath="%s/%s_rig.glb" % (folder, name), use_selection=True, export_format="GLB",
-                              export_materials="NONE", export_normals=True, export_texcoords=True, export_yup=True)
+                              export_materials="NONE", export_normals=True, export_texcoords=True, export_yup=True, **extra)
     print("%s: rig with %s" % (name, ", ".join(names[1:] + [m[0] for m in MARKS])))
+
+
+def finish_toon(name, span, folder=None, bevel=0.05):
+    """For the cel shaded look (game/toon_unit.gdshader): bevelled, flat colours with only the tightest creases
+    shaded (no weathering), then the rig with smoothed normals for the ink outline (always written, even with no
+    moving parts, so the game draws it as a toon model)."""
+    folder = folder or UNITS
+    finish_detailed(name, span, folder, bevel=bevel, ao_reach=0.25)
+    if not RIG and not MARKS:
+        mark("centre", (0, 0, 0))
+    _export_rig(name, folder, outline=True)
 
 
 def hlathe(x, z, profile, mat, sides=32):
@@ -233,7 +251,7 @@ def wlathe(a, z, profile, mat, sides=32, caps=True):
     return ob
 
 
-def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
+def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0, ao_reach=0.9):
     """k.finish, but first every piece's sharp edges are bevelled: a narrow chamfer on each edge sharper than `angle`
     degrees, so edges catch the light instead of every box meeting at a knife line. Thin pieces are left alone where
     the chamfer would eat them (clamped). Prints the triangle count, to keep an eye on the cost."""
@@ -252,7 +270,7 @@ def finish_detailed(name, span, folder=None, bevel=0.09, angle=35.0):
     import bpy
     if bpy.context.scene.world is None:
         bpy.context.scene.world = bpy.data.worlds.new("bake_world")
-    bpy.context.scene.world.light_settings.distance = 0.9
+    bpy.context.scene.world.light_settings.distance = ao_reach
     _tag_parts()
     tris = sum(len(p.vertices) - 2 for ob in k.pieces for p in ob.data.polygons)
     print("%s: %d triangles" % (name, tris))

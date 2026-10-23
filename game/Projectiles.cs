@@ -97,7 +97,14 @@ public partial class Projectiles : Node3D
                 AddFlash(from, 1.5f, 0.12f, new Color(1f, 0.6f, 0.25f));
                 Dust?.Add(from, new Vector3(0, 1f, 0), 0.6f, Smoke);
                 break;
-            case Kind.LightTank or Kind.Flier:   // a quick light round
+            case Kind.LightTank:   // the hover tank's laser: a long hot bolt, near instant, a bright flash at the emitter
+            {
+                var beam = new Color(1f, 0.85f, 0.35f).Lerp(team, 0.25f) * 2.2f;   // over 1: it blooms
+                Add(new Round { From = from, To = to, Flight = dist / 160f, Thick = 0.08f, Length = Mathf.Min(dist * 0.7f, 5f), Col = beam, By = by, Sparks = true });
+                AddFlash(from, 0.7f, 0.07f, new Color(1f, 0.9f, 0.5f));
+                break;
+            }
+            case Kind.Flier:   // a quick light round
                 Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));
                 break;

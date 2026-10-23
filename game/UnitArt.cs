@@ -11,7 +11,11 @@ public static class UnitArt
 {
     public const float Scale = 0.18f;   // a tank is about 2.9 world units long
 
-    static Shader _teamShader;
+    static Shader _teamShader, _toonShader;
+    static ShaderMaterial _outline;
+
+    /// <summary>Models in the cel shaded look (tools/art/model_hover.py): toon light bands and an ink outline.</summary>
+    static readonly HashSet<string> Toon = new() { "hovertank" };
     static readonly Dictionary<(string, Color), ShaderMaterial> Materials = new();
 
     public static Node3D Make(string name, Color team)
@@ -22,10 +26,13 @@ public static class UnitArt
         model.Scale = Vector3.One * Scale;
         if (!Materials.TryGetValue((name, team), out var mat))
         {
+            bool toon = Toon.Contains(name);
             _teamShader ??= GD.Load<Shader>("res://game/team_paint.gdshader");
-            mat = new ShaderMaterial { Shader = _teamShader };
+            _toonShader ??= GD.Load<Shader>("res://game/toon_unit.gdshader");
+            mat = new ShaderMaterial { Shader = toon ? _toonShader : _teamShader };
             mat.SetShaderParameter("skin", GD.Load<Texture2D>($"res://art/units/{name}.png"));
             mat.SetShaderParameter("team", team);
+            if (toon) mat.NextPass = _outline ??= new ShaderMaterial { Shader = GD.Load<Shader>("res://game/toon_outline.gdshader") };
             Materials[(name, team)] = mat;
         }
         foreach (var mesh in Meshes(model)) mesh.MaterialOverride = mat;

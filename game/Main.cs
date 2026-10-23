@@ -258,6 +258,7 @@ public partial class Main : Node3D
     float _reelT = -1, _reelSpeed, _reelHeading;
     Vector3 _reelPos;
     int _reelShots;
+    bool _reelHovers;
     static readonly float[] ReelFireAt = { 1.9f, 4.9f, 6.0f, 8.6f };
 
     void BuildReel()
@@ -270,11 +271,12 @@ public partial class Main : Node3D
         _reelUnit = UnitArt.Make(name, TeamColor[0]);
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
+        _reelHovers = name == "hovertank";
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
         _focus = _reelPos;
-        _distance = 24;
+        _distance = float.TryParse(OS.GetEnvironment("REEL_DIST"), out var rd) ? rd : 24;
         _reelT = 0;
     }
 
@@ -300,7 +302,7 @@ public partial class Main : Node3D
         if (_reelSpeed > 0.05f)
         {
             _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
-            _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
+            if (!_reelHovers) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
         }
         if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
         {
@@ -309,7 +311,8 @@ public partial class Main : Node3D
             var from = _reelRig?.Muzzle?.GlobalPosition ?? _reelPos + Vector3.Up;
             _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, Kind.LightTank, TeamColor[0]);
         }
-        _focus = _focus.Lerp(_reelPos * 0.7f + _reelTarget.Position * 0.3f, Mathf.Min(1, dt * 2));
+        float follow = _distance < 18 ? 0.9f : 0.7f;   // (close up: keep the unit in the middle)
+        _focus = _focus.Lerp(_reelPos * follow + _reelTarget.Position * (1 - follow), Mathf.Min(1, dt * 2));
     }
 
     public override void _ExitTree()
@@ -755,7 +758,8 @@ public partial class Main : Node3D
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
     /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
-    static string UnitModel(Kind k, Civ civ) => civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
+    static string UnitModel(Kind k, Civ civ) => k == Kind.LightTank ? "hovertank"      // (the cel shaded hover tank, being explored: the user, 2026-10-23)
+        : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
     /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
@@ -1106,11 +1110,12 @@ public partial class Main : Node3D
                 {
                     float r = e.Stats.Radius.ToFloat();
                     bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger, flies = e.Stats.Flying;
+                    bool hovers = e.Kind == Kind.LightTank;   // (the hover tank: dust blown up, no tread marks, trees left standing)
                     if (!flies) _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
                     // Tread marks under each track (the scout's wheels leave thinner, fainter ones; walkers and fliers none).
-                    if (!legs && !flies) _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
+                    if (!legs && !flies && !hovers) _tracks.Drive(e.Id, pos, flat.Normalized(), r * 0.55f, r * (wheels ? 0.3f : 0.48f), wheels ? 0.7f : 1f);
                     // Trees in the way go over (the scout hovers, walkers step and fliers fly, so they slip between them).
-                    if (!wheels && !legs && !flies) _forest.Trample(pos, flat.Normalized(), r);
+                    if (!wheels && !legs && !flies && !hovers) _forest.Trample(pos, flat.Normalized(), r);
                 }
                 // Face where it's going; standing still, face what it's shooting at. It swings round, not snaps.
                 var face = _facing.TryGetValue(e.Id, out var f) ? f : TowardEnemy(e.Owner);
