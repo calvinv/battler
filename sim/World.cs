@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -15,6 +15,11 @@ public enum Resource { Metal, Sulfur }
 /// <summary>What a factory fits its units with. Napalm needs sulfur: hits do a quarter less, but leave the ground
 /// burning (World.Fires).</summary>
 public enum Fitting { Standard, Napalm }
+
+/// <summary>What a module does for the wings after it on its line (the user, 2026-10-23: "I want this to be like a
+/// rube goldberg machine ... armoury upgrade, then whatever comes after has more firepower. the modules should be speed,
+/// armour, attack, build speed, energy cost, wildcards"). Stat modules stack; the wildcards change what comes out.</summary>
+public enum Mod { Speed, Armour, Attack, Build, Energy, Twin, Napalm, Shield, Magnet }
 
 public sealed class Stats
 {
@@ -82,6 +87,11 @@ public sealed class Entity
     public int Building;               // a building: ticks until it's finished (World.ConstructionTicks); it does nothing till then
     public Fitting Fitting;    // a factory: what it fits its units with; a unit: what it was made with
     public bool Enhanced;      // a unit made by a wing on a sulfur extractor: hits harder and sets fires
+    public Mod Mod;            // a module: what it does
+    public int Link;           // a wing or module: how far along its line it sits (0 against the host)
+    public readonly int[] Mods = new int[World.ModCount];   // a wing: the modules before it on its line, by Mod; a unit: its wing's when it was made
+    public int Shield;         // a unit from behind a shield coil: damage it soaks before its health
+    public int Made;           // a wing: units it has made (the twin feed doubles every few)
 
     public int Level(Upgrade u) => Levels[(int)u];
 
@@ -401,6 +411,8 @@ public sealed class World
                 Splash = Fix.Ratio(25, 10), Damage = 45, Reload = 60, Flying = true, Explosive = true, BuildTicks = 40 * TicksPerSecond },
         // Power plant: a diesel generator house on a power vent; it powers the wings.
         new() { Armoured = true, MaxHp = 700, Radius = Fix.Ratio(18, 10), Vision = 8 },
+        // Module: a link in a line of the base; the wings after it get what it does (Mod).
+        new() { Armoured = true, MaxHp = 500, Radius = Fix.Ratio(14, 10), Vision = 6 },
     };
 
     public int Tick;
@@ -463,8 +475,9 @@ public sealed class World
         if (from != null)
         {
             from.Levels.CopyTo(e.Levels, 0);
+            from.Mods.CopyTo(e.Mods, 0);
             e.FactoryId = from.Id;
-            e.Fitting = from.Fitting == Fitting.Napalm && SulfurOf(owner) > 0 ? Fitting.Napalm : Fitting.Standard;
+            e.Fitting = from.Fitting == Fitting.Napalm && SulfurOf(owner) > 0 || from.Mods[(int)Mod.Napalm] > 0 ? Fitting.Napalm : Fitting.Standard;
             e.Enhanced = OnSulfur(from);
             // Its factory's own rally point; failing that the base's (the HQ's: the user, 2026-10-20, "main base
             // should have a way to rally").
@@ -474,6 +487,7 @@ public sealed class World
         }
         SetStats(e);
         e.Hp = e.MaxHp;
+        e.Shield = e.MaxHp * ShieldPercent * e.Mods[(int)Mod.Shield] / 100;
         if (kind == Kind.Factory && makes != Kind.MobileBase) e.Timer = BuildTicksOf(e);
         e.Building = ConstructionTicks(kind);   // (towers and the HQ stand ready from the start)
         e.Height = Ground.HeightAt(pos);
@@ -521,7 +535,7 @@ public sealed class World
     {
         var f = Find(factoryId);
         why = null;
-        if (f == null || !(f.Kind == Kind.Factory && f.Makes != Kind.MobileBase || f.Kind is Kind.Turret or Kind.Flak or Kind.Bombard) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
+        if (f == null || !(f.Kind is Kind.Turret or Kind.Flak or Kind.Bombard) || f.Owner != player) { why = "Not yours to upgrade"; return false; }
         if (f.Level(which) + Queued(f, which) >= MaxUpgradeLevel) { why = "Fully upgraded"; return false; }
         return true;
     }
@@ -569,9 +583,10 @@ public sealed class World
     /// <summary>Everything paid for a building: itself and every upgrade level bought.</summary>
     public static int SpentOn(Entity b)
     {
-        int spent = b.Kind switch { Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, Kind.PowerPlant => PlantCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => WingCost(b.Makes) };
-        foreach (var level in b.Levels)
-            for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
+        int spent = b.Kind switch { Kind.Module => ModuleCost(b.Mod), Kind.Outpost => MobileBaseCost, Kind.Extractor => ExtractorCost, Kind.PowerPlant => PlantCost, _ when IsDefence(b.Kind) => CostOf(b.Kind), _ => WingCost(b.Makes) };
+        if (IsDefence(b.Kind))   // (a wing's levels come from its modules, not bought)
+            foreach (var level in b.Levels)
+                for (int l = 1; l <= level; l++) spent += UpgradeCost(l);
         return spent;
     }
 
@@ -581,7 +596,7 @@ public sealed class World
     {
         var b = Find(id);
         why = null;
-        if (b == null || !(b.Kind is Kind.Factory or Kind.Outpost or Kind.Extractor or Kind.PowerPlant || IsDefence(b.Kind)) || b.Owner != player) { why = "Not yours to sell"; return false; }
+        if (b == null || !(b.Kind is Kind.Factory or Kind.Module or Kind.Outpost or Kind.Extractor or Kind.PowerPlant || IsDefence(b.Kind)) || b.Owner != player) { why = "Not yours to sell"; return false; }
         return true;
     }
 
@@ -600,6 +615,7 @@ public sealed class World
         Kind.Bombard => 45 * TicksPerSecond,
         Kind.Wall => 8 * TicksPerSecond,
         Kind.PowerPlant => 45 * TicksPerSecond,
+        Kind.Module => 30 * TicksPerSecond,
         _ => 0,
     };
 
@@ -658,28 +674,135 @@ public sealed class World
         return slot == 0 ? b.Pos + side : b.Pos - side;
     }
 
-    /// <summary>The first free wing spot on a base that a wing fits in (on open ground, clear of other buildings than
-    /// the base and its wings), or -1.</summary>
-    public int FreeWingSlot(Entity b)
+    // ---- lines: the base as a machine (the user, 2026-10-23: "like a rube goldberg machine") ------------------
+    // Each wing spot of a host starts a line running straight out from it. Wings and modules snap onto a line one
+    // after another (the first free place along it); a wing gets every finished module before it on its line.
+
+    public const int ModCount = 9, MaxLink = 4, ShieldPercent = 40, TwinEvery = 3, MagnetPercent = 50;
+    public static readonly Fix LineStep = Fix.Ratio(45, 10);   // from one piece of a line to the next
+
+    /// <summary>What a module costs.</summary>
+    public static int ModuleCost(Mod m) => m switch
+    {
+        Mod.Speed => 150, Mod.Armour => 200, Mod.Attack => 250, Mod.Build => 200, Mod.Energy => 150,
+        Mod.Twin => 350, Mod.Napalm => 250, Mod.Shield => 250, Mod.Magnet => 200, _ => 200,
+    };
+
+    /// <summary>A unit's speed, with the speed modules it was made behind (+20% each).</summary>
+    public static Fix SpeedOf(Entity e) => e.Mods[(int)Mod.Speed] == 0 ? e.Stats.Speed : e.Stats.Speed * Fix.Ratio(100 + 20 * e.Mods[(int)Mod.Speed], 100);
+
+    /// <summary>Which way line `slot` of host `b` runs (a unit vector, out from the host).</summary>
+    public static FixVec2 LineDir(Entity b, int slot) => (WingSpot(b, slot) - b.Pos).WithLength(Fix.One);
+
+    /// <summary>Where place `link` along line `slot` of host `b` is.</summary>
+    public static FixVec2 LineSpot(Entity b, int slot, int link) => WingSpot(b, slot) + LineDir(b, slot) * (LineStep * link);
+
+    /// <summary>A line's wing or module at place `link`, or null.</summary>
+    public Entity PieceAt(Entity b, int slot, int link) =>
+        Entities.Find(e => !e.Dead && e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id && e.Slot == slot && e.Link == link);
+
+    /// <summary>The first free place along a line where a piece fits (on open ground, clear of other buildings than
+    /// the host and its own pieces), or -1 when the line is full or blocked.</summary>
+    public int FreeLink(Entity b, int slot)
     {
         var r = StatsFor[(int)Kind.Factory].Radius;
-        for (int slot = 0; slot < SlotsOf(b); slot++)
+        for (int link = 0; link <= MaxLink; link++)
         {
-            if (Entities.Exists(e => !e.Dead && e.Kind == Kind.Factory && e.BaseId == b.Id && e.Slot == slot)) continue;
-            var at = WingSpot(b, slot);
-            if (OffMap(at, r) || !Nav.OpenAt(at)) continue;
-            bool clear = true;
+            if (PieceAt(b, slot, link) != null) continue;
+            var at = LineSpot(b, slot, link);
+            if (OffMap(at, r) || !Nav.OpenAt(at)) return -1;
             foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
-                if (!Ground.Passable(at + new FixVec2(dx, dz) * r)) clear = false;
+                if (!Ground.Passable(at + new FixVec2(dx, dz) * r)) return -1;
             foreach (var e in Entities)
             {
-                if (e.Dead || !e.Stats.IsBuilding || e == b || (e.Kind == Kind.Factory && e.BaseId == b.Id)) continue;
+                if (e.Dead || !e.Stats.IsBuilding || e == b || (e.Kind is Kind.Factory or Kind.Module && e.BaseId == b.Id)) continue;
                 var gap = e.Stats.Radius + r + 1;
-                if ((e.Pos - at).LengthSq < gap * gap) clear = false;
+                if ((e.Pos - at).LengthSq < gap * gap) return -1;
             }
-            if (clear) return slot;
+            foreach (var d in Deposits)
+                if ((d - at).LengthSq < (DepositRadius + r) * (DepositRadius + r)) return -1;
+            return link;
         }
         return -1;
+    }
+
+    /// <summary>The modules (finished) before place `link` on a line, counted by Mod.</summary>
+    public void ModsBefore(Entity b, int slot, int link, int[] into)
+    {
+        System.Array.Clear(into);
+        foreach (var e in Entities)
+            if (!e.Dead && e.Kind == Kind.Module && e.Building == 0 && e.BaseId == b.Id && e.Slot == slot && e.Link < link) into[(int)e.Mod]++;
+    }
+
+    /// <summary>The line a wing would go on when none is named (the AI's): the one with the most modules before its
+    /// free place, the first such; -1 if none has room.</summary>
+    public int FreeWingSlot(Entity b)
+    {
+        int best = -1, bestMods = -1;
+        var mods = new int[ModCount];
+        for (int slot = 0; slot < SlotsOf(b); slot++)
+        {
+            int link = FreeLink(b, slot);
+            if (link < 0) continue;
+            ModsBefore(b, slot, link, mods);
+            int n = 0;
+            foreach (var m in mods) n += m;
+            if (n > bestMods) { best = slot; bestMods = n; }
+        }
+        return best;
+    }
+
+    /// <summary>Every wing's modules brought up to date, and its levels from them: attack, armour, build speed.</summary>
+    void RefreshLines()
+    {
+        foreach (var w in Entities)
+        {
+            if (w.Dead || w.Kind != Kind.Factory || Find(w.BaseId) is not { } host) continue;
+            ModsBefore(host, w.Slot, w.Link, w.Mods);
+            w.Levels[(int)Upgrade.Damage] = w.Mods[(int)Mod.Attack];
+            w.Levels[(int)Upgrade.Armour] = w.Mods[(int)Mod.Armour];
+            w.Levels[(int)Upgrade.Production] = System.Math.Min(4, w.Mods[(int)Mod.Build]);
+        }
+    }
+
+    /// <summary>Whether a wing or module can go on line `slot` of host `baseId` now (`makes` for a wing; a module when
+    /// `mod` is given).</summary>
+    public bool CanAddPiece(int player, int baseId, int slot, Kind makes, Mod? mod, out string why)
+    {
+        why = null;
+        var p = Players[player];
+        var b = Find(baseId);
+        if (mod == null && makes != Kind.MobileBase && System.Array.IndexOf(FactoryKindsOf(p.Civ), makes) < 0) { why = "No wing makes that"; return false; }
+        if (b == null || !IsWingHost(b) || b.Owner != player) { why = "Lines start from your HQ, extractors or power plants"; return false; }
+        if (b.Building > 0) { why = "It's still being built"; return false; }
+        if (slot < 0 || slot >= SlotsOf(b)) { why = "No line there"; return false; }
+        if (p.Metal < (mod is { } m ? ModuleCost(m) : WingCost(makes))) { why = "Not enough metal"; return false; }
+        if (FreeLink(b, slot) < 0) { why = "This line is full"; return false; }
+        return true;
+    }
+
+    Entity AddPiece(int player, Entity b, int slot, Kind makes, Mod? mod)
+    {
+        int link = FreeLink(b, slot);
+        Players[player].Metal -= mod is { } m ? ModuleCost(m) : WingCost(makes);
+        var piece = mod is { } mm ? Spawn(Kind.Module, player, LineSpot(b, slot, link)) : Spawn(Kind.Factory, player, LineSpot(b, slot, link), makes);
+        if (mod is { } m2) piece.Mod = m2;
+        piece.BaseId = b.Id;
+        piece.Slot = slot;
+        piece.Link = link;
+        if (piece.Kind == Kind.Factory) { RefreshLines(); if (makes != Kind.MobileBase) piece.Timer = BuildTicksOf(piece); }
+        return piece;
+    }
+
+    /// <summary>Which way a wing's door faces: square to its line (the line runs through it side to side), on the side
+    /// toward the enemy.</summary>
+    public FixVec2 DoorDir(Entity wing)
+    {
+        if (Find(wing.BaseId) is not { } b) return (Players[1 - wing.Owner].HqPos - wing.Pos).WithLength(Fix.One);
+        var d = LineDir(b, wing.Slot);
+        var side = new FixVec2(-d.Z, d.X);
+        var toEnemy = Players[1 - wing.Owner].HqPos - wing.Pos;
+        return side.X * toEnemy.X + side.Z * toEnemy.Z < Fix.Zero ? -side : side;
     }
 
     /// <summary>Whether a wing making `makes` (a fighting unit of the player's civilisation, or Kind.MobileBase for the
@@ -693,8 +816,7 @@ public sealed class World
         if (b == null || !IsWingHost(b) || b.Owner != player) { why = "Wings go on your HQ, extractors or power plants"; return false; }
         if (b.Building > 0) { why = "It's still being built"; return false; }
         if (p.Metal < WingCost(makes)) { why = "Not enough metal"; return false; }
-        if (SlotsUsed(b) >= SlotsOf(b)) { why = $"No free wing spot ({SlotsOf(b)} here)"; return false; }
-        if (FreeWingSlot(b) < 0) { why = "No room for another wing here"; return false; }
+        if (FreeWingSlot(b) < 0) { why = "Every line here is full"; return false; }
         return true;
     }
 
@@ -845,7 +967,11 @@ public sealed class World
     }
 
     /// <summary>What a wing draws: its unit's draw, halved on a power plant.</summary>
-    public int WingDraw(Entity wing) => OnPlant(wing) ? PowerDraw(wing.Makes) / 2 : PowerDraw(wing.Makes);
+    public int WingDraw(Entity wing)
+    {
+        int d = System.Math.Max(0, PowerDraw(wing.Makes) - wing.Mods[(int)Mod.Energy]);   // (an energy module: one less each)
+        return OnPlant(wing) ? d / 2 : d;
+    }
 
     /// <summary>Whether a wing gets a tick of work done: always with power to spare; short of power, it banks the
     /// supply each tick and works whenever it has banked the draw, so every wing slows to supply/draw.</summary>
@@ -1110,10 +1236,10 @@ public sealed class World
 
         if (!Started)
         {
-            // Setup: only placing (and upgrading) factories; nothing else moves until both sides have one.
+            // Setup: only building up the lines (wings, modules); nothing else moves until both sides have one.
             // (The user, 2026-10-19: the AI placing at once while a person is still choosing was a big edge.)
             foreach (var c in commands)
-                if (c is AddWing or UpgradeFactory or CancelUpgrades or SetRally) Apply(c);
+                if (c is AddWing or AddWingAt or AddModule or UpgradeFactory or CancelUpgrades or SetRally) Apply(c);
             Started = System.Array.TrueForAll(Players, p => Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == p.Id));
             if (Started) StartTick = Tick;
             UpdateVision();
@@ -1321,12 +1447,14 @@ public sealed class World
                 PauseTicksLeft = PauseTicks;
                 break;
             case AddWing aw when CanAddWing(aw.Player, aw.BaseId, aw.Makes, out _):
-                p.Metal -= WingCost(aw.Makes);
                 var onto = Find(aw.BaseId);
-                int wingSlot = FreeWingSlot(onto);
-                var wing = Spawn(Kind.Factory, aw.Player, WingSpot(onto, wingSlot), aw.Makes);
-                wing.BaseId = onto.Id;
-                wing.Slot = wingSlot;
+                AddPiece(aw.Player, onto, FreeWingSlot(onto), aw.Makes, null);
+                break;
+            case AddWingAt wa when CanAddPiece(wa.Player, wa.BaseId, wa.Slot, wa.Makes, null, out _):
+                AddPiece(wa.Player, Find(wa.BaseId), wa.Slot, wa.Makes, null);
+                break;
+            case AddModule am when CanAddPiece(am.Player, am.BaseId, am.Slot, Kind.Hq, am.Mod, out _):
+                AddPiece(am.Player, Find(am.BaseId), am.Slot, Kind.Hq, am.Mod);
                 break;
             case Order od when CanOrder(od.Player, od.WingId, od.What, out _):
                 p.Metal -= OrderCost(od.What);
@@ -1418,6 +1546,7 @@ public sealed class World
 
     void Produce()
     {
+        RefreshLines();
         var supply = new int[Players.Length];
         var draw = new int[Players.Length];
         for (int i = 0; i < Players.Length; i++) { supply[i] = PowerSupply(i); draw[i] = PowerDrawOf(i); }
@@ -1438,6 +1567,14 @@ public sealed class World
             f.Timer = BuildTicksOf(f);
             army[f.Owner]++;
             Spawn(f.Makes, f.Owner, DoorOf(f, f.Makes), from: f);
+            f.Made++;
+            // A twin feed: every few units, a second one out with it (one twin feed every third, two every other).
+            int twins = f.Mods[(int)Mod.Twin];
+            if (twins > 0 && f.Made % System.Math.Max(2, TwinEvery + 1 - twins) == 0 && army[f.Owner] < MaxArmyOf(Players[f.Owner].Civ))
+            {
+                army[f.Owner]++;
+                Spawn(f.Makes, f.Owner, DoorOf(f, f.Makes), from: f);
+            }
         }
     }
 
@@ -1455,7 +1592,7 @@ public sealed class World
     /// with a little spread so they don't stack.</summary>
     FixVec2 DoorOf(Entity wing, Kind unit)
     {
-        var dir = Find(wing.BaseId) is { } b && b != wing ? wing.Pos - b.Pos : Players[1 - wing.Owner].HqPos - wing.Pos;
+        var dir = DoorDir(wing);
         return wing.Pos + dir.WithLength(wing.Stats.Radius + StatsFor[(int)unit].Radius + 1) + new FixVec2(0, Fix.Ratio(Rng.Range(-10, 10), 10));
     }
 
@@ -1495,7 +1632,7 @@ public sealed class World
                 if (!s.IsUnit || !e.HasWaypoint) continue;
                 var to = e.Waypoint - e.Pos;
                 if (to.LengthSq <= Fix.Ratio(1, 2) * Fix.Ratio(1, 2)) { e.HasWaypoint = false; continue; }
-                _moves.Add((e, Drive(e, e.Waypoint, s.Speed)));
+                _moves.Add((e, Drive(e, e.Waypoint, SpeedOf(e))));
                 continue;
             }
 
@@ -1518,16 +1655,16 @@ public sealed class World
                     // Behind friends already firing: swing out round the target to a flank, so the whole group gets
                     // to shoot (the user, 2026-10-22: "some just sit behind the front line"). Otherwise close in, a
                     // little inside its reach: closing to the very edge, it never caught anything moving away.
-                    if (ChaseRound(e, target, reach) is { } flank) _moves.Add((e, FanOut(e, Drive(e, flank, s.Speed))));
-                    else _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(s.Speed, gap - reach + Fix.Ratio(1, 2)), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
+                    if (ChaseRound(e, target, reach) is { } flank) _moves.Add((e, FanOut(e, Drive(e, flank, SpeedOf(e)))));
+                    else _moves.Add((e, FanOut(e, Drive(e, target.Pos, Fix.Min(SpeedOf(e), gap - reach + Fix.Ratio(1, 2)), target.Stats.IsBuilding ? target.Stats.Radius : Fix.Zero))));
                 }
             }
             else if (s.IsUnit && s.AirOnly)
-                _moves.Add((e, Drive(e, AirGoal(e), s.Speed)));
+                _moves.Add((e, Drive(e, AirGoal(e), SpeedOf(e))));
             else if (s.IsUnit && e.Owner == Feral)
             {
                 var home = FeralGoal(e);
-                if (!e.HasRally || (home - e.Pos).LengthSq > Fix.FromInt(9)) _moves.Add((e, FanOut(e, Drive(e, home, s.Speed))));
+                if (!e.HasRally || (home - e.Pos).LengthSq > Fix.FromInt(9)) _moves.Add((e, FanOut(e, Drive(e, home, SpeedOf(e)))));
             }
             else if (s.IsUnit)
             {
@@ -1537,22 +1674,25 @@ public sealed class World
                 // last seen enemy".) Close enough counts as there: a crowd can't all stand on the spot.
                 if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
                 var goal = e.HasWaypoint ? e.Waypoint : NearestKnown(e.Owner, e.Pos, s.HitsAir);
-                _moves.Add((e, FanOut(e, Drive(e, goal, s.Speed))));
+                _moves.Add((e, FanOut(e, Drive(e, goal, SpeedOf(e)))));
             }
         }
         foreach (var (e, step) in _moves) Move(e, Steer(e, step));
         foreach (var (target, damage, by) in _hits)
         {
             bool alive = target.Hp > 0;
-            target.Hp -= damage;
+            int soaked = System.Math.Min(target.Shield, damage);   // a shield coil's shield goes first
+            target.Shield -= soaked;
+            target.Hp -= damage - soaked;
             if (alive && target.Hp <= 0 && by != null)   // the shot that finished it
             {
                 Credit(by);
                 if (by.Owner != Feral && by.Owner != target.Owner && Salvage(target.Kind) > 0)   // salvage
                 {
-                    Players[by.Owner].Metal += Salvage(target.Kind);
-                    Players[by.Owner].Salvaged += Salvage(target.Kind);
-                    Salvaged.Add((target.Pos, by.Owner, Salvage(target.Kind)));
+                    int pay = Salvage(target.Kind) * (100 + MagnetPercent * by.Mods[(int)Mod.Magnet]) / 100;   // (a salvage magnet pays more)
+                    Players[by.Owner].Metal += pay;
+                    Players[by.Owner].Salvaged += pay;
+                    Salvaged.Add((target.Pos, by.Owner, pay));
                 }
             }
         }
@@ -1831,8 +1971,8 @@ public sealed class World
             }
         }
         e.Heading = h;
-        var next = e.Pos + h * s.Speed;
-        if (Fix.Abs(next.X) > MapHalfX - 2 || Fix.Abs(next.Z) > MapHalfZ - 2) next = e.Pos + to.WithLength(s.Speed);   // (turn in from the map's edge)
+        var next = e.Pos + h * SpeedOf(e);
+        if (Fix.Abs(next.X) > MapHalfX - 2 || Fix.Abs(next.Z) > MapHalfZ - 2) next = e.Pos + to.WithLength(SpeedOf(e));   // (turn in from the map's edge)
         _moves.Add((e, next - e.Pos));
     }
 
@@ -1874,7 +2014,7 @@ public sealed class World
         }
         // A base's wings go down with it.
         foreach (var e in Entities)
-            if (!e.Dead && e.Kind == Kind.Factory && (Find(e.BaseId) == null || Find(e.BaseId).Dead)) { e.Dead = true; e.Hp = 0; }
+            if (!e.Dead && e.Kind is Kind.Factory or Kind.Module && (Find(e.BaseId) == null || Find(e.BaseId).Dead)) { e.Dead = true; e.Hp = 0; }
         // Buildings gone (destroyed, or sold earlier this tick) no longer stand in anyone's way.
         foreach (var e in Entities)
             if (e.Dead && e.Stats.IsBuilding) _nav.RemoveBuilding(e.Pos, e.Stats.Radius);
@@ -1899,6 +2039,7 @@ public sealed class World
             Mix(e.Hp); Mix(e.Cooldown); Mix(e.Timer); Mix((int)e.Makes); Mix(e.MaxHp); Mix(e.Damage); Mix(e.SeenBy); Mix(e.Kills); Mix(e.Rank); Mix(e.FactoryId); Mix(e.HasRally ? 1 : 0); Mix(e.Rally.X.Raw); Mix(e.Rally.Z.Raw); Mix(e.HasWaypoint ? 1 : 0); Mix(e.Waypoint.X.Raw); Mix(e.Waypoint.Z.Raw); Mix(e.BaseId); Mix(e.Deposit); Mix(e.Slot); Mix(e.Building); Mix((int)e.Fitting); Mix(e.Heading.X.Raw); Mix(e.Heading.Z.Raw); Mix(e.SwaySide); Mix(e.FlankTicks); Mix(e.PowerAcc); Mix(e.Enhanced ? 1 : 0); Mix(e.Vent);
             Mix(e.Orders.Count); foreach (var o in e.Orders) Mix(o);
             foreach (var l in e.Levels) Mix(l);
+            Mix((int)e.Mod); Mix(e.Link); Mix(e.Shield); Mix(e.Made); foreach (var m in e.Mods) Mix(m);
             Mix(e.UpgradeQueue.Count); foreach (var q in e.UpgradeQueue) Mix(q);
         }
         foreach (var f in _fires) { Mix(f.At.X.Raw); Mix(f.At.Z.Raw); Mix(f.Radius.Raw); Mix(f.Owner); Mix(f.TicksLeft); }

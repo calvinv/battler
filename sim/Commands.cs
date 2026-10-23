@@ -10,6 +10,12 @@ public abstract record Command(int Player);
 /// Kind.MobileBase for a utility wing, which makes scouts and mobile bases to order).</summary>
 public sealed record AddWing(int Player, int BaseId, Kind Makes) : Command(Player);
 
+/// <summary>A wing snapped onto the end of line Slot of a host (the first free place along it).</summary>
+public sealed record AddWingAt(int Player, int BaseId, int Slot, Kind Makes) : Command(Player);
+
+/// <summary>A module snapped onto the end of line Slot of a host: the wings after it on the line get what it does.</summary>
+public sealed record AddModule(int Player, int BaseId, int Slot, Mod Mod) : Command(Player);
+
 /// <summary>Starts one of the player's tactical pauses.</summary>
 public sealed record Pause(int Player) : Command(Player);
 

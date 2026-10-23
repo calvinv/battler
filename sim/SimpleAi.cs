@@ -101,7 +101,7 @@ public sealed class SimpleAi
             Entity onto = null;
             foreach (var b in mine)
             {
-                if (!World.IsWingHost(b) || b.Building > 0 || w.SlotsUsed(b) >= World.SlotsOf(b) || w.FreeWingSlot(b) < 0) continue;
+                if (!World.IsWingHost(b) || b.Building > 0 || w.FreeWingSlot(b) < 0) continue;
                 int rank = b.Kind == Kind.Extractor && World.DepositResource[b.Deposit] == Resource.Sulfur ? 0 : b.Kind == Kind.PowerPlant ? 1 : 2;
                 int ontoRank = onto == null ? 9 : onto.Kind == Kind.Extractor && World.DepositResource[onto.Deposit] == Resource.Sulfur ? 0 : onto.Kind == Kind.PowerPlant ? 1 : 2;
                 if (rank < ontoRank) onto = b;
@@ -227,17 +227,19 @@ public sealed class SimpleAi
         return -1;
     }
 
-    /// <summary>One in `oneIn` thinks, buy a random upgrade on a fighting wing if it can.</summary>
+    /// <summary>One in `oneIn` thinks, snap a module onto one of its lines if it can (mostly attack, armour, speed and
+    /// build speed; now and then a wildcard), so the wings it adds later come out stronger.</summary>
     void MaybeUpgrade(World w, List<Entity> mine, Action<Command> issue, int oneIn)
     {
         if (_rng.Next(oneIn) != 0) return;
-        var upgradable = mine.FindAll(e => e.Kind == Kind.Factory && !World.IsUtility(e));
-        if (upgradable.Count == 0) return;
-        for (int attempt = 0; attempt < 6; attempt++)   // a few random picks, in case the first is maxed or too dear
+        var hosts = mine.FindAll(e => World.IsWingHost(e) && e.Building == 0);
+        if (hosts.Count == 0) return;
+        for (int attempt = 0; attempt < 6; attempt++)   // a few random picks, in case the first is full or too dear
         {
-            var f = upgradable[_rng.Next(upgradable.Count)];
-            var which = (Upgrade)_rng.Next(3);
-            if (w.CanUpgrade(_player, f.Id, which, out _)) { issue(new UpgradeFactory(_player, f.Id, which)); return; }
+            var b = hosts[_rng.Next(hosts.Count)];
+            int slot = _rng.Next(World.SlotsOf(b));
+            var mod = _rng.Next(5) == 0 ? (Mod)(5 + _rng.Next(4)) : new[] { Mod.Attack, Mod.Armour, Mod.Speed, Mod.Build }[_rng.Next(4)];
+            if (w.CanAddPiece(_player, b.Id, slot, Kind.Hq, mod, out _)) { issue(new AddModule(_player, b.Id, slot, mod)); return; }
         }
     }
 
