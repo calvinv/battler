@@ -115,7 +115,7 @@ public partial class Main : Node3D
         }
         else if (args.Contains("--lineup")) { BuildLineup(); return; }
         else if (args.Contains("--reel")) { BuildReel(); return; }
-        else if (args.Contains("--skirmish")) StartSkirmish();
+        else if (args.IndexOf("--skirmish") is int sk and >= 0) StartSkirmish(sk + 1 < args.Count && !args[sk + 1].StartsWith("-") ? args[sk + 1] : "tanks");
         else StartMatch(new LocalSession((ulong)GD.Randi()));
 
         if (args.Contains("--shot"))
@@ -272,7 +272,7 @@ public partial class Main : Node3D
         _reelUnit = UnitArt.Make(name, TeamColor[0]);
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
-        _reelHovers = name == "hovertank";
+        _reelHovers = name != "mech";
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -305,12 +305,13 @@ public partial class Main : Node3D
             _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
             if (!_reelHovers) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
         }
-        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
+        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && !_reelHovers && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
+        else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
         {
             _reelShots++;
             _reelRig?.Fire();
             var from = _reelRig?.Muzzle?.GlobalPosition ?? _reelPos + Vector3.Up;
-            _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, Kind.LightTank, TeamColor[0]);
+            _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, _reelHovers ? Kind.LightTank : Kind.Ranger, TeamColor[0]);
         }
         float follow = _distance < 18 ? 0.9f : 0.7f;   // (close up: keep the unit in the middle)
         _focus = _focus.Lerp(_reelPos * follow + _reelTarget.Position * (1 - follow), Mathf.Min(1, dt * 2));
@@ -455,10 +456,17 @@ public partial class Main : Node3D
         UpdateFog();
     }
 
-    /// <summary>Five hover tanks a side in the middle of the map, fighting it out; fog lifted, the camera on them.</summary>
-    void StartSkirmish()
+    /// <summary>A straight fight in the middle of the map, fog lifted, the camera on it: "tanks" (5 hover tanks a side),
+    /// "mechs" (5 rifle mechs) or "mixed" (both).</summary>
+    void StartSkirmish(string lineup = "tanks")
     {
-        StartMatch(new SkirmishSession((ulong)GD.Randi(), Kind.LightTank, 5));
+        var groups = lineup switch
+        {
+            "mechs" => new[] { (Kind.Ranger, 5) },
+            "mixed" => new[] { (Kind.LightTank, 5), (Kind.Ranger, 5) },
+            _ => new[] { (Kind.LightTank, 5) },
+        };
+        StartMatch(new SkirmishSession((ulong)GD.Randi(), groups));
         _noFog = true;
         UpdateFog();
         _focus = Vector3.Zero;
@@ -778,6 +786,7 @@ public partial class Main : Node3D
 
     /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
     static string UnitModel(Kind k, Civ civ) => k == Kind.LightTank ? "hovertank"      // (the cel shaded hover tank, being explored: the user, 2026-10-23)
+        : k == Kind.Ranger ? "mech"                                                            // (and the bird-legged rifle mech)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
@@ -1168,7 +1177,7 @@ public partial class Main : Node3D
                     unitRig.Update(W.Paused ? 0 : _frameDt, rolled, turretYaw);
                 }
                 // A walker sways side to side and bobs as it steps (its legs are one piece with it).
-                if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger && moving && !W.Paused)
+                if (e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger && moving && !W.Paused && !_rigs.ContainsKey(e.Id))
                 {
                     float gait = (float)Time.GetTicksMsec() * 0.012f + e.Id;
                     view.Basis = view.Basis * new Basis(Vector3.Back, Mathf.Sin(gait) * 0.06f);
@@ -1613,7 +1622,9 @@ public partial class Main : Node3D
         }
         MenuButton("Resume  (Esc)", () => SetMenu(false));
         _restartButton = MenuButton("Restart match", () => { SetMenu(false); _noFog = false; StartMatch(new LocalSession((ulong)GD.Randi())); });
-        MenuButton("Skirmish: 5 v 5 hover tanks", () => { SetMenu(false); StartSkirmish(); });
+        MenuButton("Skirmish: 5 v 5 hover tanks", () => { SetMenu(false); StartSkirmish("tanks"); });
+        MenuButton("Skirmish: 5 v 5 mechs", () => { SetMenu(false); StartSkirmish("mechs"); });
+        MenuButton("Skirmish: tanks + mechs", () => { SetMenu(false); StartSkirmish("mixed"); });
         MenuButton("Quit to desktop", () => GetTree().Quit());
         panel.AddChild(column);
         centre.AddChild(panel);

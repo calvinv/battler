@@ -391,7 +391,7 @@ public sealed class World
         // ranger (small arms, can attack air or land), add a flier (attacks other fliers) and a bomber (slow bombing
         // runs)"), both civilisations ----
         // Ranger: a small, quick, fragile robot with small arms that reach fliers too: the cheap answer to everything.
-        new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(36, 100), Range = 7, Aggro = 12, Vision = 10,
+        new() { MaxHp = 40, Radius = Fix.Ratio(7, 10), Speed = Fix.Ratio(50, 100), Range = 7, Aggro = 12, Vision = 10,   // (quicker than the hover tank: the user, 2026-10-23, the rifle mech "moves faster")
                 Damage = 4, Reload = 5, HitsAir = true, VsAir = 100, BuildTicks = 12 * TicksPerSecond },   // (a bomber takes about 4 of them)
         // Flier: a fast interceptor that only fights other fliers; with none about it keeps over its army.
         new() { MaxHp = 60, Radius = Fix.Ratio(9, 10), Speed = Fix.Ratio(95, 100), Range = 8, Aggro = 16, Vision = 14,

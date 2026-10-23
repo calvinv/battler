@@ -7,7 +7,8 @@ namespace Battler.Game;
 /// The moving parts of a unit whose model has a rig (art/units/&lt;name&gt;_rig.glb, from tools/art unit_parts part()):
 /// wheels roll with the ground covered, a turret swings to its target while the hull drives, the barrel kicks back
 /// when it fires, a flywheel spins with the engine, the body leans as it speeds up and brakes and shudders at idle,
-/// and the exhaust smokes. Parts are found by name: wheel_*, turret, barrel, flywheel, body; marks muzzle, exhaust.
+/// and the exhaust smokes; a walker's legs step in time with the ground it covers. Parts are found by name: wheel_*,
+/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R; marks muzzle, exhaust.
 /// </summary>
 public sealed class UnitRig
 {
@@ -20,6 +21,19 @@ public sealed class UnitRig
     float _roll, _spin, _recoil, _yaw, _lean, _speed, _time;
     readonly float _phase;
     bool _hover;
+    readonly Node3D[,] _legs = new Node3D[2, 3];      // [left/right, thigh/shin/foot]
+    bool _walker;
+    float _gait, _stride;
+    float _kick = Kick;
+    // A walker's rifle: carried across the body while walking, swung up to aim once it stops with a target. The
+    // upper arms turn at the shoulders to keep reaching the elbows (which ride with the rifle).
+    readonly Node3D[] _arms = new Node3D[2], _elbows = new Node3D[2];
+    readonly Basis[] _armRest = new Basis[2];
+    readonly Vector3[] _armReach = new Vector3[2];
+    float _aim;
+    Basis _barrelBasis = Basis.Identity;
+    static readonly Basis Carry = new Basis(Vector3.Up, 0.95f) * new Basis(Vector3.Right, -0.45f);   // across the chest, muzzle up and to its left
+    static readonly Vector3 CarryShift = new(0.15f, 0.55f, -0.7f);                                     // drawn in and up, model units
 
     const float TurretTurn = 2.2f;      // radians a second
     const float Kick = 0.9f;            // how far the barrel slides back, model units
@@ -31,10 +45,18 @@ public sealed class UnitRig
     {
         var rig = new UnitRig(seed * 1.7f);
         Walk(view, rig);
-        if (rig._wheels.Count == 0 && rig._turret == null) return null;
-        rig._hover = rig._wheels.Count == 0;      // no wheels: it floats
+        rig._walker = rig._legs[0, 0] != null && rig._legs[1, 0] != null;
+        if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker) return null;
+        rig._hover = rig._wheels.Count == 0 && !rig._walker;      // no wheels or legs: it floats
+        if (rig._walker) rig._kick = 0.4f;
         if (rig._hover) rig.AddHoverGlow(view);
-        if (rig._barrel != null) rig._barrelRest = rig._barrel.Position;
+        if (rig._barrel != null) { rig._barrelRest = rig._barrel.Position; rig._barrelBasis = rig._barrel.Basis; }
+        for (int i = 0; i < 2; i++)
+            if (rig._arms[i] != null && rig._elbows[i] != null)
+            {
+                rig._armRest[i] = rig._arms[i].Basis;
+                rig._armReach[i] = rig.ElbowFromShoulder(i);
+            }
         if (rig._body != null) rig._bodyRest = rig._body.Position;
         if (rig._exhaust != null) rig.AddSmoke(view);
         return rig;
@@ -54,6 +76,14 @@ public sealed class UnitRig
                 else if (name == "body") rig._body = n;
                 else if (name == "muzzle") rig.Muzzle = n;
                 else if (name == "exhaust") rig._exhaust = n;
+                else if (name is "arm_L" or "arm_R") rig._arms[name[^1] == 'L' ? 0 : 1] = n;
+                else if (name is "elbow_L" or "elbow_R") rig._elbows[name[^1] == 'L' ? 0 : 1] = n;
+                else if (name.Length > 2 && name[^2] == '_' && (name[^1] == 'L' || name[^1] == 'R'))
+                {
+                    int side = name[^1] == 'L' ? 0 : 1;
+                    int joint = name.StartsWith("thigh") ? 0 : name.StartsWith("shin") ? 1 : name.StartsWith("foot") ? 2 : -1;
+                    if (joint >= 0) rig._legs[side, joint] = n;
+                }
             }
             Walk(child, rig);
         }
@@ -149,6 +179,14 @@ public sealed class UnitRig
         view.AddChild(_glow);
     }
 
+    /// <summary>Where an elbow is from its shoulder, in the shoulder's parent's space (model units).</summary>
+    Vector3 ElbowFromShoulder(int i)
+    {
+        var parent = _arms[i].GetParentNode3D();
+        var elbow = parent.GlobalTransform.AffineInverse() * _elbows[i].GlobalPosition;
+        return elbow - _arms[i].Position;
+    }
+
     /// <summary>It fired: the barrel kicks back and the body rocks.</summary>
     public void Fire() => _recoil = 1f;
 
@@ -178,16 +216,61 @@ public sealed class UnitRig
             _turret.Rotation = new Vector3(0, _yaw, 0);
         }
 
-        // The barrel snaps back and runs out again.
+        // The barrel snaps back and runs out again. A walker's rifle swings between carried and aimed: aimed when
+        // it has stopped with something to shoot (or has just fired), carried across the body while it walks.
         if (_barrel != null)
         {
             _recoil = Mathf.Max(0, _recoil - dt * 3.2f);
             float k = _recoil * _recoil;
-            _barrel.Position = _barrelRest - new Vector3(0, 0, Kick * k);
+            if (_walker && _arms[0] != null)
+            {
+                bool aiming = (aimYaw != null || _recoil > 0) && _speed < 0.35f;
+                _aim = Mathf.MoveToward(_aim, aiming ? 1 : 0, dt * (aiming ? 3.5f : 2.5f));
+                float t = _aim * _aim * (3 - 2 * _aim);                   // eased
+                var pose = new Basis(Carry.GetRotationQuaternion().Slerp(Quaternion.Identity, t));
+                _barrel.Basis = pose * _barrelBasis;
+                _barrel.Position = _barrelRest + CarryShift * (1 - t) - pose * new Vector3(0, 0, _kick * k);
+                for (int i = 0; i < 2; i++)
+                {
+                    if (_arms[i] == null || _elbows[i] == null) continue;
+                    _arms[i].Basis = _armRest[i];
+                    var reach = ElbowFromShoulder(i);
+                    if (reach.LengthSquared() < 1e-6f) continue;
+                    _arms[i].Basis = new Basis(new Quaternion(_armReach[i].Normalized(), reach.Normalized())) * _armRest[i];
+                }
+            }
+            else _barrel.Position = _barrelRest - new Vector3(0, 0, _kick * k);
         }
 
+        // A walker steps: the gait advances with the ground covered (one stride a cycle, so feet don't skate), each
+        // leg swinging back on the ground and folding up as it swings forward, the feet kept flat; the body dips at
+        // each footfall and rolls side to side. Standing, the legs settle and it breathes.
+        if (_walker)
+        {
+            const float Stride = 1.0f;     // world units a full cycle (two steps)
+            _gait += moved / Stride * Mathf.Tau;
+            _stride = Mathf.Lerp(_stride, Mathf.Clamp(_speed / 1.2f, 0, 1), Mathf.Min(1, dt * 8));
+            for (int side = 0; side < 2; side++)
+            {
+                float ph = _gait + side * Mathf.Pi;
+                float hip = 0.45f * Mathf.Sin(ph) * _stride;
+                float lift = Mathf.Max(0, -Mathf.Cos(ph)) * _stride;
+                float knee = 0.75f * lift;
+                if (_legs[side, 0] != null) _legs[side, 0].Rotation = new Vector3(hip, 0, 0);
+                if (_legs[side, 1] != null) _legs[side, 1].Rotation = new Vector3(knee, 0, 0);
+                if (_legs[side, 2] != null) _legs[side, 2].Rotation = new Vector3(-(hip + knee) - 0.25f * lift, 0, 0);
+            }
+            if (_body != null)
+            {
+                float lean = Mathf.Clamp(-accel * 0.015f, -0.08f, 0.08f) + 0.06f * _stride - _recoil * _recoil * 0.08f;
+                _lean = Mathf.Lerp(_lean, lean, Mathf.Min(1, dt * 6));
+                float bob = 0.16f * _stride * Mathf.Cos(2 * _gait) + 0.05f * (1 - _stride) * Mathf.Sin(_time * 2.2f + _phase);
+                _body.Position = _bodyRest + new Vector3(0, bob, 0);
+                _body.Rotation = new Vector3(_lean, 0, 0.05f * _stride * Mathf.Sin(_gait));
+            }
+        }
         // A hover unit floats: a slow bob, its nose lifting as it pulls away and dipping as it stops, a sway.
-        if (_body != null && _hover)
+        else if (_body != null && _hover)
         {
             float lean = Mathf.Clamp(-accel * 0.02f, -0.1f, 0.1f) - _recoil * _recoil * 0.06f;
             _lean = Mathf.Lerp(_lean, lean, Mathf.Min(1, dt * 4));

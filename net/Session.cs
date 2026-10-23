@@ -19,21 +19,23 @@ public interface ISession
 
 /// <summary>Against the computer: no network, the AI issues the other side's commands.</summary>
 /// <summary>A straight fight to watch, no bases or economy: `count` units of `kind` a side, facing each other across
-/// the middle of the map (the user, 2026-10-23: "place 5 of these on a battlefield and have them fight"). They close
+/// the middle of the map (the user, 2026-10-23: "place 5 of these on a battlefield and have them fight"); several groups
+/// stand in lines one behind the other. They close
 /// and fight on their own; the winners go on to the enemy HQ.</summary>
 public sealed class SkirmishSession : ISession
 {
     readonly List<Command> _pending = new();
 
-    public SkirmishSession(ulong seed, Kind kind, int count, int apart = 34)
+    public SkirmishSession(ulong seed, (Kind Kind, int Count)[] groups, int apart = 34)
     {
         World = new World(seed) { Started = true };
-        for (int i = 0; i < count; i++)
-        {
-            int across = (i - count / 2) * 4;
-            World.Spawn(kind, 0, new FixVec2(-apart / 2, across));
-            World.Spawn(kind, 1, new FixVec2(apart / 2, -across));
-        }
+        for (int g = 0; g < groups.Length; g++)      // each group a line, the first in front
+            for (int i = 0; i < groups[g].Count; i++)
+            {
+                int across = (i - groups[g].Count / 2) * 4, back = g * 5;
+                World.Spawn(groups[g].Kind, 0, new FixVec2(-apart / 2 - back, across));
+                World.Spawn(groups[g].Kind, 1, new FixVec2(apart / 2 + back, -across));
+            }
     }
 
     public World World { get; }
