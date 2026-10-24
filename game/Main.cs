@@ -1001,6 +1001,14 @@ void fragment() {
             var target = W.Find(s.TargetId);
             var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
             if (s.Flight > 0) aimAt = to;   // shells burst on the ground
+            // A laser stops where it meets the armour, not in the middle of the target (where the target's own beam
+            // leaves from, so the two would look like one shot out of its turret).
+            if (s.By == Kind.LightTank && target != null)
+            {
+                var back = (from - aimAt) with { Y = 0 };
+                float r = Mathf.Min(World.StatsFor[(int)target.Kind].Radius.ToFloat() * 0.75f, back.Length() * 0.5f);
+                if (back.LengthSquared() > 1e-4f) aimAt += back.Normalized() * r;
+            }
             if (s.By is Kind.Mender or Kind.Hive && _rigs.TryGetValue(s.ShooterId, out var carrier)) carrier.SendDrone(aimAt);   // a drone flies over to it
             _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner], s.Flight / (float)World.TicksPerSecond);   // a shell lands when the sim lands it
         }

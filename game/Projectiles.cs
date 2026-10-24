@@ -24,8 +24,9 @@ public partial class Projectiles : Node3D
         public float Seed;   // (a cannonball: its own spin start)
     }
 
-    /// <summary>A beam joining muzzle and target for a moment (the hover tank's laser), thinning as it fades.</summary>
-    struct Beam { public Vector3 From, To; public float Age, Life, Width; public Color Core, Glow; }
+    /// <summary>A beam joining muzzle and target for a moment (the hover tank's laser): it shoots out to the target,
+    /// then its tail runs after it as it thins and fades.</summary>
+    struct Beam { public Vector3 From, To; public float Age, Life, Width; public Color Glow; }
 
     struct Flash { public Vector3 At; public float Age, Life, Size; public Color Col; }
 
@@ -68,20 +69,17 @@ public partial class Projectiles : Node3D
             MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/cannonball.gdshader") },
         });
 
-        // Beams: cylinders stretched between their ends, added on (two per beam: a thin hot core, a wide soft glow).
+        // Beams: a strip per beam that faces the camera, a hot core and a soft glow (game/beam.gdshader).
         _beamMesh = new MultiMesh
         {
-            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, InstanceCount = 200, VisibleInstanceCount = 0,
-            Mesh = new CylinderMesh { TopRadius = 0.5f, BottomRadius = 0.5f, Height = 1f, RadialSegments = 8, Rings = 1 },
+            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, InstanceCount = 100, VisibleInstanceCount = 0,
+            Mesh = new QuadMesh { Size = Vector2.One },
         };
         AddChild(new MultiMeshInstance3D
         {
             Multimesh = _beamMesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            MaterialOverride = new StandardMaterial3D
-            {
-                VertexColorUseAsAlbedo = true, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-            },
+            ExtraCullMargin = 200f,   // (the shader moves the strip from where Godot thinks it is)
+            MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://game/beam.gdshader") },
         });
 
         var soft = new GradientTexture2D
@@ -144,11 +142,10 @@ public partial class Projectiles : Node3D
             case Kind.LightTank:   // the hover tank's laser: a beam joining emitter and target for a moment, sparks at the hit
             {
                 if (_beams.Count < 90)
-                    _beams.Add(new Beam { From = from, To = to, Life = 0.22f, Width = 0.13f, Core = new Color(1f, 0.97f, 0.8f) * 1.6f, Glow = new Color(1f, 0.75f, 0.3f).Lerp(team, 0.6f) });
-                AddFlash(from, 1.0f, 0.12f, new Color(1f, 0.9f, 0.55f));
-                AddFlash(to, 1.3f, 0.16f, new Color(1f, 0.8f, 0.45f));
-                for (int i = 0; i < 4; i++) AddFlash(to + new Vector3(_rng.RandfRange(-0.4f, 0.4f), _rng.RandfRange(0f, 0.5f), _rng.RandfRange(-0.4f, 0.4f)), 0.3f, 0.2f + i * 0.04f, new Color(1f, 0.7f, 0.3f));
-                Dust?.Add(to, Vector3.Up * 0.6f, 0.4f, Smoke);
+                    _beams.Add(new Beam { From = from, To = to, Life = 0.26f, Width = 0.34f, Glow = new Color(1f, 0.72f, 0.3f).Lerp(team, 0.5f) });
+                AddFlash(from, 0.6f, 0.1f, new Color(1f, 0.9f, 0.6f));
+                AddFlash(to, 0.9f, 0.18f, new Color(1f, 0.82f, 0.5f), 0.04f);
+                for (int i = 0; i < 2; i++) AddFlash(to + new Vector3(_rng.RandfRange(-0.3f, 0.3f), _rng.RandfRange(0.05f, 0.35f), _rng.RandfRange(-0.3f, 0.3f)), 0.22f, 0.2f, new Color(1f, 0.7f, 0.3f), 0.05f);
                 break;
             }
             case Kind.Mender:   // no shot: its drone arrives and sparks green over the unit as it mends it
@@ -334,21 +331,21 @@ public partial class Projectiles : Node3D
         n = 0;
         foreach (var b in _beams)
         {
-            float t = b.Age / b.Life, fade = 1f - t * t;
-            var dir = b.To - b.From;
-            float len = dir.Length();
-            if (len < 1e-3f) continue;
-            dir /= len;
-            var side = Mathf.Abs(dir.Y) > 0.95f ? Vector3.Right : Vector3.Up;
-            var basis = Basis.LookingAt(dir, side) * new Basis(Vector3.Right, Mathf.Pi / 2);   // the cylinder's Y onto the beam
-            var mid = (b.From + b.To) * 0.5f;
-            foreach (var (w, col) in new[] { (b.Width * (1.2f - 0.7f * t), b.Core), (b.Width * (4f - 2f * t), b.Glow * 0.6f) })
-            {
-                if (n >= 200) break;
-                _beamMesh.SetInstanceTransform(n, new Transform3D(new Basis(basis.X * w, basis.Y * len, basis.Z * w), mid));
-                _beamMesh.SetInstanceColor(n, new Color(col.R, col.G, col.B, fade));
-                n++;
-            }
+            if (n >= 100) break;
+            // The head reaches the target in a few hundredths of a second; the tail sets off after it a little later.
+            float head = Mathf.Clamp(b.Age / 0.04f, 0f, 1f);
+            float tail = Mathf.Clamp((b.Age - 0.07f) / (b.Life - 0.07f), 0f, 1f);
+            tail *= tail;
+            float t = b.Age / b.Life;
+            var from = b.From.Lerp(b.To, tail);
+            var to = b.From.Lerp(b.To, head);
+            var along = to - from;
+            if (along.Length() < 1e-3f) continue;
+            var side = along.Cross(Mathf.Abs(along.Normalized().Y) > 0.95f ? Vector3.Right : Vector3.Up).Normalized();
+            float w = b.Width * (1f - 0.55f * t);
+            _beamMesh.SetInstanceTransform(n, new Transform3D(new Basis(side * w, along, side.Cross(along).Normalized() * w), (from + to) * 0.5f));
+            _beamMesh.SetInstanceColor(n, new Color(b.Glow.R, b.Glow.G, b.Glow.B, 1f - t * t));
+            n++;
         }
         _beamMesh.VisibleInstanceCount = n;
 

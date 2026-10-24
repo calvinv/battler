@@ -219,6 +219,8 @@ public sealed class UnitRig
     public void Fire(float? aimYaw = null)
     {
         _recoil = 1f;
+        // A gun still kicked back from the last shot runs out first, so this one leaves the muzzle, not the turret.
+        if (_barrel != null && !(_walker && _arms[0] != null)) _barrel.Position = _barrelRest;
         if (_turret != null && aimYaw is float y)
         {
             _yaw = y;
