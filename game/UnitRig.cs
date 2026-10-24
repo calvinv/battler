@@ -8,11 +8,12 @@ namespace Battler.Game;
 /// wheels roll with the ground covered, a turret swings to its target while the hull drives, the barrel kicks back
 /// when it fires, a flywheel spins with the engine, the body leans as it speeds up and brakes and shudders at idle,
 /// and the exhaust smokes; a walker's legs step in time with the ground it covers. Parts are found by name: wheel_*,
-/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R, tleg_N + tshin_N (a tripod); marks muzzle, exhaust.
+/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R, tleg_N + tshin_N (a tripod), rotor_N (props, spun flat); marks muzzle, exhaust.
 /// </summary>
 public sealed class UnitRig
 {
     readonly List<(Node3D Node, float Radius)> _wheels = new();
+    readonly List<Node3D> _rotors = new();
     Node3D _body, _turret, _barrel, _flywheel;
     Vector3 _barrelRest, _bodyRest;
     public Node3D Muzzle { get; private set; }
@@ -59,10 +60,10 @@ public sealed class UnitRig
                 var p = rig._tri[i, 0].Position;
                 rig._triOut[i] = new Vector3(p.X, 0, p.Z).Normalized();
             }
-        if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker && !rig._tripod) return null;
+        if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker && !rig._tripod && rig._rotors.Count == 0) return null;
         rig._hover = rig._wheels.Count == 0 && !rig._walker && !rig._tripod;      // no wheels or legs: it floats
         if (rig._walker) rig._kick = 0.4f;
-        if (rig._hover) rig.AddHoverGlow(view);
+        if (rig._hover && rig._rotors.Count == 0) rig.AddHoverGlow(view);   // (a flier is too high for a glow on the ground)
         if (rig._barrel != null) { rig._barrelRest = rig._barrel.Position; rig._barrelBasis = rig._barrel.Basis; }
         for (int i = 0; i < 2; i++)
             if (rig._arms[i] != null && rig._elbows[i] != null)
@@ -83,6 +84,7 @@ public sealed class UnitRig
             {
                 string name = n.Name.ToString();
                 if (name.StartsWith("wheel")) rig._wheels.Add((n, RadiusOf(n)));
+                else if (name.StartsWith("rotor")) rig._rotors.Add(n);
                 else if (name == "turret") rig._turret = n;
                 else if (name == "barrel") rig._barrel = n;
                 else if (name == "flywheel") rig._flywheel = n;
@@ -232,6 +234,7 @@ public sealed class UnitRig
         foreach (var (node, radius) in _wheels) node.Rotation = new Vector3(_roll / radius, 0, 0);
         _spin += dt * (5f + 22f * work);
         if (_flywheel != null) _flywheel.Rotation = new Vector3(0, 0, _spin);
+        for (int i = 0; i < _rotors.Count; i++) _rotors[i].Rotation = new Vector3(0, (i % 2 == 0 ? 1 : -1) * (_time * 31f + i), 0);   // (pairs turn opposite ways)
 
         // The turret swings at its own pace.
         if (_turret != null)

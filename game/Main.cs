@@ -287,7 +287,7 @@ public partial class Main : Node3D
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
         _reelHovers = name == "hovertank";
-        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, _ => Kind.LightTank };
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, "dart" => Kind.Flier, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -307,7 +307,7 @@ public partial class Main : Node3D
         var dir = new Vector3(Mathf.Cos(_reelHeading), 0, -Mathf.Sin(_reelHeading));
         float moved = _reelSpeed * dt;
         _reelPos += dir * moved;
-        _reelPos.Y = _terrain.HeightAt(_reelPos.X, _reelPos.Z);
+        _reelPos.Y = _terrain.HeightAt(_reelPos.X, _reelPos.Z) + HeightOf(_reelKind);
         _reelUnit.Position = _reelPos;
         _reelUnit.Basis = Basis.LookingAt(dir, Vector3.Up);
         var toTarget = _reelTarget.Position - _reelPos;
@@ -315,7 +315,7 @@ public partial class Main : Node3D
         float yaw = dir.SignedAngleTo(toTarget.Normalized(), Vector3.Up);
         _reelRig?.Update(dt, moved, yaw);
         float r = World.StatsFor[(int)Kind.LightTank].Radius.ToFloat();
-        if (_reelSpeed > 0.05f)
+        if (_reelSpeed > 0.05f && HeightOf(_reelKind) == 0)
         {
             _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
             if (!_reelHovers && _reelKind is not (Kind.Ranger or Kind.Artillery)) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
@@ -858,6 +858,7 @@ public partial class Main : Node3D
         : k == Kind.Artillery ? "longleg"                                                      // (and the tripod gun)
         : k == Kind.Mortar ? "lobber"                                                          // (and the wheeled mortar)
         : k == Kind.Scout ? "skitter"                                                          // (and the ball scout)
+        : k == Kind.Flier ? "dart"                                                             // (and the prop interceptor)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts

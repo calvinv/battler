@@ -392,4 +392,55 @@ def skitter():
     finish_toon("skitter", 12.0)
 
 
+def blade(a, x, z, length, width, mat="mid"):
+    """A two-bladed prop lying flat at (a, x, z) across x: tapered blades, a little twist (a raised leading edge)."""
+    for s in (1, -1):
+        r0, r1 = 0.35, length
+        bot = [(a - width * 0.5, x + s * r0, z), (a + width * 0.5, x + s * r0, z), (a + width * 0.3, x + s * r1, z), (a - width * 0.3, x + s * r1, z)]
+        top = [(p[0], p[1], p[2] + (0.14 if (p[0] - a) * s > 0 else 0.06)) for p in bot]
+        k.solid(bot if s > 0 else bot[::-1], top if s > 0 else top[::-1], mat)
+
+
+def dart():
+    """Dart interceptor (FLUX concept art/_gen/concepts/unit_dart_0_s901.png, "10"): an armoured pod with a sharp
+    wedge nose, a canopy sensor over it and team flashes on its shoulders; stub arms out the back to two open props
+    (rotor_0/1, spun by the game), stubby wing pods out the front with amber lamps, twin guns under the nose."""
+    k.begin(0.0)
+    zb = 1.2
+    # The pod: a chamfered body, a raised spine, the wedge nose.
+    plate(-2.4, 1.6, -1.55, 1.55, zb, zb + 1.9, "steel", inset=0.4, front=0.3, back=0.55)
+    plate(-2.0, 1.2, -0.75, 0.75, zb + 1.9, zb + 2.3, "plate", inset=0.2)
+    k.solid([(1.6, -1.25, zb + 0.15), (1.6, 1.25, zb + 0.15), (3.7, 0.0, zb + 0.5)],
+            [(1.6, -1.15, zb + 1.75), (1.6, 1.15, zb + 1.75), (3.7, 0.0, zb + 0.75)], "plate")
+    tube_between((1.6, 0, zb + 1.8), (3.6, 0, zb + 0.72), 0.06, "white", 4)                  # a lit ridge down the nose
+    # The canopy sensor over the nose: a dark frame, a glassy face.
+    plate(0.4, 1.7, -0.65, 0.65, zb + 1.75, zb + 2.45, "dark", inset=0.12)
+    k.box(1.55, 1.72, -0.45, 0.45, zb + 1.9, zb + 2.3, "glass_lit")
+    # Team flashes on the shoulders.
+    for s in (1, -1):
+        k.solid([(0.9, s * 1.2, zb + 1.85), (0.2, s * 1.2, zb + 1.85), (-0.6, s * 1.45, zb + 0.9), (0.1, s * 1.45, zb + 0.9)],
+                [(0.9, s * 1.27, zb + 1.85), (0.2, s * 1.27, zb + 1.85), (-0.6, s * 1.52, zb + 0.9), (0.1, s * 1.52, zb + 0.9)], "paint")
+    # Twin guns under the nose: housings with amber lamps, short barrels.
+    for s in (1, -1):
+        plate(0.9, 2.0, *xs(s, 0.55, 1.35), zb - 0.35, zb + 0.35, "dark", inset=0.1)
+        k.box(2.0, 2.06, *xs(s, 0.8, 1.1), zb - 0.15, zb + 0.15, "glow")
+        k.tube(2.0, 2.7, s * 0.95, zb - 0.2, 0.09, "black", 8)
+    mark("muzzle", (2.8, 0, zb - 0.2))
+    # Stubby wing pods out the front, an amber lamp and a team tab on each.
+    for s in (1, -1):
+        plate(-0.4, 0.9, *xs(s, 1.5, 2.6), zb + 0.4, zb + 1.3, "plate", inset=0.15)
+        plate(-0.3, 0.9, *xs(s, 2.6, 3.5), zb + 0.2, zb + 1.4, "steel", inset=0.15, front=0.25)
+        k.box(0.9, 0.96, *xs(s, 2.8, 3.25), zb + 0.55, zb + 0.95, "glow")
+        k.box(0.0, 0.5, *xs(s, 2.75, 3.35), zb + 1.4, zb + 1.45, "paint")
+    # Arms out the back to the props: a nacelle each, the prop spinning on its hub.
+    for i, s in enumerate((1, -1)):
+        pa, px = -1.7, s * 3.4
+        plate(-2.2, -1.2, *xs(s, 1.4, 2.9), zb + 0.7, zb + 1.4, "plate", inset=0.12)
+        hexagon(pa, px, 0.75, zb + 0.4, zb + 1.7, "steel", r1=0.6, sides=8)
+        with part("rotor_%d" % i, (pa, px, zb + 2.05)):
+            hexagon(pa, px, 0.32, zb + 1.7, zb + 2.25, "dark", sides=8)
+            blade(pa, px, zb + 1.95, 2.3, 0.55)
+    finish_toon("dart", 14.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()
