@@ -1863,7 +1863,7 @@ public sealed class World
     }
 
     /// <summary>A support unit with nothing to do: where it was sent, else a few lengths behind the nearest friendly
-    /// fighter.</summary>
+    /// front-line fighter.</summary>
     void Escort(Entity e)
     {
         if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
@@ -1873,6 +1873,7 @@ public sealed class World
         foreach (var o in Entities)
         {
             if (o == e || o.Dead || o.Owner != e.Owner || !o.Stats.IsUnit || o.Building > 0 || o.Stats.Reload == 0 || o.Stats.Heals) continue;
+            if (o.Stats.MinRange.Raw > 0 || o.Stats.Flying) continue;   // (with the front line, not the guns at the back or the fliers)
             var d = (o.Pos - e.Pos).LengthSq;
             if (d < near) { near = d; escort = o; }
         }

@@ -517,11 +517,14 @@ public partial class Main : Node3D
         var groups = lineup switch
         {
             "mechs" => new[] { (Kind.Ranger, 5) },
-            "mixed" => new[] { (Kind.Tank, 3), (Kind.LightTank, 5), (Kind.Ranger, 5) },
+            // Every unit, front to back: the fighters, the shield and swarm among them, menders behind, the guns at
+            // the back, fliers and the scout last.
+            "mixed" => new[] { (Kind.Tank, 3), (Kind.LightTank, 4), (Kind.Ranger, 4), (Kind.Bulwark, 1), (Kind.Hive, 2), (Kind.Mender, 2),
+                               (Kind.Mortar, 2), (Kind.Artillery, 2), (Kind.Flier, 2), (Kind.Bomber, 1), (Kind.Scout, 1) },
             "wheels" => new[] { (Kind.Tank, 5) },
             _ => new[] { (Kind.LightTank, 5) },
         };
-        StartMatch(new SkirmishSession((ulong)GD.Randi(), groups));
+        StartMatch(new SkirmishSession((ulong)GD.Randi(), groups, rows: lineup == "mixed" ? 4 : 5));
         _noFog = true;
         UpdateFog();
         _focus = Vector3.Zero;

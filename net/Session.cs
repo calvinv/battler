@@ -26,13 +26,13 @@ public sealed class SkirmishSession : ISession
 {
     readonly List<Command> _pending = new();
 
-    public SkirmishSession(ulong seed, (Kind Kind, int Count)[] groups, int apart = 34)
+    public SkirmishSession(ulong seed, (Kind Kind, int Count)[] groups, int apart = 34, int rows = 5)
     {
         World = new World(seed) { Started = true };
         for (int g = 0; g < groups.Length; g++)      // each group a line, the first in front
             for (int i = 0; i < groups[g].Count; i++)
             {
-                int across = (i - groups[g].Count / 2) * 4, back = g * 5;
+                int across = (i - groups[g].Count / 2) * 4, back = g * rows;
                 World.Spawn(groups[g].Kind, 0, new FixVec2(-apart / 2 - back, across));
                 World.Spawn(groups[g].Kind, 1, new FixVec2(apart / 2 + back, -across));
             }
