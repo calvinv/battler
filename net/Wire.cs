@@ -57,23 +57,18 @@ public static class Wire
     {
         switch (c)
         {
-            case AddWing aw: w.Write((byte)1); w.Write((byte)aw.Player); w.Write(aw.BaseId); w.Write((byte)aw.Makes); break;
-            case AddWingAt wa: w.Write((byte)17); w.Write((byte)wa.Player); w.Write(wa.BaseId); w.Write((byte)wa.Slot); w.Write((byte)wa.Makes); w.Write(wa.Toward.X.Raw); w.Write(wa.Toward.Z.Raw); break;
-            case AddModule am: w.Write((byte)18); w.Write((byte)am.Player); w.Write(am.BaseId); w.Write((byte)am.Slot); w.Write((byte)am.Mod); w.Write(am.Toward.X.Raw); w.Write(am.Toward.Z.Raw); break;
+            case QueueUnit qu: w.Write((byte)19); w.Write((byte)qu.Player); w.Write((byte)qu.What); break;
+            case Unqueue uq: w.Write((byte)20); w.Write((byte)uq.Player); w.Write((byte)uq.Index); break;
+            case SetRepeat rp: w.Write((byte)21); w.Write((byte)rp.Player); w.Write(rp.On); break;
+            case Research rs: w.Write((byte)22); w.Write((byte)rs.Player); w.Write((byte)rs.Tech); break;
+            case CancelResearch cr: w.Write((byte)23); w.Write((byte)cr.Player); w.Write((byte)cr.Index); break;
             case Pause: w.Write((byte)2); w.Write((byte)c.Player); break;
             case Resume: w.Write((byte)3); w.Write((byte)c.Player); break;
             case UpgradeFactory uf: w.Write((byte)4); w.Write((byte)uf.Player); w.Write(uf.FactoryId); w.Write((byte)uf.Which); break;
             case SetRally sr: w.Write((byte)5); w.Write((byte)sr.Player); w.Write(sr.FactoryId); w.Write(sr.Clear); w.Write(sr.Pos.X.Raw); w.Write(sr.Pos.Z.Raw); break;
-            case Deploy dp: w.Write((byte)6); w.Write((byte)dp.Player); w.Write(dp.UnitId); break;
             case Sell se: w.Write((byte)7); w.Write((byte)se.Player); w.Write(se.BuildingId); break;
-            case PlaceExtractor pe: w.Write((byte)8); w.Write((byte)pe.Player); w.Write(pe.Deposit); break;
-            case QueueScout: w.Write((byte)9); w.Write((byte)c.Player); break;
-            case PackUp pu: w.Write((byte)10); w.Write((byte)pu.Player); w.Write(pu.BaseId); break;
             case CancelUpgrades cu: w.Write((byte)12); w.Write((byte)cu.Player); w.Write(cu.BuildingId); break;
-            case Order od: w.Write((byte)13); w.Write((byte)od.Player); w.Write(od.WingId); w.Write((byte)od.What); break;
             case PlaceDefence pd: w.Write((byte)15); w.Write((byte)pd.Player); w.Write(pd.Pos.X.Raw); w.Write(pd.Pos.Z.Raw); w.Write((byte)pd.What); break;
-            case PlacePlant pp: w.Write((byte)16); w.Write((byte)pp.Player); w.Write(pp.Vent); break;
-            case SetFitting sf: w.Write((byte)14); w.Write((byte)sf.Player); w.Write(sf.FactoryId); w.Write((byte)sf.Fitting); break;
             case MoveUnits mu:
                 w.Write((byte)11); w.Write((byte)mu.Player); w.Write(mu.Pos.X.Raw); w.Write(mu.Pos.Z.Raw);
                 w.Write((ushort)mu.Ids.Length); foreach (var id in mu.Ids) w.Write(id);
@@ -88,24 +83,19 @@ public static class Wire
         int player = r.ReadByte();
         return type switch
         {
-            1 => new AddWing(player, r.ReadInt32(), (Kind)r.ReadByte()),
-            17 => new AddWingAt(player, r.ReadInt32(), r.ReadByte(), (Kind)r.ReadByte(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
-            18 => new AddModule(player, r.ReadInt32(), r.ReadByte(), (Mod)r.ReadByte(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
+            19 => new QueueUnit(player, (Kind)r.ReadByte()),
+            20 => new Unqueue(player, r.ReadByte()),
+            21 => new SetRepeat(player, r.ReadBoolean()),
+            22 => new Research(player, (Tech)r.ReadByte()),
+            23 => new CancelResearch(player, r.ReadByte()),
             2 => new Pause(player),
             3 => new Resume(player),
             4 => new UpgradeFactory(player, r.ReadInt32(), (Upgrade)r.ReadByte()),
             5 => new SetRally(player, r.ReadInt32(), r.ReadBoolean(), new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64()))),
-            6 => new Deploy(player, r.ReadInt32()),
             7 => new Sell(player, r.ReadInt32()),
-            8 => new PlaceExtractor(player, r.ReadInt32()),
-            9 => new QueueScout(player),
-            10 => new PackUp(player, r.ReadInt32()),
             11 => ReadMove(player, r),
             12 => new CancelUpgrades(player, r.ReadInt32()),
-            13 => new Order(player, r.ReadInt32(), (Kind)r.ReadByte()),
             15 => new PlaceDefence(player, new FixVec2(Fix.FromRaw(r.ReadInt64()), Fix.FromRaw(r.ReadInt64())), (Kind)r.ReadByte()),
-            16 => new PlacePlant(player, r.ReadInt32()),
-            14 => new SetFitting(player, r.ReadInt32(), (Fitting)r.ReadByte()),
             _ => throw new InvalidDataException($"unknown command type {type}"),
         };
     }

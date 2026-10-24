@@ -69,10 +69,8 @@ if (args.Contains("crowd"))   // a big group of tanks marching out of a busy bas
     var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
     hq1.MaxHp = hq1.Hp = 10000000;   // (it never falls: this is about getting there)
     foreach (var t in w.Entities.FindAll(e => e.Kind == Kind.Tower && e.Owner == 1)) t.Hp = 0;
-    for (int i = 0; i < 5; i++) w.Step(new Command[] { new AddWing(0, hq0.Id, i % 2 == 0 ? Kind.Tank : Kind.LightTank) });
-    foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) { f.Building = 0; f.Timer = 1000000; }
     var tanks = new List<Entity>();
-    for (int i = 0; i < n; i++)   // round the base, among the wings, as they'd come out of them
+    for (int i = 0; i < n; i++)   // round the HQ, as they'd come out of it
     {
         var ang = i * 2.399;   // (a spiral)
         var r = 9 + i * 0.5;
@@ -207,101 +205,88 @@ if (args.Contains("map"))   // the open ground as text, 8 units a character: # s
     }
     return 0;
 }
+if (args.Contains("doors"))   // each side's doors and output over a match (AI v AI)
+{
+    var w = new World(Seed);
+    var ais = new[] { new SimpleAi(0, Seed * 7 + 1), new SimpleAi(1, Seed * 7 + 2) };
+    while (w.Tick < 3000)
+    {
+        var cmds = new List<Command>();
+        foreach (var ai in ais) ai.Think(w, cmds.Add);
+        w.Step(cmds.OrderBy(c => c.Player).ToArray());
+        if (w.Tick % 150 == 0)
+            foreach (var p in w.Players)
+                Console.WriteLine($"t={w.Tick / 10,3} p{p.Id} made {p.Made,2} doors [{string.Join(",", p.DoorMakes.Select((k, d) => k < 0 ? "-" : $"{(Kind)k}:{p.DoorTimer[d]}"))}] queue [{string.Join(",", p.Queue.Select(k => ((Kind)k).ToString()))}] research [{string.Join(",", p.Research.Select(t => ((Tech)t).ToString()))}] {p.ResearchSpent} metal {p.Metal} army {w.ArmyCount(p.Id)}");
+    }
+    return 0;
+}
 Console.WriteLine($"Map: {Map.Name}");
-if (!BaseTest() || !ModuleTest()) return 1;
+if (!HqTest() || !UpgradeTest()) return 1;
 return args.Contains("lan") ? LanTest() : ReplayTest();
 
-// Bases and wings: a utility wing on the HQ orders a mobile base, which drives out and sets up; an extractor can then
-// go on the deposit there, and a wing on the new base. When that base dies its wing goes with it. Then the radar: an
-// enemy tank hidden in the fog near the HQ shows on the next sweep, and becomes known.
-bool BaseTest()
+// The HQ (the user, 2026-10-24: one pyramid, one shared queue, doors as upgrades): a queued unit is paid for when a
+// door starts it and rolls out of the front face after its build time, and Repeat puts it back on the queue; the
+// battle wheel can't be queued till researched; research is paid as it starts and refunded if dropped; a second door
+// builds two at once; the pyramid grows a tier (and the HQ gains health) as metal comes in. Then the radar: an enemy
+// tank hidden in the fog near the HQ shows on the next sweep, and becomes known.
+bool HqTest()
 {
     var w = new World(1, new[] { Civ.Coalition, Civ.Coalition });
-    foreach (var p in w.Players) p.Metal = 100000;
-    var hq0 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
-    var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
-    w.Step(new Command[] { new AddWing(0, hq0.Id, Kind.Tank), new AddWing(1, hq1.Id, Kind.Tank) });
-    w.Step(new Command[] { new AddWing(0, hq0.Id, Kind.MobileBase) });
-    var util = w.Entities.Find(e => World.IsUtility(e) && e.Owner == 0);
-    while (util.Building > 0) w.Step(Array.Empty<Command>());
-    w.Step(new Command[] { new Order(0, util.Id, Kind.MobileBase) });
-    Entity truck = null;
-    for (int t = 0; t < 1000 && truck == null; t++) { w.Step(Array.Empty<Command>()); truck = w.Entities.Find(e => e.Kind == Kind.MobileBase); }
-    // The nearest metal deposit out from home on player 0's side (guarded, as every one away from home is).
-    int metalAt = -1;
-    for (int d = 0; d < World.Deposits.Length; d++)
-    {
-        var dist = (World.Deposits[d] - hq0.Pos).Length.ToInt();
-        if (World.DepositResource[d] != Resource.Metal || dist < 40 || World.Deposits[d].X.Raw > 0) continue;
-        if (metalAt < 0 || dist < (World.Deposits[metalAt] - hq0.Pos).Length.ToInt()) metalAt = d;
-    }
-    var spot = World.Deposits[metalAt] + (World.Deposits[metalAt] - hq0.Pos).WithLength(Fix.FromInt(8));   // (just past it, clear of the HQ)
-    w.Step(new Command[] { new MoveUnits(0, new[] { truck.Id }, spot) });
-    for (int t = 0; t < 4000 && truck.HasWaypoint; t++) w.Step(Array.Empty<Command>());
-    bool guarded = !World.FeralsOn || (!w.CanDeploy(0, truck.Id, out _) && w.GuardNear(World.Deposits[metalAt]));   // (no guards with ferals off)
-    foreach (var g in w.Entities) if (g.Owner == World.Feral && (g.Pos - World.Deposits[metalAt]).LengthSq < Fix.FromInt(30 * 30)) g.Hp = 0;   // cleared
+    var p = w.Players[0];
+    var hq0 = w.HqOf(0);
+    w.Step(new Command[] { new QueueUnit(0, Kind.LightTank), new QueueUnit(1, Kind.Ranger) });
+    bool started = w.Started;
     w.Step(Array.Empty<Command>());
-    bool canDeploy = w.CanDeploy(0, truck.Id, out var why);
-    w.Step(new Command[] { new Deploy(0, truck.Id) });
-    var post = w.Entities.Find(e => e.Kind == Kind.Outpost && e.Owner == 0);
-    while (post != null && post.Building > 0) w.Step(Array.Empty<Command>());
-    bool canMine = w.CanPlaceExtractor(0, metalAt, out _);
-    // Wings go on the extractor there (and the set-up base starts lines too); when the extractor falls its wing goes with it.
-    w.Step(new Command[] { new PlaceExtractor(0, metalAt) });
-    var rig = w.Entities.Find(e => e.Kind == Kind.Extractor && e.Owner == 0 && e.Deposit == metalAt);
-    if (rig != null) rig.Building = 0;
-    bool baseTakesNone = post != null && w.CanAddWing(0, post.Id, Kind.LightTank, out _);   // (now: the base takes them)
-    w.Step(new Command[] { new AddWing(0, rig?.Id ?? 0, Kind.LightTank) });
-    int wingsThere = rig == null || !baseTakesNone ? -1 : w.SlotsUsed(rig);
-    if (rig != null) rig.Hp = 0;
+    bool paid = p.Metal == World.StartMetal - World.UnitCost(Kind.LightTank) && p.Queue.Count == 0 && p.DoorMakes[0] == (int)Kind.LightTank;
+    int t0 = w.Tick;
+    Entity first = null;
+    while (first == null && w.Tick - t0 < 400) { w.Step(Array.Empty<Command>()); first = w.Entities.Find(e => e.Kind == Kind.LightTank && e.Owner == 0); }
+    int took = w.Tick - t0;
+    bool outFront = first != null && first.Door == 0 && (first.Pos - w.DoorSpot(0, 0, Kind.LightTank)).Length < 2;
+    bool repeated = p.Queue.Count == 1 && p.Queue[0] == (int)Kind.LightTank;
+
+    bool lockedTank = !w.CanQueue(0, Kind.Tank, out var lockWhy);
+    p.Metal = 100000;
+    w.Step(new Command[] { new SetRepeat(0, false), new Research(0, Tech.Door2), new Research(0, Tech.Wheel) });
+    for (int t = 0; t < 50; t++) w.Step(Array.Empty<Command>());
+    bool payingAsItGoes = p.ResearchSpent > 0 && p.ResearchSpent < Techs.Of(Tech.Door2).Cost / 3;
+    w.Step(new Command[] { new CancelResearch(0, 1) });
+    bool dropped = p.Research.Count == 1 && p.Research[0] == (int)Tech.Door2;
+    w.Step(new Command[] { new CancelResearch(0, 0) });
+    bool refunded = p.Research.Count == 0 && p.ResearchSpent == 0 && p.ResearchLeft == 0;
+    w.Step(new Command[] { new Research(0, Tech.Door2), new Research(0, Tech.Wheel) });
+    for (int t = 0; t < 70 * World.TicksPerSecond && p.Research.Count > 0; t++) w.Step(Array.Empty<Command>());
+    bool unlocked = p.Has[(int)Tech.Door2] && w.CanQueue(0, Kind.Tank, out _) && World.DoorsOf(p) == 2;
+    while (p.DoorMakes[0] >= 0) w.Step(Array.Empty<Command>());   // (the repeat light tank done)
+    w.Step(new Command[] { new QueueUnit(0, Kind.Tank), new QueueUnit(0, Kind.Ranger) });
     w.Step(Array.Empty<Command>());
+    bool twoAtOnce = p.DoorMakes[0] == (int)Kind.Tank && p.DoorMakes[1] == (int)Kind.Ranger;
+
+    int hpBefore = hq0.MaxHp, tierBefore = p.Tier;
+    p.Mined += World.CollectedFor(3);
     w.Step(Array.Empty<Command>());
-    int wingsLeft = w.Entities.Count(e => e.Kind == Kind.Factory && e.Owner == 0);
+    bool grew = tierBefore == 1 && p.Tier == 3 && hq0.MaxHp > hpBefore && hq0.Hp == hq0.MaxHp;
 
     // Radar: an enemy tank 60 out from the HQ, where nothing of ours sees it.
     while (w.Tick % World.RadarTicks != World.RadarTicks - 1) w.Step(Array.Empty<Command>());   // (just before a sweep)
     var sneak = w.Spawn(Kind.Tank, 1, hq0.Pos + new FixVec2(-10, -55));
     w.Step(Array.Empty<Command>());
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
-    bool ok = truck != null && guarded && canDeploy && post != null && canMine && baseTakesNone && wingsThere == 1 && wingsLeft == 2 && blip;
-    Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest() && MenderTest() && BulwarkTest();
+    bool ok = started && paid && first != null && Math.Abs(took - World.StatsFor[(int)Kind.LightTank].BuildTicks) <= 2 && outFront && repeated
+        && lockedTank && payingAsItGoes && dropped && refunded && unlocked && twoAtOnce && grew && blip;
+    Console.WriteLine($"HQ test: started {started}, paid at the door {paid}, first light tank after {took / 10.0:0.0} s out front {outFront}, repeated {repeated}; " +
+        $"tank locked {lockedTank} ({lockWhy}), research paid as it goes {payingAsItGoes}, dropped {dropped} refunded {refunded}, unlocked {unlocked}, two doors at once {twoAtOnce}; " +
+        $"tier {tierBefore}->{p.Tier} HQ {hpBefore}->{hq0.MaxHp}; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
+    return ok && (!World.FeralsOn || WaveTest()) && MenderTest() && BulwarkTest();
 }
 
-// Resource hosts: a tank wing on a sulfur extractor makes enhanced tanks (harder hits, fires); one on a power plant
-// draws half the power.
-bool HostTest()
-{
-    var w = new World(5, new[] { Civ.Coalition, Civ.Coalition });
-    foreach (var p in w.Players) p.Metal = 100000;
-    var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
-    var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
-    w.Step(new Command[] { new AddWing(0, hq.Id, Kind.LightTank), new AddWing(1, hq1.Id, Kind.LightTank) });
-    int sulfurAt = Array.FindIndex(World.DepositResource, r => r == Resource.Sulfur);
-    var pit = w.Spawn(Kind.Extractor, 0, World.Deposits[sulfurAt]);
-    pit.Deposit = sulfurAt; pit.Building = 0;
-    var plant = w.Spawn(Kind.PowerPlant, 0, World.Vents[0]);
-    plant.Vent = 0; plant.Building = 0;
-    w.Step(new Command[] { new AddWing(0, pit.Id, Kind.Tank), new AddWing(0, plant.Id, Kind.Artillery) });
-    var onSulfur = w.Entities.Find(e => e.Kind == Kind.Factory && e.BaseId == pit.Id);
-    var onPlant = w.Entities.Find(e => e.Kind == Kind.Factory && e.BaseId == plant.Id);
-    foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) f.Building = 0;
-    Entity tank = null;
-    for (int t = 0; t < 1200 && tank == null; t++) { w.Step(Array.Empty<Command>()); tank = w.Entities.Find(e => e.Kind == Kind.Tank && e.FactoryId == onSulfur?.Id); }
-    bool ok = onSulfur != null && onPlant != null && tank != null && tank.Enhanced && w.WingDraw(onPlant) == World.PowerDraw(Kind.Artillery) / 2;
-    Console.WriteLine($"Host test: sulfur wing {(onSulfur != null)}, its tank enhanced {tank?.Enhanced}, plant wing draws {(onPlant == null ? -1 : w.WingDraw(onPlant))} of {World.PowerDraw(Kind.Artillery)}: {(ok ? "OK" : "FAILED")}");
-    return ok;
-}
-
-// Power: three tank wings (drawing 6) on the HQ's 4 make their first tank in half as long again (45 s becomes
-// 67.5 s); with a power plant up as well, in the usual 45 s.
 // A mender catches up with a damaged tank and mends it back to full, no further.
 bool MenderTest()
 {
     var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
     var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
     var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
-    w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Mender), new AddWing(1, hq1.Id, Kind.Mender) });
+    w.Started = true;
     var tank = w.Spawn(Kind.Tank, 0, hq.Pos + new FixVec2(14, 0));
     var mender = w.Spawn(Kind.Mender, 0, hq.Pos + new FixVec2(14, 12));
     tank.Hp = tank.MaxHp / 2;
@@ -311,7 +296,7 @@ bool MenderTest()
         w.Step(Array.Empty<Command>());
         if (w.Tick - start == 100) after10 = tank.Hp;
     }
-    bool ok = !tank.Dead && after10 > half + 50 && tank.Hp == tank.MaxHp;
+    bool ok = !tank.Dead && after10 > half + 50 && tank.Hp >= tank.MaxHp - 20 && tank.Hp <= tank.MaxHp;   // (it ends up trading shots with the enemy HQ)
     Console.WriteLine($"Mender test: tank at {half}/{tank.MaxHp}, after 10 s {after10}, after 2 min {tank.Hp}: {(ok ? "OK" : "FAILED")}");
     return ok;
 }
@@ -324,7 +309,7 @@ bool BulwarkTest()
         var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
         var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
         var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
-        w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Bulwark), new AddWing(1, hq1.Id, Kind.Bulwark) });
+        w.Started = true;
         var mid = new FixVec2(0, 0);
         var tank = w.Spawn(Kind.Tank, 0, mid);
         if (domed) w.Spawn(Kind.Bulwark, 0, mid + new FixVec2(-3, 0));
@@ -339,38 +324,12 @@ bool BulwarkTest()
     return ok;
 }
 
-bool PowerTest()
-{
-    int FirstTank(bool plant)
-    {
-        var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
-        foreach (var p in w.Players) p.Metal = 100000;
-        var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
-        var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
-        w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Tank), new AddWing(0, hq.Id, Kind.Tank), new AddWing(0, hq.Id, Kind.Tank), new AddWing(1, hq1.Id, Kind.LightTank) });
-        if (plant)
-        {
-            int v = Array.FindIndex(World.Vents, at => w.BaseNear(0, at, World.BaseReach) != null);
-            w.Spawn(Kind.PowerPlant, 0, World.Vents[v]).Vent = v;
-            w.Entities.Find(e => e.Kind == Kind.PowerPlant).Building = 0;
-        }
-        foreach (var f in w.Entities.FindAll(e => e.Kind == Kind.Factory)) f.Building = 0;
-        int start = w.Tick;
-        while (!w.Entities.Exists(e => e.Kind == Kind.Tank) && w.Tick - start < 2000) w.Step(Array.Empty<Command>());
-        return w.Tick - start;
-    }
-    int shortOf = FirstTank(false), powered = FirstTank(true);
-    bool ok = Math.Abs(shortOf - 675) <= 5 && Math.Abs(powered - 450) <= 5;
-    Console.WriteLine($"Power test: first tank with 6 drawn on 4 supplied after {shortOf / 10.0:0.0} s, with a plant {powered / 10.0:0.0} s: {(ok ? "OK" : "FAILED")}");
-    return ok;
-}
-
 // The first feral wave comes in from both edges a minute after the start.
 bool WaveTest()
 {
     var w = new World(3, new[] { Civ.Coalition, Civ.Coalition });
     var hqs = w.Entities.FindAll(e => e.Kind == Kind.Hq);
-    w.Step(new Command[] { new AddWing(0, hqs[0].Id, Kind.Tank), new AddWing(1, hqs[1].Id, Kind.Tank) });
+    w.Step(new Command[] { new QueueUnit(0, Kind.LightTank), new QueueUnit(1, Kind.LightTank) });
     for (int t = 0; t < World.FirstWaveTicks + 5; t++) w.Step(Array.Empty<Command>());
     int ferals = w.Entities.Count(e => e.Owner == World.Feral && e.Stats.IsUnit && Fix.Abs(e.Pos.X) > World.MapHalfX - 20);
     bool ok = ferals >= 6;
@@ -394,19 +353,17 @@ int ReplayTest()
         bool script = Environment.GetEnvironmentVariable("NOSCRIPT") != "1";   // NOSCRIPT=1: just the AIs, for fair win counts
         if (script && world.Tick == 600) cmds.Add(new Pause(0));
         if (script && world.Tick == 700) cmds.Add(new Resume(0));
-        // Player 0 holds its first factory's units near home for a while, then lets them go.
-        var first0 = world.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 0);
-        if (script && first0 != null && world.Tick == 300) cmds.Add(new SetRally(0, first0.Id, false, new FixVec2(-30, 5)));
-        // ...and sets a base rally at its HQ for a while (scouts and unrallied factories go there).
-        if (script && world.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0) is { } hq0 && (world.Tick == 400 || world.Tick == 1800))
+        // Player 0 sets a rally at its HQ for a while (new units gather there), then lets them go.
+        if (script && world.HqOf(0) is { } hq0 && (world.Tick == 400 || world.Tick == 1800))
             cmds.Add(new SetRally(0, hq0.Id, world.Tick == 1800, new FixVec2(-45, -8)));
-        if (script && first0 != null && world.Tick == 1500) cmds.Add(new SetRally(0, first0.Id, true, FixVec2.Zero));
-        // ...and later sells its newest factory or outpost.
-        // It snaps modules onto its HQ's lines (more than it can pay for: the rest are refused), then a wing after them.
-        if (script && (world.Tick == 1000 || world.Tick == 1100) && world.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0) is { } mh0)
-            foreach (var m in new[] { Mod.Attack, Mod.Shield, Mod.Twin, Mod.Speed }) cmds.Add(new AddModule(0, mh0.Id, world.Tick == 1000 ? 1 : 2, m));
-        if (script && world.Tick == 1050 && world.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0) is { } wh0) cmds.Add(new AddWingAt(0, wh0.Id, 1, Kind.LightTank));
-        if (script && world.Tick == 2000 && world.Entities.FindLast(e => e.Kind == Kind.Factory && e.Owner == 0) is { } sold)
+        // It queues research (more than it can pay for: it waits) and drops one; takes a unit off its queue; turns
+        // Repeat off and on again.
+        if (script && world.Tick == 1000) foreach (var t in new[] { Tech.Plating1, Tech.Servos1, Tech.Door2, Tech.Dart }) cmds.Add(new Research(0, t));
+        if (script && world.Tick == 1100) cmds.Add(new CancelResearch(0, 2));
+        if (script && world.Tick == 1200) cmds.Add(new Unqueue(0, 0));
+        if (script && (world.Tick == 1500 || world.Tick == 1600)) cmds.Add(new SetRepeat(0, world.Tick == 1600));
+        // ...and later sells its newest defence.
+        if (script && world.Tick == 3000 && world.Entities.FindLast(e => World.IsDefence(e.Kind) && e.Owner == 0) is { } sold)
         {
             Console.WriteLine($"  t={world.Tick}: player 0 sells {sold.Kind} {sold.Id} for {World.SellValue(sold)} (metal {world.Players[0].Metal})");
             cmds.Add(new Sell(0, sold.Id));
@@ -470,15 +427,12 @@ int LanTest()
                 // The client calls a pause and ends it early.
                 if (i == 1 && w.Tick == 600) ss.Issue(new Pause(1));
                 if (i == 1 && w.Tick == 700) ss.Issue(new Resume(1));
-                var first1 = w.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == 1);
-                if (i == 1 && first1 != null && w.Tick == 300) ss.Issue(new SetRally(1, first1.Id, false, new FixVec2(30, -5)));
-                if (i == 1 && (w.Tick == 400 || w.Tick == 1800) && w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1) is { } hq1)
+                if (i == 1 && (w.Tick == 400 || w.Tick == 1800) && w.HqOf(1) is { } hq1)
                     ss.Issue(new SetRally(1, hq1.Id, w.Tick == 1800, new FixVec2(45, 8)));
-                if (i == 1 && first1 != null && w.Tick == 1500) ss.Issue(new SetRally(1, first1.Id, true, FixVec2.Zero));
-                if (i == 1 && (w.Tick == 1000 || w.Tick == 1100) && w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1) is { } mh1)
-                    foreach (var m in new[] { Mod.Armour, Mod.Attack, Mod.Build }) ss.Issue(new AddModule(1, mh1.Id, 1, m));
-                if (i == 1 && w.Tick == 1050 && w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1) is { } wh1) ss.Issue(new AddWingAt(1, wh1.Id, 1, Kind.Tank));
-                if (i == 1 && w.Tick == 2000 && w.Entities.FindLast(e => e.Kind == Kind.Factory && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
+                if (i == 1 && w.Tick == 1000) foreach (var t in new[] { Tech.Gunnery1, Tech.Lobber, Tech.Door2 }) ss.Issue(new Research(1, t));
+                if (i == 1 && w.Tick == 1100) ss.Issue(new CancelResearch(1, 0));
+                if (i == 1 && w.Tick == 1200) ss.Issue(new Unqueue(1, 0));
+                if (i == 1 && w.Tick == 3000 && w.Entities.FindLast(e => World.IsDefence(e.Kind) && e.Owner == 1) is { } sold) ss.Issue(new Sell(1, sold.Id));
             }
             if (ss.TryStep()) { any = true; if (w.Paused) pausedTicks[i]++; if (i == 0 && w.Tick % 1200 == 0) Report(w); }
             else stalls++;
@@ -502,21 +456,18 @@ static int MaxRank(World w) { int r = 0; foreach (var e in w.Entities) r = Math.
 
 static void Report(World world)
 {
-    int m0 = 0, m1 = 0, f0 = 0, f1 = 0, o0 = 0, o1 = 0, x0 = 0, x1 = 0, s0 = 0, s1 = 0;
+    int m0 = 0, m1 = 0, s0 = 0, s1 = 0;
     foreach (var e in world.Entities)
     {
         if (e.Owner == World.Feral) continue;
         if (e.Stats.IsUnit) { if (e.Owner == 0) m0++; else m1++; }
-        if (e.Kind == Kind.Factory) { if (e.Owner == 0) f0++; else f1++; }
-        if (e.Kind == Kind.Outpost) { if (e.Owner == 0) o0++; else o1++; }
-        if (e.Kind == Kind.Extractor) { if (e.Owner == 0) x0++; else x1++; }
         if (e.Kind == Kind.Scout) { if (e.Owner == 0) s0++; else s1++; }
     }
     var hq = world.Entities.FindAll(e => e.Kind == Kind.Hq);
-    Console.WriteLine($"t={world.Tick / 10,4}s  wings {f0}v{f1}  bases {o0}v{o1}  sulfur {world.SulfurOf(0)}v{world.SulfurOf(1)}  extractors {x0}v{x1}  scouts {s0}v{s1}  metal {world.Players[0].Metal}/{world.Players[1].Metal}  units {m0}v{m1}  ferals {world.Entities.Count(e => e.Owner == World.Feral)} (wave {world.WaveNumber})  defences {world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 0)}v{world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 1)}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
+    var (a, b) = (world.Players[0], world.Players[1]);
+    Console.WriteLine($"t={world.Tick / 10,4}s  tier {a.Tier}v{b.Tier}  doors {World.DoorsOf(a)}v{World.DoorsOf(b)}  researched {a.Has.Count(h => h)}v{b.Has.Count(h => h)}  queued {a.Queue.Count}v{b.Queue.Count}  scouts {s0}v{s1}  metal {a.Metal}/{b.Metal}  units {m0}v{m1}  defences {world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 0)}v{world.Entities.Count(e => World.IsDefence(e.Kind) && e.Owner == 1)}  HQ hp {string.Join("/", hq.ConvertAll(h => h.Hp))}  top rank {MaxRank(world)}");
     string Front(int p) { var xs = world.Entities.FindAll(e => e.Owner == p && World.IsArmy(e.Kind)).ConvertAll(e => e.Pos.X.ToInt()); xs.Sort(); return xs.Count == 0 ? "-" : $"{xs[0]}..{xs[xs.Count / 2]}..{xs[^1]}"; }
-    Console.WriteLine($"         power: {world.PowerDrawOf(0)}/{world.PowerSupply(0)} v {world.PowerDrawOf(1)}/{world.PowerSupply(1)} (draw/supply), plants {world.Entities.Count(e => e.Kind == Kind.PowerPlant && e.Owner == 0)}v{world.Entities.Count(e => e.Kind == Kind.PowerPlant && e.Owner == 1)}");
-    Console.WriteLine($"         earned: mined {world.Players[0].Mined}/{world.Players[1].Mined}, salvage {world.Players[0].Salvaged}/{world.Players[1].Salvaged}");
+    Console.WriteLine($"         earned: trickle {world.Players[0].Mined}/{world.Players[1].Mined}, salvage {world.Players[0].Salvaged}/{world.Players[1].Salvaged}");
     Console.WriteLine($"         army x (min..median..max): p0 {Front(0)}   p1 {Front(1)}   army {world.ArmyCount(0)}v{world.ArmyCount(1)}");
     // Units in the water (they never should be), and how many are in the middle.
     int shut = world.Entities.Count(e => e.Stats.IsUnit && !Nav.OpenAt(e.Pos));
@@ -529,26 +480,31 @@ static void Report(World world)
     Console.WriteLine($"         units in water: {shut}   in the middle: {crossing}" + (zs.Count > 0 ? $" (z {zs.Min()}..{zs.Max()})" : ""));
 }
 
-// Modules feed the wings after them on their line (the user, 2026-10-23: "armoury upgrade, then whatever comes after
-// has more firepower"): attack then a shield coil then a twin feed, a tank wing after them; a wing on another line gets
-// none; the tanks come out hitting harder, shielded, and every third one with a twin.
-bool ModuleTest()
+// Research upgrades every unit made after it, side-wide: gunnery hits harder, a shield coil shields, the twin feed
+// sends every third unit out with a twin; a light tank made before them has none of it.
+bool UpgradeTest()
 {
     var w = new World(2, new[] { Civ.Coalition, Civ.Coalition });
-    var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
-    w.Players[0].Metal = 5000;
-    w.Step(new Command[] { new AddModule(0, hq.Id, 0, Mod.Attack), new AddModule(0, hq.Id, 0, Mod.Shield), new AddModule(0, hq.Id, 0, Mod.Twin) });
-    w.Step(new Command[] { new AddWingAt(0, hq.Id, 0, Kind.Tank), new AddWingAt(0, hq.Id, 1, Kind.Tank) });
-    var fed = w.Entities.Find(e => e.Kind == Kind.Factory && e.Slot == 0);
-    var plain = w.Entities.Find(e => e.Kind == Kind.Factory && e.Slot == 1);
-    w.Started = true;
+    var p = w.Players[0];
+    p.Metal = 100000;
+    w.Step(new Command[] { new QueueUnit(0, Kind.LightTank), new QueueUnit(1, Kind.LightTank), new SetRepeat(0, false), new SetRepeat(1, false) });
+    Entity plain = null;
+    for (int t = 0; t < 400 && plain == null; t++) { w.Step(Array.Empty<Command>()); plain = w.Entities.Find(e => e.Kind == Kind.LightTank && e.Owner == 0); }
+    w.HqOf(1).Damage = 0;   // (the tanks drive off to the enemy HQ: it mustn't shoot them before they're counted)
+    var plan = new[] { Tech.Lobber, Tech.Gunnery1, Tech.Mender, Tech.Bulwark, Tech.ShieldCoil, Tech.Tooling1, Tech.Tooling2, Tech.Twin };
+    foreach (var t in plan)
+    {
+        while (p.Research.Count >= World.MaxResearchQueue) w.Step(Array.Empty<Command>());
+        w.Step(new Command[] { new Research(0, t) });
+    }
+    for (int t = 0; t < 600 * World.TicksPerSecond && p.Research.Count > 0; t++) w.Step(Array.Empty<Command>());
+    bool researched = plan.All(t => p.Has[(int)t]) && p.Mods[(int)Mod.Attack] == 1 && p.Mods[(int)Mod.Build] == 2;
+    int before = w.Entities.Count(e => e.Kind == Kind.LightTank && e.Owner == 0);
+    for (int i = 0; i < 6; i++) w.Step(new Command[] { new QueueUnit(0, Kind.LightTank) });
     int ticks = 0;
-    while (ticks++ < 260 * World.TicksPerSecond && w.Entities.Count(e => e.FactoryId == fed.Id) < 3) w.Step(Array.Empty<Command>());
-    var made = w.Entities.FindAll(e => e.FactoryId == fed.Id);
-    var other = w.Entities.Find(e => e.FactoryId == plain.Id);
-    bool ok = fed.Link == 3 && fed.Mods[(int)Mod.Attack] == 1 && fed.Mods[(int)Mod.Twin] == 1 && plain.Mods.Sum() == 0
-        && made.Count >= 3 && made.All(u => (u.Shield > 0 || u.Hp < u.MaxHp) && u.Damage > (other?.Damage ?? 0)) && other != null && other.Shield == 0;
-    Console.WriteLine($"Module test: wing at place {fed.Link} with attack {fed.Mods[(int)Mod.Attack]} shield {fed.Mods[(int)Mod.Shield]} twin {fed.Mods[(int)Mod.Twin]}; " +
-        $"{made.Count} made in {ticks / World.TicksPerSecond} s (damage {made.FirstOrDefault()?.Damage} vs {other?.Damage}, shield {made.Max(u => u.Shield)}): {(ok ? "OK" : "FAILED")}");
+    while (ticks++ < 300 * World.TicksPerSecond && (p.Queue.Count > 0 || p.DoorMakes[0] >= 0)) w.Step(Array.Empty<Command>());
+    var made = w.Entities.FindAll(e => e.Kind == Kind.LightTank && e.Owner == 0 && e.Id > plain.Id);
+    bool ok = researched && made.Count >= 8 && made.All(u => u.Damage > plain.Damage && (u.Shield > 0 || u.Hp < u.MaxHp)) && plain.Shield == 0;
+    Console.WriteLine($"Upgrade test: researched {researched}; 6 queued made {made.Count} (twins), damage {made.FirstOrDefault()?.Damage} vs {plain.Damage}, shield {made.Max(u => (int?)u.Shield)} vs {plain.Shield}: {(ok ? "OK" : "FAILED")}");
     return ok;
 }

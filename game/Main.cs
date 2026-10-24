@@ -12,19 +12,18 @@ namespace Battler.Game;
 /// Runs a match: steps the session at a fixed rate, draws the world (interpolating between
 /// ticks), and turns the player's clicks and keys into commands.
 ///
-/// Controls: B opens the build menu, then a letter: L light tank / T tank / M mortar / A artillery factory, X extractor
-/// on a deposit, O outpost on the pad by one of your extractors, C a scout from the HQ (B or Esc closes it; while
-/// placing, Esc or right click cancels). The old keys still work: 1-4 factories, 5 outpost, 6 extractor, Q scout.
-/// E picks all scouts; click, Shift-click
-/// or drag a box to pick scouts, right-click to send them. A click selects anything else to see its stats, upgrades
-/// and Sell (Esc clears). WASD/arrows pan, wheel zooms, middle-drag turns and tilts the view, V resets it,
-/// P calls a tactical pause, Enter ends your pause early, R restarts once someone has won (vs AI).
+/// Controls: click your HQ (or B) for its card: units to queue, the tech tree (Tab), defences. E picks all scouts;
+/// click, Shift-click or drag a box to pick scouts, right-click to send them. Right-click the ground with the HQ picked
+/// to set its rally point. A click selects anything else to see its stats (Esc clears). WASD/arrows pan, wheel zooms,
+/// middle-drag turns and tilts the view, V resets it, P calls a tactical pause, Enter ends your pause early, R restarts
+/// once someone has won (vs AI).
 ///
 /// Command line (after "--"): nothing = vs AI; --host = wait for a LAN opponent;
 /// --join [ip] = join a host (default 127.0.0.1); --auto = an AI plays your side;
 /// --shot = 60 s of AI vs AI, save screenshots/shot.png, quit (with --at N seconds, --wide for the whole map, --fight
-/// to close on the busiest fight, --frames N to play on N frames first, --placing [node] to hold a building under the
-/// centre, --hq to pick my HQ with a base rally set, --menu to show the Escape menu, --napalm to light fires in view, --build to bring up the HQ's card, --hover N to show its button N's popup).
+/// to close on the busiest fight, --frames N to play on N frames first, --hq to pick my HQ with a rally set, --menu to
+/// show the Escape menu, --napalm to light fires in view, --build to bring up the HQ's card, --tech for the tech tree,
+/// --hover N to show card button N's popup).
 /// </summary>
 public partial class Main : Node3D
 {
@@ -47,10 +46,7 @@ public partial class Main : Node3D
     string _connectStatus;
 
     readonly Dictionary<int, Node3D> _views = new();
-    (Kind Makes, Mod? Mod)? _linePick;   // build mode for a line: the wing (or module) a click snaps onto the end of the nearest line
-    int _lineHost = -1, _lineSlot = -1;
-    FixVec2 _lineToward;
-    Kind? _placing;                // build mode: the factory a click places (keys 1-3; Esc or a placement ends it)
+    Kind? _placing;                // build mode: the defence a click places (Esc or a placement ends it)
     int _selected = -1;            // the entity whose stats are shown (click it; Esc clears)
     Overlay _overlay;
     PanelContainer _statsPanel;
@@ -58,11 +54,9 @@ public partial class Main : Node3D
     MeshInstance3D _selRing;
     readonly HashSet<int> _scouts = new();   // my scouts picked to be sent somewhere (click, Shift-click, drag a box, or E)
     Vector2? _dragFrom;                       // where a left-button drag began, on screen
-    readonly List<Node3D> _depositViews = new();
-    readonly Dictionary<int, Node3D> _padViews = new();   // per deposit with one: its outpost pad
     int _sellArmed = -1;          // the building a first click on Sell asked about
     ulong _sellArmedUntil;
-    string _placeProblem;          // why the factory can't go under the mouse
+    string _placeProblem;          // why the defence can't go under the mouse
     readonly List<(MeshInstance3D Node, float Age)> _blasts = new();   // artillery impacts, fading
     readonly Dictionary<int, Vector3> _prevPos = new();
     readonly Dictionary<int, Vector3> _facing = new();
@@ -79,9 +73,6 @@ public partial class Main : Node3D
     Camera3D _camera;
     Vector3 _focus;
     float _distance = 70;
-    MeshInstance3D _ghost;
-    StandardMaterial3D _ghostMat;
-    readonly List<Node3D> _heldGhosts = new();
     StandardMaterial3D _tracerMat;
     Label _hud;
     Label _banner;
@@ -128,9 +119,6 @@ public partial class Main : Node3D
             int at = args.IndexOf("--at") is int ai and >= 0 && ai + 1 < args.Count ? int.Parse(args[ai + 1]) : 150;   // seconds in
             for (int i = 0; i < at * World.TicksPerSecond; i++)
             {
-                // 30 s before the shot, my first factory's units are told to rally in front of the base.
-                if (i == (at - 30) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Factory && e.Owner == _me) is { } rf)
-                    _session.Issue(new SetRally(_me, rf.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + TowardEnemy(_me) * 44)));
                 if (args.Contains("--hq") && i == (at - 20) * World.TicksPerSecond && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } rh)
                     _session.Issue(new SetRally(_me, rh.Id, false, ToFix(ToV3(W.Players[_me].HqPos) + TowardEnemy(_me) * 16)));   // a base rally in front of the HQ
                 StepWorld();
@@ -140,9 +128,8 @@ public partial class Main : Node3D
             }
             _focus = Vector3.Zero;
             _distance = 60;
-            _selected = W.Entities.Where(e => e.Owner == _me && e.Kind == Kind.Factory).OrderByDescending(e => e.HasRally).ThenByDescending(e => e.Levels.Sum()).FirstOrDefault()?.Id ?? -1;   // the rallying one, else the most upgraded
-            var picked = W.Find(_selected);
-            if (picked != null) { _focus = ToV3(picked.Pos) + new Vector3(4, 0, 3); _distance = 26; }   // close on it and its door
+            _selected = W.HqOf(_me)?.Id ?? -1;
+            if (W.Find(_selected) is { } picked) { _focus = ToV3(picked.Pos) + TowardEnemy(_me) * 4; _distance = 34; }   // close on my HQ
             if (args.Contains("--wide")) { _focus = new Vector3(0, 0, 4); _distance = 400; _noFog = true; UpdateFog(); }   // the whole map, fog lifted
             if (args.Contains("--fight"))   // close on the busiest fight, fog lifted
             {
@@ -151,24 +138,11 @@ public partial class Main : Node3D
                     .FirstOrDefault();
                 if (hot != null) { _focus = ToV3(hot.Pos); _distance = 24; _noFog = true; UpdateFog(); _selected = -1; }
             }
-            if (args.IndexOf("--placing") is int pi and >= 0)   // something in hand under the screen's centre: a tank factory, or "outpost"
-            {
-                _placeAtCentre = true;
-                _placing = pi + 1 < args.Count && args[pi + 1] == "node" ? Kind.Node : Kind.Tank;
-                if (_placing == Kind.Node && W.Entities.FindLast(e => e.Kind == Kind.Node && e.Owner == _me) is { } last)   // at the end of my network
-                { _focus = ToV3(last.Pos); _distance = 50; _selected = -1; }
-            }
             if (args.Contains("--hq") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } myHq)   // my HQ picked: its panel
             { _selected = myHq.Id; _focus = ToV3(myHq.Pos) + new Vector3(6, 0, 4); _distance = 34; }
             if (args.Contains("--menu")) SetMenu(true);   // the Escape menu open
             if (args.Contains("--build")) OpenBuildCard();   // the HQ's build card up
-            if (args.Contains("--modules")) { _cardFor = _selected; _cardPage = "modules"; }   // its modules page
-            if (args.Contains("--linepick") && W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me) is { } lineHq)   // snapping an attack module onto a line, aimed at the screen centre
-            {
-                StartLinePick(Kind.Hq, Mod.Attack);
-                _placeAtCentre = true;
-                _focus = ToV3(World.LineSpot(lineHq, 0, W.FreeLink(lineHq, 0) is var fl and >= 0 ? fl : 0)); _distance = 40; _selected = -1;
-            }
+            if (args.Contains("--tech")) SetTechTree(true);   // the tech tree up
             if (args.IndexOf("--hover") is int hv and >= 0 && hv + 1 < args.Count) _hover = int.Parse(args[hv + 1]);   // a card button's popup showing
             if (args.IndexOf("--view") is int vi and >= 0 && vi + 2 < args.Count)   // --view yawDegrees pitchDegrees: a turned view
             {
@@ -217,19 +191,6 @@ public partial class Main : Node3D
                 // Team 0 faces right (toward the enemy), team 1 left, both a little toward the camera.
                 unit.Basis = Basis.LookingAt(new Vector3(team == 0 ? 1 : -1, 0, 0.35f).Normalized(), Vector3.Up);
             }
-        // An outpost beside them, to judge its model.
-        var post = UnitArt.Make("outpost", TeamColor[0]);
-        AddChild(post);
-        post.Position = new Vector3(35, 0, 3);
-        post.Basis = Basis.LookingAt(Vector3.Right, Vector3.Up);
-        // An extractor, and a deposit nobody mines yet.
-        var rig = UnitArt.Make("extractor", TeamColor[1]);
-        AddChild(rig);
-        rig.Position = new Vector3(35, 0, -5);
-        rig.Basis = Basis.LookingAt(Vector3.Left, Vector3.Up);
-        var ore = UnitArt.Make("deposit", Neutral);
-        AddChild(ore);
-        ore.Position = new Vector3(42, 0, -1);
         // A row of tanks being built, a fifth, half and four fifths done (the digitising effect).
         for (int i = 0; i < 3; i++)
         {
@@ -459,8 +420,8 @@ public partial class Main : Node3D
     void StartMatch(ISession session)
     {
         foreach (var v in _views.Values) v.QueueFree();
-        foreach (var v in _ports.Values.Concat(_links.Values)) v.QueueFree();
-        _ports.Clear(); _links.Clear(); _buildingRigs.Clear(); _wingTimer.Clear(); _wingCounting.Clear(); _rigs.Clear();
+        foreach (var id in _pyramids.Keys.ToList()) ForgetPyramid(id);
+        _buildingRigs.Clear(); _rigs.Clear();
         _views.Clear(); _prevPos.Clear(); _facing.Clear(); _aim.Clear(); _seenBuildings.Clear(); _rising.Clear(); _rollOut.Clear();
         _proj?.Clear(); _booms?.Clear(); _dust?.Clear(); _tracks?.Clear(); _forest?.Reset(); _salvageTexts.Clear();
         ClearFieldViews();
@@ -474,37 +435,31 @@ public partial class Main : Node3D
         UpdateFog();
     }
 
-    /// <summary>A straight fight in the middle of the map, fog lifted, the camera on it: "tanks" (5 hover tanks a side),
-    /// "mechs" (5 rifle mechs) or "mixed" (both).</summary>
-    /// <summary>The base on show (--base): my HQ with a hover bay, a mech bay and a wheel bay already up, their first
-    /// units a few seconds apart so each door opens in turn; no opponent moving.</summary>
+    /// <summary>The base on show (--base): my pyramid at a tier (BASE_TIER, 3 by default) with research done
+    /// (BASE_TECH: "all", "none", or names like Wheel,Dart; by default one step down every branch) and a few units
+    /// queued so its doors open in turn (BASE_MAKES=LightTank,Ranger,Tank); no opponent moving.</summary>
     void StartShowcase()
     {
         StartMatch(new SkirmishSession((ulong)GD.Randi(), System.Array.Empty<(Kind, int)>()));
-        var hq = W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+        var hq = W.HqOf(0);
         if (hq == null) return;
-        var makes = new[] { Kind.LightTank, Kind.Ranger, Kind.Tank };
-        if (OS.GetEnvironment("BASE_MAKES") is { Length: > 0 } list)   // other wings: BASE_MAKES=Mortar,Artillery,Flier
-            makes = list.Split(',').Select(n => System.Enum.Parse<Kind>(n.Trim(), true)).Take(World.SlotsOf(hq)).ToArray();
-        int count = int.TryParse(OS.GetEnvironment("BASE_WINGS"), out var bw) ? Mathf.Clamp(bw, 0, makes.Length) : makes.Length;   // (fewer: empty ports show)
-        // Each line: some modules, then its wing (BASE_PLAIN=1: wings only).
-        var feed = OS.GetEnvironment("BASE_PLAIN") == "1" ? new Mod[3][] { new Mod[0], new Mod[0], new Mod[0] }
-            : new[] { new[] { Mod.Armour, Mod.Attack }, new[] { Mod.Speed, Mod.Twin }, new[] { Mod.Build, Mod.Shield, Mod.Napalm } };
-        for (int i = 0; i < count; i++)
+        var p = W.Players[0];
+        p.Metal = 100000;
+        p.Mined = World.CollectedFor(int.TryParse(OS.GetEnvironment("BASE_TIER"), out var bt) ? bt : 3);
+        var techs = OS.GetEnvironment("BASE_TECH") switch
         {
-            int link = 0;
-            foreach (var m in feed[i % 3])
-            {
-                var module = W.Spawn(Kind.Module, 0, World.LineSpot(hq, i, link), Kind.Hq);
-                module.Mod = m; module.BaseId = hq.Id; module.Slot = i; module.Link = link++; module.Building = 0;
-            }
-            var wing = W.Spawn(Kind.Factory, 0, World.LineSpot(hq, i, link), makes[i]);
-            wing.BaseId = hq.Id;
-            wing.Slot = i;
-            wing.Link = link;
-            wing.Building = 0;   // (already up)
-            wing.Timer = (3 + i * 4) * World.TicksPerSecond;
-        }
+            "all" => Techs.All.Select(t => t.Id),
+            "none" => Enumerable.Empty<Tech>(),
+            { Length: > 0 } list => list.Split(',').Select(n => System.Enum.Parse<Tech>(n.Trim(), true)),
+            _ => Techs.All.Where(t => t.Row == 0 && t.Lane == 0).Select(t => t.Id),
+        };
+        foreach (var t in techs) { p.Has[(int)t] = true; if (Techs.Of(t).Gives is { } m) p.Mods[(int)m]++; }
+        var makes = OS.GetEnvironment("BASE_MAKES") is { Length: > 0 } names
+            ? names.Split(',').Select(n => System.Enum.Parse<Kind>(n.Trim(), true)).ToArray()
+            : new[] { Kind.LightTank, Kind.Ranger, Kind.Tank };
+        foreach (var k in makes) p.Queue.Add((int)k);
+        p.Repeat = false;
+        W.Players[1].Ordered = true;
         _noFog = true;
         UpdateFog();
         _focus = ToV3(hq.Pos) + TowardEnemy(0) * 3;
@@ -531,9 +486,8 @@ public partial class Main : Node3D
         _distance = 42;
     }
 
-    /// <summary>The build-range ring around my HQ.</summary>
-    /// <summary>The build-range rings: round my HQ and each of my outposts (redrawn each frame: outposts come, go
-    /// and grow their reach). They follow the ground.</summary>
+    /// <summary>Rings on the ground (redrawn each frame, following it): placing a defence, how far round the HQ it can
+    /// go and how far its gun would reach; round picked scouts and where they're going; the radar sweep.</summary>
     void BuildRing()
     {
         if (_ring.Mesh is not ImmediateMesh ring) { ring = new ImmediateMesh(); _ring.Mesh = ring; _ringMat = Unshaded(new Color(TeamColor[_me], 0.5f)); }
@@ -550,35 +504,17 @@ public partial class Main : Node3D
             }
             ring.SurfaceEnd();
         }
-        bool pickedTruck = _scouts.Any(id => W.Find(id) is { Kind: Kind.MobileBase });
         foreach (var e in W.Entities)
         {
-            // Placing an extractor: how far round each of my bases one can go.
-            if (_placing is Kind.Extractor or Kind.PowerPlant && e.Owner == _me && e.Building == 0)   // (how far each line's end, and each host, reaches)
-            {
-                if (World.IsWingHost(e)) Circle(e.Pos, World.HostClaimReach.ToFloat());
-                else if (e.Kind is Kind.Factory or Kind.Module && W.Find(e.BaseId) is { } lh && W.LineEnd(lh, e.Slot) == e) Circle(e.Pos, World.ClaimReach.ToFloat());
-            }
-            else if (_placing != null && e.Owner == _me && World.IsBase(e) && e.Building == 0) Circle(e.Pos, World.BaseReach.ToFloat());
-            // A mobile base picked: round every base, where it can't set up.
-            if (pickedTruck && World.IsBase(e) && Shown(e)) Circle(e.Pos, World.BaseSpacing.ToFloat());
+            if (_placing != null && e.Owner == _me && World.IsBase(e)) Circle(e.Pos, World.BaseReach.ToFloat());
             if (e.Owner != _me || !World.IsSteered(e.Kind)) continue;
-            // A picked scout or mobile base: a ring round it, and where it's going.
+            // A picked scout: a ring round it, and where it's going.
             if (_scouts.Contains(e.Id))
             {
                 Circle(e.Pos, 1.3f);
                 if (e.HasWaypoint) { Circle(e.Waypoint, 0.5f); Line(e.Pos, e.Waypoint); }
             }
         }
-        if (_placing == Kind.PowerPlant)
-            for (int v = 0; v < World.Vents.Length; v++)
-                if (W.PlantOn(v) == null && W.LineReaches(_me, World.Vents[v]))
-                    Circle(World.Vents[v], 3.4f);
-        // Placing an extractor: a ring round each free deposit in reach.
-        if (_placing == Kind.Extractor)
-            for (int d = 0; d < World.Deposits.Length; d++)
-                if (W.ExtractorOn(d) == null && W.LineReaches(_me, World.Deposits[d]))
-                    Circle(World.Deposits[d], 3.4f);
         SweepRings(Circle);   // the radar, just after it pings
         // Placing a gun: how far it will reach from where it would stand.
         if (_placing is { } gun && World.StatsFor[(int)gun].Range.Raw > 0 && _mouseGround is { } mg)
@@ -693,54 +629,8 @@ public partial class Main : Node3D
         _forest = new Forest();
         AddChild(_forest);
         if (OS.GetEnvironment("NOTREES") != "1") _forest.Plant(_terrain.TreeSpots);   // (NOTREES=1: none, to measure their cost)
-        // The power vents: a steaming scorch on each, hidden while a power plant stands on it.
-        for (int i = 0; i < World.Vents.Length; i++)
-        {
-            var vent = MakeVent(i);
-            vent.Position = ToV3(World.Vents[i]) with { Y = _terrain.HeightAt(World.Vents[i].X.ToFloat(), World.Vents[i].Z.ToFloat()) };
-            AddChild(vent);
-            _ventViews.Add(vent);
-        }
-        // The metal deposits: an outcrop of ore on each, hidden while an extractor stands on it.
-        for (int i = 0; i < World.Deposits.Length; i++)
-        {
-            var ore = World.DepositResource[i] switch
-            {
-                Battler.Sim.Resource.Sulfur => MakeSulfur(i),
-                Battler.Sim.Resource.Crystal => MakeCrystal(i),
-                Battler.Sim.Resource.Oil => MakeOil(i),
-                _ => UnitArt.Make("deposit", Neutral),
-            };
-            ore.Position = ToV3(World.Deposits[i]);
-            ore.Basis = new Basis(Vector3.Up, i * 1.7f).Scaled(Vector3.One * 1.4f);   // (bigger, to read from afar)
-            AddChild(ore);
-            _depositViews.Add(ore);
-            if (!World.HasPad[i]) continue;
-            // Its outpost pad: a hexagon of concrete with a lit rim, so it reads as "build here".
-            var pad = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 2.7f, BottomRadius = 2.9f, Height = 0.5f, RadialSegments = 6, Rings = 1 },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.43f, 0.45f), Roughness = 0.9f },
-                Position = ToV3(World.Pads[i]),
-            };
-            pad.AddChild(new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 2.75f, BottomRadius = 2.75f, Height = 0.06f, RadialSegments = 6, Rings = 1 },
-                MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = new Color(0.1f, 0.1f, 0.1f), EmissionEnabled = true, Emission = new Color(0.55f, 0.85f, 1f), EmissionEnergyMultiplier = 0.6f,
-                },
-                Position = new Vector3(0, 0.26f, 0), Scale = new Vector3(1, 1, 1),
-            });
-            pad.AddChild(new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 2.45f, BottomRadius = 2.45f, Height = 0.08f, RadialSegments = 6, Rings = 1 },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.37f, 0.39f), Roughness = 0.9f },
-                Position = new Vector3(0, 0.27f, 0),
-            });
-            AddChild(pad);
-            _padViews[i] = pad;
-        }
+        // (No deposits or vents on show: resources come from battle for now; the user, 2026-10-24: "later Im thinking we
+        // have a commander unit that can go collect resources".)
 
         _ring = new MeshInstance3D();
         AddChild(_ring);
@@ -758,10 +648,6 @@ public partial class Main : Node3D
         AddChild(_proj);
         _rallyLine = new ImmediateMesh();
         AddChild(new MeshInstance3D { Mesh = _rallyLine });
-
-        _ghostMat = Unshaded(new Color(0.3f, 1f, 0.4f, 0.4f));
-        _ghost = new MeshInstance3D { Mesh = MeshFor(Kind.Factory), MaterialOverride = _ghostMat, Visible = false };
-        AddChild(_ghost);
 
         _camera = new Camera3D { Fov = 40, Far = 1500, Near = 0.3f };
         AddChild(_camera);
@@ -814,6 +700,7 @@ public partial class Main : Node3D
         BuildMenu(ui);
         BuildQueueBar(ui);
         BuildCommandCard(ui);
+        BuildTechTree(ui);
     }
 
     static StandardMaterial3D Unshaded(Color c) => new()
@@ -831,7 +718,6 @@ public partial class Main : Node3D
         {
             Kind.Hq => new BoxMesh { Size = new Vector3(r * 1.6f, 3, r * 1.6f) },
             Kind.Tower => new CylinderMesh { TopRadius = r * 0.55f, BottomRadius = r * 0.9f, Height = 4.5f, RadialSegments = 8 },
-            Kind.Factory => new BoxMesh { Size = new Vector3(r * 1.7f, 2, r * 1.7f) },
             _ => new BoxMesh { Size = new Vector3(r * 1.6f, 1.6f, r * 1.2f) },
         };
         _meshes[(k, 0)] = m;
@@ -855,7 +741,7 @@ public partial class Main : Node3D
     }
     static string ModelOf(Kind k) => k.ToString().ToLowerInvariant();   // art/units/<name>.glb
 
-    /// <summary>A unit's model for a civilisation: the mobile base is each civilisation's own.</summary>
+    /// <summary>A unit's model for a civilisation.</summary>
     static string UnitModel(Kind k, Civ civ) => k == Kind.LightTank ? "hovertank"      // (the cel shaded hover tank, being explored: the user, 2026-10-23)
         : k == Kind.Ranger ? "mech"                                                            // (and the bird-legged rifle mech)
         : k == Kind.Tank ? "battlewheel"                                                       // (and the two-wheeled cannon)
@@ -867,55 +753,32 @@ public partial class Main : Node3D
         : k == Kind.Mender ? "mender"                                                          // (the repair carrier)
         : k == Kind.Bulwark ? "bulwark"                                                        // (the shield walker)
         : k == Kind.Hive ? "hive"                                                              // (the swarm carrier)
-        : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
+        : civ == Civ.Lattice && k is Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
-    /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
-    /// and extractors are their own ("l_hq" and so on, tools/art/model_lattice.py).</summary>
-    static string BuildingModel(Kind kind, Kind makes, Civ civ) =>
-        kind == Kind.Factory ? (civ == Civ.Lattice && makes is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" : "") + "factory_" + WingModel(makes)
-        : World.IsFeral(kind) ? ModelOf(kind) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
-
-    /// <summary>Which wing model makes a unit: fliers and bombers share the airfield.</summary>
-    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber or Kind.Hive ? "air" : makes is Kind.Mender or Kind.Bulwark ? "mobilebase" : ModelOf(makes);   // (menders come out of a utility yard)
+    /// <summary>A building's model: the HQ by its side's tier (Pyramid.cs); the Lattice's towers and the like their own
+    /// ("l_tower", tools/art/model_lattice.py).</summary>
+    string BuildingModel(Kind kind, int owner) =>
+        kind == Kind.Hq ? $"hq_t{(owner < W.Players.Length ? W.Players[owner].Tier : 1)}"
+        : World.IsFeral(kind) ? ModelOf(kind) : (CivOf(owner) == Civ.Lattice ? "l_" : "") + ModelOf(kind);
 
     Civ MyCiv => W.Players[_me].Civ;
     /// <summary>A side's civilisation (the ferals' models aren't any civilisation's: they're named for themselves).</summary>
     Civ CivOf(int owner) => owner < W.Players.Length ? W.Players[owner].Civ : Civ.Coalition;
 
-    /// <summary>A kind as the player reads it.</summary>
+    /// <summary>An upgrade as the player reads it.</summary>
     static string ModName(Mod m) => m switch
     {
-        Mod.Build => "Build speed", Mod.Twin => "Twin feed", Mod.Shield => "Shield coil", Mod.Magnet => "Salvage magnet", _ => m.ToString(),
+        Mod.Build => "Tooling", Mod.Twin => "Twin feed", Mod.Shield => "Shield coil", Mod.Magnet => "Salvage magnet", Mod.Attack => "Gunnery",
+        Mod.Armour => "Plating", Mod.Speed => "Servos", _ => m.ToString(),
     };
 
     static string A(string thing) => ("aeiou".Contains(thing[0]) ? "an " : "a ") + thing;
 
-    static string ModModel(Mod m) => "module_" + m.ToString().ToLowerInvariant();
-
-    /// <summary>What a module does, for its card and popups.</summary>
-    static string ModDoes(Mod m) => m switch
-    {
-        Mod.Speed => "Units from the wings after it drive 20% faster.",
-        Mod.Armour => "Units from the wings after it take 25% more to kill.",
-        Mod.Attack => "Units from the wings after it hit 25% harder.",
-        Mod.Build => "The wings after it build 15% quicker (up to four of these).",
-        Mod.Energy => "The wings after it each draw 1 less power.",
-        Mod.Twin => "The wings after it send out a second unit with every third\n(every other one with two of these).",
-        Mod.Napalm => "Units from the wings after it set the ground burning\nwhere they hit (each hit a quarter less).",
-        Mod.Shield => $"Units from the wings after it come out with a shield\nworth {World.ShieldPercent}% of their health, soaking hits first.",
-        Mod.Magnet => $"Kills by units from the wings after it pay {World.MagnetPercent}% more salvage.",
-        Mod.Blank => $"Does nothing but carry the line one step ({World.LineStep} on) toward where you point:\nrun a line out to a deposit or vent, then put an extractor or plant on it\n(within {World.ClaimReach} of the line's end).",
-        _ => "",
-    };
-
-    /// <summary>The model for something on the field: a module by what it does, the rest by kind.</summary>
-    string ModelFor(Entity e) => e.Kind == Kind.Module ? ModModel(e.Mod) : BuildingModel(e.Kind, e.Makes, CivOf(e.Owner));
-
-    /// <summary>The modules something was made behind (or a wing sits behind), as "attack 2, shield".</summary>
+    /// <summary>A unit's upgrades, as "gunnery 2, shield coil".</summary>
     static string ModList(int[] mods)
     {
         var parts = new List<string>();
-        for (int i = 0; i < (int)Mod.Blank; i++)
+        for (int i = 0; i < World.ModCount; i++)
             if (mods[i] > 0) parts.Add(ModName((Mod)i).ToLowerInvariant() + (mods[i] > 1 ? " " + mods[i] : ""));
         return string.Join(", ", parts);
     }
@@ -949,15 +812,14 @@ void fragment() {
 
     static string NameOf(Kind k) => k switch
     {
-        Kind.LightTank => "Light tank", Kind.Hq => "HQ", Kind.MobileBase => "Mobile base", Kind.Outpost => "Base",
+        Kind.LightTank => "Hover tank", Kind.Tank => "Battle wheel", Kind.Ranger => "Rifle mech", Kind.Mortar => "Lobber", Kind.Artillery => "Long leg",
+        Kind.Scout => "Skitter", Kind.Flier => "Dart", Kind.Bomber => "Blimp", Kind.Hq => "HQ",
         Kind.Feral => "Feral scrapper", Kind.FeralBrute => "Feral brute", _ => k.ToString(),
     };
 
-    /// <summary>A unit is its model; a building is a box for now, a factory with a small model of what it makes on its roof.</summary>
+    /// <summary>A unit is its model; the HQ its pyramid (Pyramid.cs); a defence its model, facing the enemy.</summary>
     readonly Dictionary<int, UnitRig> _rigs = new();
-    readonly Dictionary<int, BuildingRig> _buildingRigs = new();   // buildings with moving parts: wing doors, the HQ's eye
-    readonly Dictionary<int, int> _wingTimer = new();               // each wing's build timer as last drawn
-    readonly HashSet<int> _wingCounting = new();                    // wings whose timer is counting down
+    readonly Dictionary<int, BuildingRig> _buildingRigs = new();   // buildings with moving parts: a turning radar
     readonly Dictionary<int, Vector3> _drawnAt = new();
 
     Node3D MakeView(Entity e)
@@ -970,212 +832,24 @@ void fragment() {
             if (e.Stats.Shields) unit.AddChild(Dome(TeamColor[e.Owner]));
             return unit;
         }
-        // Buildings (tools/art/model_buildings.py): each wing kind its own building; the rest face the enemy's side.
-        var name = ModelFor(e);
+        if (e.Kind == Kind.Hq) return MakePyramid(e);
+        var name = BuildingModel(e.Kind, e.Owner);
         bool rising = e.Building > 0;
         var building = rising ? UnitArt.MakeBuilding(name, TeamColor[e.Owner]) : UnitArt.Make(name, TeamColor[e.Owner]);
         if (rising) _rising.Add(e.Id);
-        // A wing faces out from its base, its door where its units roll out (World.DoorOf).
-        // (a wing's door faces square off its line; a module lies along its line)
-        var facing = e.Kind == Kind.Factory && W.Find(e.BaseId) is not null ? Flat(W.DoorDir(e))
-            : e.Kind == Kind.Module ? Flat(W.HeadingOf(e)) : TowardEnemy(e.Owner);
-        building.Basis = Basis.LookingAt(facing.LengthSquared() > 0.01f ? facing.Normalized() : TowardEnemy(e.Owner), Vector3.Up);
+        building.Basis = Basis.LookingAt(TowardEnemy(e.Owner), Vector3.Up);
         return building;
     }
 
     readonly HashSet<int> _rising = new();
 
-    // ---- the modular base: wings plug into the HQ (the user, 2026-10-23: "can you make the main bases modular") ----
-    // Every wing spot on an HQ, extractor or power plant is a docking port on its wall; a finished wing is joined to its port by an armoured
-    // connector (art/units/connector.glb, 10 long in model units) stretched across the gap; empty ports stay capped.
-
-    readonly Dictionary<(int Base, int Slot), Node3D> _ports = new();
-    readonly Dictionary<int, Node3D> _links = new();   // by wing
-    const float HqWall = 2.3f;                          // world units from an HQ's centre to where a port sits
-
-    /// <summary>How far a piece of a line reaches along the line either side of its centre (world units), where its
-    /// connectors meet it: a module's end collars; a wing's side walls (the line runs through a wing side to side).</summary>
-    static float AlongLine(string model) => model switch
-    {
-        _ when model.StartsWith("module_") => 1.12f,
-        "factory_lighttank" => 1.42f, "factory_ranger" => 0.82f, "factory_tank" => 1.62f,
-        "factory_mortar" => 1.28f, "factory_artillery" => 1.28f, "factory_mobilebase" => 1.55f, "factory_air" => 1.5f, _ => 1.5f,
-    };
-
     static Vector3 Flat(FixVec2 d) => new Vector3(d.X.ToFloat(), 0, d.Z.ToFloat()).Normalized();
 
-    void UpdateDocks()
-    {
-        var wanted = new HashSet<int>();
-        foreach (var b in W.Entities)
-        {
-            if (b.Dead || !World.IsWingHost(b) || b.Building > 0) continue;
-            var centre = ToV3(b.Pos);
-            float wall = HostWall(b.Kind);
-            for (int slot = 0; slot < World.SlotsOf(b); slot++)
-            {
-                var dir = Flat(World.LineDir(b, slot));
-                // The port on the host's wall: capped while the line has nothing at its first place.
-                if (!_ports.TryGetValue((b.Id, slot), out var port))
-                {
-                    port = UnitArt.Make("port", TeamColor[b.Owner]);
-                    AddChild(port);
-                    _ports[(b.Id, slot)] = port;
-                }
-                var at = centre + dir * wall;
-                port.Position = at with { Y = _terrain.HeightAt(at.X, at.Z) };
-                port.Basis = Basis.LookingAt(dir, Vector3.Up);
-                port.Visible = W.PieceAt(b, slot, 0) == null && Shown(b);
-                // A connector into each piece from the one before it (the host for the first).
-                Entity prev = null;
-                for (int link = 0; link <= World.MaxLink; link++)
-                {
-                    var piece = W.PieceAt(b, slot, link);
-                    if (piece == null) { prev = null; continue; }   // (a gap: nothing joins across it)
-                    if (link == 0) Join(piece.Id, centre, wall, ToV3(piece.Pos), AlongLine(ModelFor(piece)), b.Owner, Shown(b) || Shown(piece), wanted);
-                    else if (prev != null) Join(piece.Id, ToV3(prev.Pos), AlongLine(ModelFor(prev)), ToV3(piece.Pos), AlongLine(ModelFor(piece)), b.Owner, Shown(prev) || Shown(piece), wanted);
-                    prev = piece;
-                }
-            }
-            foreach (var key in _ports.Keys.Where(k => k.Base == b.Id && k.Slot >= World.SlotsOf(b)).ToList()) { _ports[key].QueueFree(); _ports.Remove(key); }
-        }
-        // An extractor or power plant: joined to the nearest piece of its owner's lines that reached it.
-        foreach (var x in W.Entities)
-        {
-            if (x.Dead || x.Kind is not (Kind.Extractor or Kind.PowerPlant)) continue;
-            Entity near = null;
-            float nearD = (World.ClaimReach.ToFloat() + 0.5f) * (World.ClaimReach.ToFloat() + 0.5f);
-            foreach (var p in W.Entities)
-                if (!p.Dead && p.Owner == x.Owner && p.Kind is Kind.Factory or Kind.Module && (p.Pos - x.Pos).LengthSq.ToFloat() < nearD)
-                { near = p; nearD = (p.Pos - x.Pos).LengthSq.ToFloat(); }
-            if (near != null) Join(x.Id, ToV3(near.Pos), AlongLine(ModelFor(near)), ToV3(x.Pos), HostWall(x.Kind), x.Owner, Shown(x) || Shown(near), wanted);
-        }
-        foreach (var key in _ports.Keys.Where(k => W.Find(k.Base) is not { Dead: false }).ToList()) { _ports[key].QueueFree(); _ports.Remove(key); }
-        foreach (var id in _links.Keys.Where(id => !wanted.Contains(id)).ToList()) { _links[id].QueueFree(); _links.Remove(id); }
-    }
-
-    /// <summary>How far from a host's centre its lines leave it (world units).</summary>
-    static float HostWall(Kind k) => k switch { Kind.Hq => HqWall, Kind.Outpost => 1.8f, _ => 1.3f };
-
-    /// <summary>A connector (keyed by `id`) from a thing at `a` reaching `aReach` toward `b` to one at `b` reaching `bReach`.</summary>
-    void Join(int id, Vector3 a, float aReach, Vector3 b, float bReach, int owner, bool shown, HashSet<int> wanted)
-    {
-        var dir = (b - a) with { Y = 0 };
-        float dist = dir.Length();
-        if (dist < 0.01f) return;
-        dir /= dist;
-        wanted.Add(id);
-        if (!_links.TryGetValue(id, out var link))
-        {
-            link = UnitArt.Make("connector", TeamColor[owner]);
-            AddChild(link);
-            _links[id] = link;
-        }
-        var start = a + dir * (aReach - 0.1f);
-        float gap = dist - aReach - bReach + 0.2f;
-        link.Position = start with { Y = _terrain.HeightAt(start.X, start.Z) };
-        link.Basis = Basis.LookingAt(dir, Vector3.Up) * Basis.FromScale(new Vector3(1, 1, Mathf.Max(gap, 0.2f) / (10 * UnitArt.Scale)));
-        link.Visible = shown;
-    }
-
-
-    // ---- production cogs: one brass cog over a factory per production upgrade, spinning ------------------------
-
-    readonly Dictionary<int, List<Node3D>> _cogs = new();
-    StandardMaterial3D _brass;
-    float _cogTurn;   // seconds the cogs have been turning (paused with the game)
     float _frameDt;
-
-    static Node3D MakeCog(Material brass)
-    {
-        var cog = new Node3D();
-        cog.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.42f, BottomRadius = 0.42f, Height = 0.16f, RadialSegments = 12 }, MaterialOverride = brass });
-        for (int i = 0; i < 8; i++)
-        {
-            float a = i * Mathf.Tau / 8;
-            cog.AddChild(new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(0.2f, 0.16f, 0.2f) },
-                MaterialOverride = brass,
-                Position = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)) * 0.5f,
-                Rotation = new Vector3(0, -a, 0),
-            });
-        }
-        cog.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.12f, BottomRadius = 0.12f, Height = 0.22f, RadialSegments = 6 }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.18f, 0.15f) } });
-        return cog;
-    }
-
-    void UpdateCogs(Entity f, Node3D view, float dt)
-    {
-        int level = f.Building > 0 ? 0 : f.Level(Upgrade.Production);   // (none on a wing still going up)
-        if (!_cogs.TryGetValue(f.Id, out var cogs)) _cogs[f.Id] = cogs = new List<Node3D>();
-        cogs.RemoveAll(c => !IsInstanceValid(c) || c.GetParent() != view);   // (gone with a model that was swapped out)
-        _brass ??= new StandardMaterial3D { AlbedoColor = new Color(0.86f, 0.64f, 0.26f), Metallic = 0.6f, Roughness = 0.4f };
-        while (cogs.Count < level)
-        {
-            var cog = MakeCog(_brass);
-            view.AddChild(cog);
-            cogs.Add(cog);
-        }
-        // Face the camera (it looks down at 53 degrees from the south), side by side over the roof, neighbours
-        // turning opposite ways like meshed gears; quicker the more the factory's been upgraded.
-        var facing = new Basis(Vector3.Right, Mathf.DegToRad(53));
-        float speed = 1.2f + 0.9f * level;
-        var undo = view.Basis.Inverse();   // the building is turned to face the enemy; the cogs face the camera
-        for (int i = 0; i < cogs.Count; i++)
-        {
-            float spin = (i % 2 == 0 ? 1 : -1) * _cogTurn * speed + (i % 2) * Mathf.Pi / 8;
-            cogs[i].Basis = undo * facing * new Basis(Vector3.Up, spin);
-            cogs[i].Position = undo * new Vector3((i - (cogs.Count - 1) / 2f) * 0.98f, 3.6f, 0);
-        }
-    }
 
     // ---- rally flags: where my factories' units gather -----------------------------------------------------------
 
-    // ---- the unit each factory is building, digitising up at its door ------------------------------------------
-
-    readonly Dictionary<int, Node3D> _ghosts = new();
-
-    void UpdateBuildGhost(Entity f)
-    {
-        // What's on the way: a fighting wing's next unit; a utility wing's current order (nothing when it has none).
-        Kind? making = World.IsUtility(f) ? (f.Orders.Count > 0 ? (Kind)f.Orders[0] : null) : f.Makes;
-        if (_ghosts.TryGetValue(f.Id, out var ghost) && (making == null || ghost.Name != making.ToString()))
-        {
-            ghost.QueueFree();
-            _ghosts.Remove(f.Id);
-            ghost = null;
-        }
-        if (making is not { } kind) return;
-        if (ghost == null)
-        {
-            ghost = UnitArt.MakeBuilding(UnitModel(kind, CivOf(f.Owner)), TeamColor[f.Owner]);
-            ghost.Name = kind.ToString();
-            AddChild(ghost);
-            _ghosts[f.Id] = ghost;
-            // At the wing's door, facing out, where the sim rolls the unit out (World.DoorOf, without its little spread);
-            // a wing with a bay builds it in its open doorway instead, and it drives out when done.
-            var dir = W.DoorDir(f);
-            var face = DoorFace(BuildingModel(f.Kind, f.Makes, CivOf(f.Owner)));
-            dir = dir.WithLength(f.Stats.Radius + World.StatsFor[(int)kind].Radius + 1);
-            var flat = new Vector3(dir.X.ToFloat(), 0, dir.Z.ToFloat()).Normalized();
-            ghost.Position = face is float inBay ? ToV3(f.Pos) + flat * inBay : ToV3(f.Pos + dir);
-            ghost.Basis = Basis.LookingAt(new Vector3(dir.X.ToFloat(), 0, dir.Z.ToFloat()).Normalized(), Vector3.Up);
-        }
-        ghost.Visible = Shown(f) && W.Started && W.Winner < 0 && f.Building == 0;
-        int total = World.IsUtility(f) ? World.StatsFor[(int)kind].BuildTicks : World.BuildTicksOf(f);
-        UnitArt.SetBuilt(ghost, 1f - f.Timer / (float)total);
-    }
-
-    /// <summary>A wing with a bay (model_base.py): how far its door is in front of its centre, world units. Its units
-    /// are built in the doorway and drive out. Null: built outside the door.</summary>
-    static float? DoorFace(string model) => model switch
-    {
-        "factory_lighttank" => 0.45f, "factory_ranger" => 0.7f, "factory_tank" => 1.75f,
-        "factory_mortar" => 0.45f, "factory_artillery" => 0.45f, _ => null,
-    };
-
-    readonly Dictionary<int, (Vector3 From, Vector3 Dir, float Age)> _rollOut = new();   // units driving out of their bay
+    readonly Dictionary<int, (Vector3 From, Vector3 Dir, float Age)> _rollOut = new();   // units driving out of the HQ's doors
     const float RollOutTime = 1.1f;
 
     readonly Dictionary<int, Node3D> _flags = new();
@@ -1207,7 +881,7 @@ void fragment() {
         return flag;
     }
 
-    /// <summary>My factory's flag where its units rally (none for the enemy's: you don't see their orders).</summary>
+    /// <summary>My HQ's flag where its units rally (none for the enemy's: you don't see their orders).</summary>
     void UpdateRallyFlag(Entity f)
     {
         _flags.TryGetValue(f.Id, out var flag);
@@ -1217,11 +891,11 @@ void fragment() {
         flag.Position = ToV3(f.Rally);
     }
 
-    /// <summary>A line from the selected factory of mine to its flag.</summary>
+    /// <summary>A line from my HQ, when it's picked, to its flag.</summary>
     void DrawRallyLine(Entity selected)
     {
         _rallyLine.ClearSurfaces();
-        if (selected is not { Kind: Kind.Factory or Kind.Hq, HasRally: true } || selected.Owner != _me) return;
+        if (selected is not { Kind: Kind.Hq, HasRally: true } || selected.Owner != _me) return;
         var from = ToV3(selected.Pos);
         var to = ToV3(selected.Rally);
         _rallyLine.SurfaceBegin(Mesh.PrimitiveType.Lines, _tracerMat);
@@ -1247,10 +921,10 @@ void fragment() {
     static float HeightOf(Kind k) => k switch { Kind.Drone => 3.2f, Kind.Flier => 6f, Kind.Bomber => 7.5f, _ => 0f };   // models stand on their origin; fliers fly
 
     /// <summary>The height shots leave from: about each one's gun.</summary>
-    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Outpost => 1.2f, Kind.Scout => 0.8f, Kind.Tank => 0.95f, Kind.Artillery => 2.8f, Kind.LightTank => 1.15f, Kind.Mortar => 2.0f, Kind.Spider => 0.98f, Kind.Crawler => 0.32f, Kind.Piercer => 0.72f, _ => 1f };
+    static float MuzzleOf(Kind k) => k switch { Kind.Hq => 2.5f, Kind.Tower => 4.0f, Kind.Scout => 0.8f, Kind.Tank => 0.95f, Kind.Artillery => 2.8f, Kind.LightTank => 1.15f, Kind.Mortar => 2.0f, Kind.Spider => 0.98f, Kind.Crawler => 0.32f, Kind.Piercer => 0.72f, _ => 1f };
 
     /// <summary>How far in front of its centre a gun's muzzle is (units face their target, so it is along that line).</summary>
-    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.7f, Kind.Artillery => 1.8f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.Outpost => 1.6f, Kind.LightTank => 1.05f, Kind.Mortar => 0.05f, Kind.Spider => 0.95f, Kind.Crawler => 0.8f, Kind.Piercer => 1.75f, _ => 0f };
+    static float BarrelOf(Kind k) => k switch { Kind.Tank => 1.7f, Kind.Artillery => 1.8f, Kind.Scout => 0.7f, Kind.Tower => 1.2f, Kind.LightTank => 1.05f, Kind.Mortar => 0.05f, Kind.Spider => 0.95f, Kind.Crawler => 0.8f, Kind.Piercer => 1.75f, _ => 0f };
 
     /// <summary>How quickly each kind swings round, in radians a second.</summary>
     static float TurnRateOf(Kind k) => k switch { Kind.Scout => 9f, Kind.Tank => 4f, Kind.Artillery => 2.5f, Kind.LightTank => 7f, Kind.Mortar => 3.5f, Kind.Spider => 8f, Kind.Crawler => 10f, Kind.Piercer => 3f, Kind.Drone => 6f, _ => 4f };
@@ -1283,7 +957,6 @@ void fragment() {
 
         FadeBlasts((float)delta);
         _frameDt = (float)delta;
-        if (!W.Paused && W.Started) _cogTurn += _frameDt;
         Draw((float)(_acc / TickLength));
         if (_watchFelled && !_felledFocused && _forest.FirstKnocked is { } felled)
         {
@@ -1377,7 +1050,6 @@ void fragment() {
                 old.QueueFree();
                 _views.Remove(e.Id);
                 _rising.Remove(e.Id);
-                _cogs.Remove(e.Id);   // (they went with the old model)
             }
             if (!_views.TryGetValue(e.Id, out var view))
             {
@@ -1385,14 +1057,12 @@ void fragment() {
                 AddChild(view);
                 _views[e.Id] = view;
                 if (e.Stats.IsUnit && UnitRig.Find(view, e.Id) is { } newRig) _rigs[e.Id] = newRig;
-                if (!e.Stats.IsUnit && e.Building == 0 && BuildingRig.Find(view) is { } bRig) _buildingRigs[e.Id] = bRig;
-                if (e.Stats.IsUnit && _buildingRigs.TryGetValue(e.FactoryId, out var maker)) maker.Made();   // (its wing's door is open for it)
-                if (e.Stats.IsUnit && W.Find(e.FactoryId) is { Kind: Kind.Factory } bay && DoorFace(BuildingModel(bay.Kind, bay.Makes, CivOf(bay.Owner))) is float inBay
-                    && _ghosts.TryGetValue(bay.Id, out var formed))
+                if (!e.Stats.IsUnit && e.Kind != Kind.Hq && e.Building == 0 && BuildingRig.Find(view) is { } bRig) _buildingRigs[e.Id] = bRig;   // (the pyramid turns its own parts)
+                if (e.Stats.IsUnit && MadeAtDoor(e) is { } formed && W.Find(e.FactoryId) is { } home)   // out of a door of its HQ
                 {
-                    var outward = (ToV3(e.Pos) - ToV3(bay.Pos)) with { Y = 0 };
+                    var outward = (ToV3(e.Pos) - ToV3(home.Pos)) with { Y = 0 };
                     outward = outward.LengthSquared() > 1e-4f ? outward.Normalized() : Vector3.Forward;
-                    _rollOut[e.Id] = (formed.Position, outward, 0f);   // from where it was formed, out to where it stands
+                    _rollOut[e.Id] = (formed with { Y = ToV3(e.Pos).Y }, outward, 0f);   // from where it formed, out to where it stands
                     _facing[e.Id] = outward;
                 }
             }
@@ -1473,24 +1143,9 @@ void fragment() {
             }
             view.Position = pos + Vector3.Up * (HeightOf(e.Kind) + walkBob);
             view.Visible = Shown(e);
-            if (e.Kind is Kind.Factory or Kind.Hq) UpdateRallyFlag(e);
-            if (e.Kind == Kind.Factory) UpdateBuildGhost(e);
-            if (_buildingRigs.TryGetValue(e.Id, out var bRigNow))
-            {
-                // A wing's door opens in the last second of a unit's build (only while it is counting down: at the
-                // army cap its timer is held full).
-                if (_wingTimer.TryGetValue(e.Id, out var last) && e.Timer != last)
-                {
-                    if (e.Timer < last) _wingCounting.Add(e.Id); else _wingCounting.Remove(e.Id);
-                }
-                _wingTimer[e.Id] = e.Timer;
-                // A bay's door stands open while a unit is being built in it; a wing without one opens just before.
-                bool bayed = DoorFace(BuildingModel(e.Kind, e.Makes, CivOf(e.Owner))) != null;
-                bool soon = e.Kind == Kind.Factory && _wingCounting.Contains(e.Id) && (bayed || e.Timer <= World.TicksPerSecond * 1.2f);
-                bRigNow.Update(W.Paused ? 0 : _frameDt, soon);
-            }
+            if (e.Kind == Kind.Hq) { UpdateRallyFlag(e); UpdatePyramid(e, view, W.Paused ? 0 : _frameDt); }
+            if (_buildingRigs.TryGetValue(e.Id, out var bRigNow)) bRigNow.Update(W.Paused ? 0 : _frameDt, false);
         }
-        UpdateDocks();
         foreach (var id in _views.Keys.Where(id => !alive.Contains(id)).ToList())
         {
             _views[id].QueueFree();
@@ -1498,25 +1153,17 @@ void fragment() {
             _rigs.Remove(id);
             _buildingRigs.Remove(id);
             _rollOut.Remove(id);
-            _wingTimer.Remove(id);
-            _wingCounting.Remove(id);
             _drawnAt.Remove(id);
             _prevPos.Remove(id);
             _facing.Remove(id);
             _aim.Remove(id);
-            _cogs.Remove(id);
             _dust.Forget(id);
             _tracks.Forget(id);
             if (_flags.Remove(id, out var gone)) gone.QueueFree();
-            if (_ghosts.Remove(id, out var ghost)) ghost.QueueFree();
+            ForgetPyramid(id);
             _rising.Remove(id);
         }
 
-        for (int i = 0; i < _ventViews.Count; i++)   // a vent shows until a (seen) power plant stands on it
-            _ventViews[i].Visible = W.PlantOn(i) is not { } plant || !Shown(plant);
-        AnimateVents();
-        for (int i = 0; i < _depositViews.Count; i++)   // an outcrop shows until a (seen) extractor stands on it
-            _depositViews[i].Visible = W.ExtractorOn(i) is not { } rig || !Shown(rig);
         BuildRing();
         DrawRadarBlips();
         DrawSalvage();
@@ -1529,8 +1176,8 @@ void fragment() {
     /// <summary>Roughly how high each thing stands, for putting its health bar just above it.</summary>
     static float TopOf(Kind k) => k switch
     {
-        Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
-        Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.PowerPlant => 3.2f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
+        Kind.Hq => 8f, Kind.Tower => 5.6f,
+        Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.FeralBrute => 1.8f,
         Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, Kind.Mender => 2.3f, Kind.Bulwark => 3.2f, Kind.Hive => 2.4f, _ => 2f,
     };
 
@@ -1558,14 +1205,13 @@ void fragment() {
         _overlay.Bars.Clear();
         _overlay.Badges.Clear();
         _overlay.Tags.Clear();
-        // (No wing count over the bases now: the lines show what's on them.)
         var right = _camera.GlobalBasis.X;
         Entity selected = null;
         foreach (var e in W.Entities)
         {
             var cur = ToV3(e.Pos);
             var pos = _prevPos.TryGetValue(e.Id, out var p) && !W.Paused ? p.Lerp(cur, alpha) : cur;
-            var top = pos + Vector3.Up * TopOf(e.Kind);
+            var top = pos + Vector3.Up * (e.Kind == Kind.Hq ? PyramidTop(W.Players[e.Owner].Tier) : TopOf(e.Kind));
             if (!Shown(e)) continue;
             if (e.Id == _selected) { selected = e; _selRing.Position = pos + Vector3.Up * 0.08f; }
             // Only veterancy floats over things (sword/shield upgrade badges are off for now, see MakeView).
@@ -1597,20 +1243,9 @@ void fragment() {
         _statsPanel.Size = _statsPanel.GetCombinedMinimumSize();
     }
 
-    static readonly string[] UpgradeEffect = { "15% quicker to build", "+25% damage", "+25% health" };
-    // An outpost's three tracks: its Production track is reach (World.OutpostRadius), the others its own gun and armour.
+    // A defence's three upgrade tracks: its Production track is range.
     static readonly string[] DefenceTrack = { "Range", "Damage", "Armour" };
     static readonly string[] DefenceEffect = { "+2 range", "+25% damage", "+25% health" };
-
-
-
-
-    /// <summary>"Power 6/10", and how slow the wings are when they draw more than there is.</summary>
-    string PowerLine()
-    {
-        int draw = W.PowerDrawOf(_me), supply = W.PowerSupply(_me);
-        return $"Power {draw}/{supply}" + (draw > supply ? $"   LOW: wings at {100 * supply / draw}% (build a power plant on a vent)" : "") + "\n";
-    }
 
     static string Clock(int ticks)
     {
@@ -1619,38 +1254,17 @@ void fragment() {
     }
 
 
-    /// <summary>F, or the button: picked mobile bases set up where they stand; a picked set-up base packs up.</summary>
-    void DeployOrPack()
-    {
-        if (W.Winner >= 0) return;
-        foreach (var id in _scouts.OrderBy(id => id))
-            if (W.Find(id) is { Kind: Kind.MobileBase } t && W.CanDeploy(_me, t.Id, out _)) _session.Issue(new Deploy(_me, t.Id));
-        if (W.Find(_selected) is { Kind: Kind.MobileBase } one && !_scouts.Contains(one.Id) && W.CanDeploy(_me, one.Id, out _)) _session.Issue(new Deploy(_me, one.Id));
-        if (W.Find(_selected) is { Kind: Kind.Outpost } post && W.CanPackUp(_me, post.Id, out _)) _session.Issue(new PackUp(_me, post.Id));
-    }
-
-
     string Describe(Entity e)
     {
         var s = e.Stats;
         var lines = new List<string>
         {
-            $"{(World.IsUtility(e) ? "Utility wing" : e.Kind == Kind.Factory ? NameOf(e.Makes) + " wing" : e.Kind == Kind.Module ? ModName(e.Mod) + " module" : NameOf(e.Kind))}  ({(e.Owner == _me ? "yours" : e.Owner == World.Feral ? "feral" : "enemy")})",
+            $"{NameOf(e.Kind)}  ({(e.Owner == _me ? "yours" : e.Owner == World.Feral ? "feral" : "enemy")})",
             e.Kind switch
             {
                 Kind.Scout => e.Owner == _me
-                    ? "Unarmed eyes: finds deposits and watches the enemy.\nRight-click to send it."
+                    ? "Unarmed eyes: watches the enemy.\nRight-click to send it."
                     : "Unarmed eyes: it's scouting you.",
-                Kind.Extractor => World.DepositResource[e.Deposit] switch
-                {
-                    Battler.Sim.Resource.Sulfur => $"Mines sulfur: +{World.SulfurBonusPercent}% damage for every explosive weapon\non your side, and napalm for mortars, artillery and crawlers.",
-                    Battler.Sim.Resource.Crystal => $"Mines crystal: everything you make comes out with a shield\nworth {World.CrystalShieldPercent}% of its health (more with each field).",
-                    Battler.Sim.Resource.Oil => $"Pumps oil: +{World.OilPower} power and +{World.OilIncome} metal a second.",
-                    _ => $"Mines its deposit: +{World.ExtractorIncome} metal a second.",
-                },
-                Kind.MobileBase => e.Owner == _me
-                    ? "A mobile base on the move: right-click to send it,\nF (or the button) to set it up where it stands."
-                    : "A mobile base on the move: it means to set up nearby.",
                 Kind.Tank => "Tough all-rounder.",
                 Kind.LightTank => "Quick and cheap to build, but fragile:\na fast-firing light gun. Raids and screens.",
                 Kind.Spider => "A four-legged walker: quick, lightly armoured, a twin\nlaser firing three times a second, little each shot.",
@@ -1667,20 +1281,16 @@ void fragment() {
                 Kind.Bomber => "Slow bombing runs: flies over a ground target, drops a\nheavy bomb with a wide blast, flies on and comes round.\nOnly anti-air can touch it.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",
-                Kind.Hq => $"Lose it and you lose the match. {World.HqWings} lines run out from it (B): snap\nmodules and wings onto them; each wing gets the modules before it.\nIts radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
-                Kind.Module => ModDoes(e.Mod),
+                Kind.Hq => $"Lose it and you lose the match. Everything is built here (B):\nqueue units, research the tech tree (Tab). It grows a tier as you\nbring metal in. Its radar sweeps {World.HqRadar} round it every {World.RadarTicks / World.TicksPerSecond} s.",
                 Kind.Tower => "Guards the base: long range and sight.",
                 Kind.Turret => "A gun emplacement: holds the ground round a base.",
                 Kind.Flak => "A quick gun that reaches fliers too; light against the ground.",
                 Kind.Bombard => "An artillery emplacement: long reach and a blast, but\nnothing close, and it needs others to spot for it.",
                 Kind.Wall => "A block of armour. A line of them turns attackers aside.",
-                Kind.PowerPlant => $"A diesel generator on a power vent: +{World.PlantPower} power for your wings.",
                 Kind.Feral => $"A feral scrapper: wild, quick, weak. Worth {World.Salvage(Kind.Feral)} metal as scrap.",
                 Kind.FeralBrute => $"A feral brute: wild, slow, tough. Worth {World.Salvage(Kind.FeralBrute)} metal as scrap.",
-                Kind.Derelict => $"An old turret gone feral, guarding the ground: no base or\nextractor within {World.GuardReach} till it's gone. Worth {World.Salvage(Kind.Derelict)} metal.",
-                Kind.Outpost => $"A mobile base, set up: extractors and power plants within\n{World.BaseReach} (wings go on those), radar {World.OutpostRadar}. Can pack up and move.",
-                _ when World.IsUtility(e) => "Utility wing: builds scouts and mobile bases to order.",
-                _ => $"Wing: makes {NameOf(e.Makes)}, one every {World.BuildTicksOf(e) / (float)World.TicksPerSecond:0.#} s",
+                Kind.Derelict => $"An old turret gone feral, guarding the ground. Worth {World.Salvage(Kind.Derelict)} metal.",
+                _ => "",
             },
             $"Health  {Mathf.Max(e.Hp, 0)} / {e.MaxHp}",
         };
@@ -1691,32 +1301,22 @@ void fragment() {
             lines.Add($"Range  {World.RangeOf(e)}" + (s.MinRange.Raw > 0 ? $"   (none within {s.MinRange})" : ""));
             if (s.Splash.Raw > 0) lines.Add($"Splash  {s.Splash} wide");
         }
-        if (s.IsUnit) lines.Add($"Speed  {s.Speed.ToFloat() * World.TicksPerSecond:0.#} per s");
+        if (s.IsUnit) lines.Add($"Speed  {World.SpeedOf(e).ToFloat() * World.TicksPerSecond:0.#} per s");
         if (e.Height.ToFloat() > 0.5f)
             lines.Add($"High ground  +{Mathf.Min(e.Height.ToFloat(), 5f):0.#} sight, more range firing down");
         if (s.IsUnit && ModList(e.Mods) is { Length: > 0 } madeWith) lines.Add($"Made with  {madeWith}");
         if (s.IsUnit && e.Shield > 0) lines.Add($"Shield  {e.Shield}");
-        if (e.Kind == Kind.Factory) lines.Add(ModList(e.Mods) is { Length: > 0 } fed ? $"Modules before it  {fed}" : "No modules before it on its line");
-        if (e.Kind == Kind.Factory && W.OnSulfur(e)) lines.Add($"On sulfur: its units hit {World.SulfurHitPercent - 100}% harder and set fires");
-        if (e.Kind == Kind.Factory && W.OnPlant(e)) lines.Add("On a power plant: half the power draw");
-        if (s.IsUnit && e.Enhanced) lines.Add($"Sulfur-enhanced: hits {World.SulfurHitPercent - 100}% harder, sets fires");
-        if (World.IsUtility(e) && e.Owner == _me && e.Orders.Count > 0)
-            lines.Add($"Building  {string.Join(", ", e.Orders.Select(o => NameOf((Kind)o).ToLowerInvariant()))}   (next in {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s)");
-        if (e.Kind == Kind.Factory && World.CanFitNapalm(e.Makes))
-            lines.Add($"Fitting  {e.Fitting}" + (e.Fitting == Fitting.Napalm && W.SulfurOf(e.Owner) == 0 ? "  (no sulfur: standard for now)" : ""));
         if (s.IsUnit && e.Fitting == Fitting.Napalm)
             lines.Add("Napalm: hits leave the ground burning");
         if (e.Building > 0)
             lines.Add($"Under construction  {Mathf.CeilToInt(e.Building / (float)World.TicksPerSecond)} s left");
-        else if (e.Kind == Kind.Factory && !World.IsUtility(e)) lines.Add($"Next in  {Mathf.CeilToInt(e.Timer / (float)World.TicksPerSecond)} s");
-        if (e.Kind == Kind.Factory && e.Owner == _me) lines.Add($"Power draw  {W.WingDraw(e)}");
-        if (e.Kind == Kind.Factory && e.Owner == _me)
-            lines.Add(e.HasRally ? "New units go to its flag first, then attack"
-                : W.Entities.Exists(h => h.Kind == Kind.Hq && h.Owner == _me && h.HasRally) ? "New units go to the base flag first  (right-click for its own)"
-                : "Units attack  (right-click the ground to set a rally point)");
+        if (e.Kind == Kind.Hq)
+        {
+            var p = W.Players[e.Owner];
+            lines.Add($"Tier {p.Tier}" + (p.Tier < World.MaxTier && e.Owner == _me ? $"   (tier {p.Tier + 1} at {World.CollectedFor(p.Tier + 1)} brought in; {p.Collected} so far)" : ""));
+        }
         if (e.Kind == Kind.Hq && e.Owner == _me)
-            lines.Add(e.HasRally ? "Base rally: units from wings without their own flag\ngather at the flag"
-                                 : "Right-click the ground to set a base rally point\n(for wings without their own)");
+            lines.Add($"Doors  {World.DoorsOf(W.Players[_me])}   " + (e.HasRally ? "New units gather at the flag first" : "Right-click the ground to set a rally point"));
         return string.Join("\n", lines);
     }
 
@@ -1737,30 +1337,15 @@ void fragment() {
     {
         _mouseGround = GroundUnderMouse();
         if (W.Winner >= 0) _placing = null;
-        _ghost.Visible = _placing != null && _mouseGround.HasValue;
+        bool shown = _placing != null && _mouseGround.HasValue;
         _placeProblem = null;
-        if (_ghost.Visible)
+        if (shown)
         {
             var at = _mouseGround.Value;
-            bool ok;
-            if (_placing == Kind.Extractor)
-            {
-                // It snaps onto the deposit under the mouse.
-                _placeDeposit = NearestOf(World.Deposits, at);
-                ok = W.CanPlaceExtractor(_me, _placeDeposit, out _placeProblem);
-                if (_placeDeposit >= 0) at = ToV3(World.Deposits[_placeDeposit]);
-            }
-            else if (_placing == Kind.PowerPlant)
-            {
-                // It snaps onto the vent under the mouse.
-                _placeDeposit = NearestOf(World.Vents, at);
-                ok = W.CanPlacePlant(_me, _placeDeposit, out _placeProblem);
-                if (_placeDeposit >= 0) at = ToV3(World.Vents[_placeDeposit]);
-            }
-            else ok = W.CanPlaceDefence(_me, ToFix(at), _placing.Value, out _placeProblem);
+            bool ok = W.CanPlaceDefence(_me, ToFix(at), _placing.Value, out _placeProblem);
             // The hologram of the building itself (the user, 2026-10-19: "it should give the outline of the model of
             // what it's building"), green where it can go and red where it can't.
-            var name = BuildingModel(_placing.Value, Kind.Hq, MyCiv);
+            var name = BuildingModel(_placing.Value, _me);
             if (_placeModel == null || _placeModelKey != (name, ok))
             {
                 _placeModel?.QueueFree();
@@ -1769,86 +1354,11 @@ void fragment() {
             }
             _placeModel.Position = at;
         }
-        if (_placeModel != null) _placeModel.Visible = _ghost.Visible;
-        _ghost.Visible = false;   // (the plain box is only the fallback now)
-        if (W.Winner >= 0) _linePick = null;
-        if (_linePick is { } pick) PlaceOnLine(pick);
-
-        // Extractors ordered during a pause, waiting for it to end.
-        var held = W.HeldDuringPause.Where(c => c.Player == _me && c is PlaceExtractor)
-            .Select(c => (BuildingModel(Kind.Extractor, Kind.Hq, MyCiv), World.Deposits[((PlaceExtractor)c).Deposit])).ToList();
-        if (!held.Select(h => h.Item1).SequenceEqual(_heldGhostNames))
-        {
-            foreach (var g in _heldGhosts) g.QueueFree();
-            _heldGhosts.Clear();
-            _heldGhostNames.Clear();
-            foreach (var (name, _) in held) { _heldGhosts.Add(PlacementModel(name, TeamColor[_me])); _heldGhostNames.Add(name); }
-        }
-        for (int i = 0; i < held.Count; i++) _heldGhosts[i].Position = ToV3(held[i].Item2);
+        if (_placeModel != null) _placeModel.Visible = shown;
     }
-
-    /// <summary>Line build mode: the piece's hologram snaps to the free end of whichever of my lines is nearest the
-    /// mouse, a wing facing its door out to the side, a module lying along the line; green if it can go, red if not.</summary>
-    void PlaceOnLine((Kind Makes, Mod? Mod) pick)
-    {
-        _lineHost = -1;
-        _placeProblem = "Point past the end of one of your lines";
-        float best = 22f * 22f;
-        Vector3 at = _mouseGround ?? Vector3.Zero, face = TowardEnemy(_me);
-        if (_mouseGround is { } mouse)
-        {
-            _lineToward = ToFix(mouse);
-            // The line whose end is nearest the mouse; its next piece a step on from that end toward the mouse.
-            foreach (var h in W.Entities)
-            {
-                if (h.Dead || h.Owner != _me || !World.IsWingHost(h) || h.Building > 0) continue;
-                for (int slot = 0; slot < World.SlotsOf(h); slot++)
-                {
-                    var end = W.LineEnd(h, slot);
-                    if ((end?.Link ?? -1) + 1 > World.MaxLink) continue;
-                    var from = ToV3(end?.Pos ?? World.WingSpot(h, slot));
-                    float d2 = new Vector2(from.X - mouse.X, from.Z - mouse.Z).LengthSquared();
-                    if (d2 >= best) continue;
-                    best = d2; _lineHost = h.Id; _lineSlot = slot;
-                    var spot = W.NextSpot(h, slot, _lineToward, out var dir);
-                    at = ToV3(spot);
-                    face = Flat(pick.Mod != null ? dir : W.DoorDirAt(_me, dir, spot));
-                }
-            }
-        }
-        bool ok = _lineHost >= 0 && W.CanAddPiece(_me, _lineHost, _lineSlot, pick.Makes, pick.Mod, _lineToward, out _placeProblem);
-        var name = pick.Mod is { } m ? ModModel(m) : BuildingModel(Kind.Factory, pick.Makes, MyCiv);
-        if (_placeModel == null || _placeModelKey != (name, ok))
-        {
-            _placeModel?.QueueFree();
-            _placeModel = PlacementModel(name, ok ? new Color(0.3f, 1f, 0.45f) : new Color(1f, 0.25f, 0.2f));
-            _placeModelKey = (name, ok);
-        }
-        _placeModel.Position = at;
-        _placeModel.Basis = Basis.LookingAt(face, Vector3.Up);
-        _placeModel.Visible = _mouseGround.HasValue;
-    }
-
-    void StartLinePick(Kind makes, Mod? mod) { _linePick = (makes, mod); _placing = null; }
 
     Node3D _placeModel;
     (string, bool) _placeModelKey;
-    int _placeDeposit = -1;   // placing an extractor or power plant: the deposit or vent it would go on
-
-    /// <summary>The index of the spot (a deposit, or a pad) nearest a point on the ground, if within a few paces; else -1.</summary>
-    static int NearestOf(FixVec2[] spots, Vector3 at, bool[] only = null)
-    {
-        int best = -1;
-        float bestD = 6f;
-        for (int i = 0; i < spots.Length; i++)
-        {
-            if (only != null && !only[i]) continue;
-            var d = new Vector2(spots[i].X.ToFloat() - at.X, spots[i].Z.ToFloat() - at.Z).Length();
-            if (d < bestD) { best = i; bestD = d; }
-        }
-        return best;
-    }
-    readonly List<string> _heldGhostNames = new();
 
     /// <summary>A building's model as an unbuilt hologram, facing the enemy like the real thing.</summary>
     Node3D PlacementModel(string name, Color tint)
@@ -1872,21 +1382,17 @@ void fragment() {
         }
         UpdateCard();
         UpdateQueueBar();
-        var menu = "[B] Build   [E] Pick scouts   [F] Set up / pack up   [P] Pause   [Esc] Menu";
-        var placingWhat = _placing == Kind.Extractor ? $"an extractor (on a deposit within {World.BaseReach} of a base)"
-            : _placing is { } pd ? $"a {NameOf(pd).ToLowerInvariant()} (within {World.BaseReach} of a base; Shift to place more)" : "";
-        var building = _linePick is { } lpk
-            ? $"Snapping {A(lpk.Mod is { } lm ? ModName(lm).ToLowerInvariant() + " module" : NameOf(lpk.Makes).ToLowerInvariant() + " wing")} onto a line: point at a line's end, click (Shift for more), Esc to cancel"
-                + (_placeProblem != null ? $"   ({_placeProblem})" : "")
-            : _placing == null
+        UpdateTechTree();
+        var menu = "[B] HQ   [Tab] Tech tree   [Q] Scout   [E] Pick scouts   [P] Pause   [Esc] Menu";
+        var placingWhat = _placing is { } pd ? $"a {NameOf(pd).ToLowerInvariant()} (within {World.BaseReach} of your HQ; Shift to place more)" : "";
+        var building = _placing == null
             ? menu
             : $"Placing {placingWhat}: click to build, Esc to cancel" + (_placeProblem != null ? $"   ({_placeProblem})" : "");
         _hud.Text =
             $"Metal {me.Metal}   +{W.IncomeOf(_me)}/s   (and salvage: destroy things)\n" +
             building + "\n" +
             $"Army {W.ArmyCount(_me)}/{World.MaxArmyOf(MyCiv)}   units seen {myUnits} vs {theirUnits}\n" +
-            PowerLine() +
-            (W.SulfurOf(_me) is var sulfur and > 0 ? $"Sulfur {sulfur}: +{World.SulfurBonusPercent * sulfur}% explosive damage, napalm\n" : "") +
+            $"Pyramid tier {me.Tier}" + (me.Tier < World.MaxTier ? $"  (next at {World.CollectedFor(me.Tier + 1)} brought in: {me.Collected})" : "") + $"   doors {World.DoorsOf(me)}\n" +
             $"HQ {myHq} vs {theirHq}\n" +
             $"Pauses left {me.PausesLeft}  [P]\n" +
             (W.Started && World.FeralsOn ? $"Feral wave {W.WaveNumber + 1} in {Clock(W.NextWaveIn)}\n" : "") +
@@ -1899,9 +1405,9 @@ void fragment() {
         else if (W.Winner >= 0)
             _banner.Text = (W.Winner == _me ? "Victory" : "Defeat") + (_session is LocalSession ? "  -  R to play again" : "");
         else if (!W.Started)
-            _banner.Text = W.Entities.Exists(e => e.Kind == Kind.Factory && e.Owner == _me)
-                ? "Waiting for the enemy to build their first wing..."
-                : "Build your first wing: press B and pick one (it goes onto your HQ)\nThe battle starts once both sides have one";
+            _banner.Text = me.Ordered
+                ? "Waiting for the enemy to queue their first units..."
+                : "Queue your first units: click your HQ (or press B) and pick some\nThe battle starts once both sides have";
         else if (W.Paused)
         {
             var secs = Mathf.CeilToInt(W.PauseTicksLeft / (float)World.TicksPerSecond);
@@ -1913,21 +1419,8 @@ void fragment() {
 
     // ---- where builds and orders go (the command card, CommandCard.cs, uses these) ----------------------------
 
-    /// <summary>The base a new wing goes onto: the picked base of mine (or the base of a picked wing), else the HQ.</summary>
-    Entity WingTarget()
-    {
-        var picked = W.Find(_selected);
-        if (picked != null && picked.Owner == _me)
-        {
-            if (World.IsWingHost(picked)) return picked;
-            if (picked.Kind == Kind.Factory && W.Find(picked.BaseId) is { } home) return home;
-        }
-        return W.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == _me);
-    }
-
-    /// <summary>The utility wing an order goes to: the picked one, else the first that's built.</summary>
-    Entity OrderTarget() => W.Find(_selected) is { } picked && World.IsUtility(picked) && picked.Owner == _me ? picked : W.UtilityOf(_me);
-
+    /// <summary>My HQ.</summary>
+    Entity MyHq() => W.HqOf(_me);
 
     // ---- the Escape menu (the user, 2026-10-20: "we need escape to pause") -----------------------------------------
 
@@ -2010,6 +1503,7 @@ void fragment() {
             _viewHintUntil = Time.GetTicksMsec() + 20000;
             return;
         }
+        if (_techOpen && ev is InputEventKey { Pressed: true, Echo: false } treeKey && TechTreeKey(treeKey.Keycode)) return;   // the tech tree has the keys while it's up
         if (ev is InputEventKey { Pressed: true, Echo: false } cardKey && cardKey.Keycode != Key.Escape | _cardPage != "main" && CardKey(cardKey.Keycode)) return;   // the command card's letters
         if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.V }) { ResetView(); return; }
         if (ev is InputEventMouseButton mb && mb.Pressed)
@@ -2018,23 +1512,12 @@ void fragment() {
             else if (mb.ButtonIndex == MouseButton.WheelDown) _distance = Mathf.Min(480, _distance * 1.1f);   // (the map is wide)
             else if (mb.ButtonIndex == MouseButton.Left && _mouseGround.HasValue)
             {
-                if (_linePick is { } lp)
-                {
-                    if (_placeProblem == null && _lineHost >= 0)
-                    {
-                        _session.Issue(lp.Mod is { } mod ? new AddModule(_me, _lineHost, _lineSlot, mod, _lineToward) : new AddWingAt(_me, _lineHost, _lineSlot, lp.Makes, _lineToward));
-                        if (!mb.ShiftPressed) _linePick = null;
-                    }
-                }
-                else if (_placing != null)
+                if (_placing != null)
                 {
                     // One building per build: placing it ends build mode. A bad spot keeps it, to try again.
                     if (_placeProblem == null)
                     {
-                        var at = ToFix(_mouseGround.Value);
-                        if (_placing == Kind.Extractor) _session.Issue(new PlaceExtractor(_me, _placeDeposit));
-                        else if (_placing == Kind.PowerPlant) _session.Issue(new PlacePlant(_me, _placeDeposit));
-                        else _session.Issue(new PlaceDefence(_me, at, _placing.Value));
+                        _session.Issue(new PlaceDefence(_me, ToFix(_mouseGround.Value), _placing.Value));
                         // Walls (and anything with Shift held) keep going: a line of them is a wall.
                         if (_placing != Kind.Wall && !mb.ShiftPressed) _placing = null;
                     }
@@ -2043,12 +1526,11 @@ void fragment() {
             }
             else if (mb.ButtonIndex == MouseButton.Right && _mouseGround.HasValue)
             {
-                // Cancels build mode; sends the picked scouts; or, with one of my factories selected, sets its rally.
-                if (_linePick != null) _linePick = null;
-                else if (_placing != null) _placing = null;
+                // Cancels build mode; sends the picked scouts; or, with my HQ selected, sets its rally.
+                if (_placing != null) _placing = null;
                 else if (_scouts.Count > 0 && W.Winner < 0)
                     _session.Issue(new MoveUnits(_me, _scouts.OrderBy(id => id).ToArray(), ToFix(_mouseGround.Value)));
-                else if (W.Find(_selected) is { Kind: Kind.Factory or Kind.Hq } f && f.Owner == _me && W.Winner < 0)
+                else if (W.Find(_selected) is { Kind: Kind.Hq } f && f.Owner == _me && W.Winner < 0)
                     _session.Issue(new SetRally(_me, f.Id, false, ToFix(_mouseGround.Value)));
             }
         }
@@ -2089,12 +1571,8 @@ void fragment() {
         else if (ev is InputEventKey k2 && k2.Pressed && !k2.Echo && k2.Keycode == Key.B && W.Winner < 0) OpenBuildCard();
         else if (ev is InputEventKey k && k.Pressed && !k.Echo)
         {
-            if (k.Keycode >= Key.Key1 && k.Keycode < Key.Key1 + World.FactoryKindsOf(MyCiv).Length && W.Winner < 0 && WingTarget() is { } onto)
-                _session.Issue(new AddWing(_me, onto.Id, World.FactoryKindsOf(MyCiv)[k.Keycode - Key.Key1]));
-            else if (k.Keycode == Key.Key6 && W.Winner < 0 && W.Started) _placing = Kind.Extractor;
-            else if (k.Keycode == Key.Q && W.Winner < 0 && W.Started && OrderTarget() is { } qu) _session.Issue(new Order(_me, qu.Id, World.ScoutKindOf(MyCiv)));
-            else if (k.Keycode == Key.G && W.Winner < 0 && W.Started && OrderTarget() is { } gu) _session.Issue(new Order(_me, gu.Id, Kind.MobileBase));
-            else if (k.Keycode == Key.F) DeployOrPack();
+            if (k.Keycode == Key.Tab) SetTechTree(!_techOpen);
+            else if (k.Keycode == Key.Q && W.Winner < 0) _session.Issue(new QueueUnit(_me, World.ScoutKindOf(MyCiv)));
             else if (k.Keycode == Key.E)   // pick all my scouts
             {
                 _scouts.Clear();
@@ -2104,7 +1582,7 @@ void fragment() {
             else if (k.Keycode == Key.Escape)
             {
                 // One thing per press: stop placing, else let go of what's picked, else open the menu.
-                if (_linePick != null) _linePick = null;
+                if (_techOpen) SetTechTree(false);
                 else if (_placing != null) _placing = null;
                 else if (_selected >= 0 || _scouts.Count > 0) { _selected = -1; _scouts.Clear(); }
                 else SetMenu(true);
