@@ -287,7 +287,7 @@ public partial class Main : Node3D
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
         _reelHovers = name == "hovertank";
-        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, _ => Kind.LightTank };
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -857,6 +857,7 @@ public partial class Main : Node3D
         : k == Kind.Tank ? "battlewheel"                                                       // (and the two-wheeled cannon)
         : k == Kind.Artillery ? "longleg"                                                      // (and the tripod gun)
         : k == Kind.Mortar ? "lobber"                                                          // (and the wheeled mortar)
+        : k == Kind.Scout ? "skitter"                                                          // (and the ball scout)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts

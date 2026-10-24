@@ -156,6 +156,7 @@ def tyre(a, s, z, r, inner, outer, lugs=22):
     """A big toon tyre on side s: a black ring with a rounded tread and chunky lugs across it, an open rim, a slate
     hub disc with a bolt circle and team marks on the outer face."""
     x0, x1 = xs(s, inner, outer)
+    g = max(0.5, min(1.0, r / 3.0))                                 # lugs in proportion on a small tyre
     out = 1 if s > 0 else -1
     face = x1 if s > 0 else x0
     w = x1 - x0
@@ -167,10 +168,10 @@ def tyre(a, s, z, r, inner, outer, lugs=22):
         for xa, xb in ((x0 + 0.08, x0 + w * 0.47), (x0 + w * 0.53, x1 - 0.08)):
             off = 0.12 if xa < x0 + 0.1 else -0.12                  # (staggered: a chevron tread)
             cc, dd = math.cos(t + off), math.sin(t + off)
-            k.solid([(a + c * r - 0.22 * d, xa, z + d * r + 0.22 * c), (a + c * r + 0.22 * d, xa, z + d * r - 0.22 * c),
-                     (a + cc * r + 0.22 * dd, xb, z + dd * r - 0.22 * cc), (a + cc * r - 0.22 * dd, xb, z + dd * r + 0.22 * cc)],
-                    [(a + c * (r + 0.28) - 0.18 * d, xa, z + d * (r + 0.28) + 0.18 * c), (a + c * (r + 0.28) + 0.18 * d, xa, z + d * (r + 0.28) - 0.18 * c),
-                     (a + cc * (r + 0.28) + 0.18 * dd, xb, z + dd * (r + 0.28) - 0.18 * cc), (a + cc * (r + 0.28) - 0.18 * dd, xb, z + dd * (r + 0.28) + 0.18 * cc)], "black")
+            k.solid([(a + c * r - 0.22 * g * d, xa, z + d * r + 0.22 * g * c), (a + c * r + 0.22 * g * d, xa, z + d * r - 0.22 * g * c),
+                     (a + cc * r + 0.22 * g * dd, xb, z + dd * r - 0.22 * g * cc), (a + cc * r - 0.22 * g * dd, xb, z + dd * r + 0.22 * g * cc)],
+                    [(a + c * (r + 0.28 * g) - 0.18 * g * d, xa, z + d * (r + 0.28 * g) + 0.18 * g * c), (a + c * (r + 0.28 * g) + 0.18 * g * d, xa, z + d * (r + 0.28 * g) - 0.18 * g * c),
+                     (a + cc * (r + 0.28 * g) + 0.18 * g * dd, xb, z + dd * (r + 0.28 * g) - 0.18 * g * cc), (a + cc * (r + 0.28 * g) - 0.18 * g * dd, xb, z + dd * (r + 0.28 * g) + 0.18 * g * cc)], "black")
     wlathe(a, z, [(r * 0.66, face - out * 0.6), (r * 0.66, face - out * 0.1), (r * 0.6, face), (r * 0.36, face),
                   (r * 0.3, face - out * 0.2)], "plate", 40)
     wlathe(a, z, [(r * 0.26, face - out * 0.2), (r * 0.26, face + out * 0.15), (r * 0.17, face + out * 0.28)], "mid", 24)
@@ -343,6 +344,52 @@ def lobber():
             tube_between(at(4.48), at(4.52), 0.38, "black", 12)
         mark("muzzle", at(4.6), "barrel")
     finish_toon("lobber", 16.0)
+
+
+def skitter():
+    """Skitter scout (FLUX concept art/_gen/concepts/unit_skitter_0_s901.png, "7"): a round ball body between two fat
+    tyres, one big glassy cyan eye in a white rim, team stripes over its crown and a band round its waist with
+    amber studs, a gun pod with an orange lens on its right cheek, a whip antenna with a ball tip. The ball turns to
+    look at what it shoots (turret, the gun pod its barrel); the tyres roll (wheel_0/1)."""
+    k.begin(0.0)
+    R, zw = 1.35, 1.35
+    for i, s in enumerate((1, -1)):
+        with part("wheel_%d" % i, (0, s * 2.35, zw), parent="root"):
+            tyre(0, s, zw, R, 1.85, 2.85, lugs=16)
+    wlathe(0, zw, [(0.35, -1.9), (0.35, 1.9)], "dark", 12)
+    zc, rb = 2.45, 1.8                                                                        # ball centre, radius
+    ring = lambda n: [(rb * math.sin(t), rb * -math.cos(t)) for t in (math.pi * j / n for j in range(n + 1))]
+    with part("turret", (0, 0, zc)):
+        hlathe(0, zc, [(max(r, 0.01), a) for r, a in ring(14)], "steel", 28)
+        # Team stripes over the crown (following the ball front to back), a waist band with amber studs.
+        for x0, x1 in ((0.28, 0.62), (-0.62, -0.28)):
+            wlathe(0, zc, [(math.sqrt(rb * rb - x * x) + 0.03, x) for x in (x0 + (x1 - x0) * j / 4 for j in range(5))], "paint", 40)
+        rw = math.sqrt(rb * rb - 0.6 * 0.6) + 0.05
+        hexagon(0, 0, rw, zc - 0.85, zc - 0.5, "paint", sides=32)
+        for t in range(-50, 51, 25):
+            ta = math.radians(t)
+            p = (math.cos(ta) * rw, math.sin(ta) * rw, zc - 0.67)
+            tube_between(p, (p[0] * 1.05, p[1] * 1.05, p[2]), 0.11, "glow", 8)
+        # The eye: a white rim, a cyan lens, two glints.
+        ez = zc + 0.35
+        k.tube(1.35, 1.95, 0, ez, 0.82, "white", 28)
+        k.tube(1.6, 2.02, 0, ez, 0.66, "glass_lit", 28)
+        k.tube(2.02, 2.05, -0.22, ez + 0.28, 0.13, "white", 10)
+        k.tube(2.02, 2.05, 0.1, ez + 0.36, 0.07, "white", 8)
+        # The antenna, leaning back, a ball on its tip.
+        top = (-0.6, 0.5, zc + rb - 0.15)
+        tip = (-1.1, 0.75, zc + rb + 1.7)
+        tube_between(top, (top[0], top[1], top[2] + 0.3), 0.22, "dark", 8)
+        tube_between(top, tip, 0.06, "black", 6)
+        hexagon(tip[0], tip[1], 0.17, tip[2], tip[2] + 0.3, "dark", sides=8)
+        # The gun pod on its right cheek.
+        gz, gx = zc + 0.1, -1.55
+        with part("barrel", (0.2, gx, gz), parent="turret"):
+            hlathe(gx, gz, [(0.3, -0.6), (0.55, -0.4), (0.6, 0.6), (0.5, 1.1)], "plate", 20)
+            hlathe(gx, gz, [(0.38, 1.05), (0.38, 1.25)], "paint", 20)
+            hlathe(gx, gz, [(0.24, 1.2), (0.24, 1.3)], "glow", 16)
+        mark("muzzle", (1.4, gx, gz), "barrel")
+    finish_toon("skitter", 12.0)
 
 
 globals()[sys.argv[sys.argv.index("--") + 1]]()
