@@ -536,4 +536,69 @@ def blimp():
     finish_toon("blimp", 20.0)
 
 
+def repair_drone(a, x, z):
+    """A little repair drone sitting at (a, x, z) (its feet): a round hub, four arms out to rotor rings, a green
+    repair light underneath and a welding torch on a short arm at its front."""
+    hexagon(a, x, 0.42, z + 0.15, z + 0.55, "steel", r1=0.32, sides=10)
+    hexagon(a, x, 0.2, z + 0.55, z + 0.65, "green", sides=10)
+    hexagon(a, x, 0.22, z, z + 0.15, "green", sides=10)
+    for t in (45, 135, 225, 315):
+        c, s = math.cos(math.radians(t)), math.sin(math.radians(t))
+        tip = (a + c * 0.9, x + s * 0.9, z + 0.4)
+        tube_between((a + c * 0.3, x + s * 0.3, z + 0.35), tip, 0.08, "dark", 6)
+        hexagon(tip[0], tip[1], 0.36, z + 0.42, z + 0.5, "dark", r1=0.34, sides=12)
+        hexagon(tip[0], tip[1], 0.12, z + 0.3, z + 0.55, "glow", sides=6)
+    tube_between((a + 0.3, x, z + 0.2), (a + 0.65, x, z + 0.05), 0.06, "mid", 6)            # the torch
+    tube_between((a + 0.65, x, z + 0.05), (a + 0.75, x, z + 0.02), 0.08, "fire", 6)
+
+
+def mender():
+    """Mender repair carrier (FLUX concept art/_gen/concepts/unit_mender_1_s901.png, "17"; the user, 2026-10-24:
+    "Mender should have repair drones that fly over and repair"): open tracks with big road wheels, a boxy hull, a
+    cab at the front with a green and an amber lens, team stripes down the flanks, a glowing green launch pad on the
+    deck and a red beacon; three little repair drones docked on top (drone_0..2) that the game flies out to whatever
+    it's mending and back. Road wheels roll (wheel_N)."""
+    k.begin(0.0)
+    # Open tracks: the tread loop, road wheels (rolling), lugs along the top run.
+    n = 0
+    for s in (1, -1):
+        x0, x1 = xs(s, 1.95, 3.05)
+        k.upright([(-3.1, 0.0), (3.1, 0.0), (3.7, 0.9), (3.1, 1.85), (-3.1, 1.85), (-3.7, 0.9)], x0, x1, "black")
+        for i in range(12):
+            a = -2.9 + i * 0.53
+            k.box(a, a + 0.26, x0 + 0.05, x1 - 0.05, 1.85, 1.95, "dark")
+        for a, r in ((-3.0, 0.75), (-1.5, 0.6), (0.0, 0.6), (1.5, 0.6), (3.0, 0.75)):
+            with part("wheel_%d" % n, (a, s * 3.05, 0.9), parent="root"):
+                wlathe(a, 0.9, [(r, s * 2.9), (r, s * 3.12), (r * 0.6, s * 3.2)], "dark", 18)
+                wlathe(a, 0.9, [(r * 0.3, s * 3.15), (r * 0.3, s * 3.28)], "glow" if r > 0.7 else "mid", 10)
+            n += 1
+    # The hull, a cab at the front with its lenses, a box on the back corner.
+    zb = 1.35
+    plate(-3.0, 2.2, -1.95, 1.95, zb, zb + 2.0, "steel", inset=0.2, front=0.3, back=0.3)
+    plate(1.9, 3.5, -1.5, 0.7, zb + 0.1, zb + 1.7, "plate", inset=0.15, front=0.25)
+    k.tube(3.3, 3.62, -0.95, zb + 0.95, 0.42, "dark", 20)
+    k.tube(3.45, 3.68, -0.95, zb + 0.95, 0.32, "green", 20)
+    k.tube(3.3, 3.62, 0.15, zb + 0.95, 0.42, "dark", 20)
+    k.tube(3.45, 3.68, 0.15, zb + 0.95, 0.32, "glow", 20)
+    k.box(3.0, 3.6, -1.4, 0.6, zb + 0.1, zb + 0.4, "dark")
+    plate(-3.2, -1.2, -1.95, -0.2, zb + 2.0, zb + 2.7, "plate", inset=0.12)
+    # Team stripes down the flanks.
+    for s in (1, -1):
+        k.box(-2.6, 1.8, *xs(s, 1.93, 2.0), zb + 0.55, zb + 0.85, "paint")
+        for a0 in (-2.4, -2.0):
+            k.box(a0, a0 + 0.22, *xs(s, 1.93, 2.0), zb + 1.05, zb + 1.75, "paint")
+    # The launch pad on the deck: a round pad with a green ring, a red beacon box.
+    top = zb + 2.0
+    hexagon(-0.3, 0.5, 1.45, top, top + 0.3, "dark", r1=1.35, sides=20)
+    hexagon(-0.3, 0.5, 1.15, top + 0.3, top + 0.34, "green", sides=20)
+    hexagon(-0.3, 0.5, 0.95, top + 0.3, top + 0.38, "dark", sides=20)
+    k.box(1.0, 1.6, 1.1, 1.8, top, top + 0.35, "red")
+    k.box(-2.6, -1.6, 0.6, 1.7, top, top + 0.25, "dark")                                    # a second pad, back corner
+    # The drones, docked: one on the pad, one on the back pad, one on the cab roof.
+    for i, (a, x, z) in enumerate(((-0.3, 0.5, top + 0.38), (-2.1, 1.15, top + 0.25), (2.6, -0.45, zb + 1.7))):
+        with part("drone_%d" % i, (a, x, z + 0.3)):
+            repair_drone(a, x, z)
+    finish_toon("mender", 16.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()

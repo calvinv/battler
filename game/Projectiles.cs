@@ -151,6 +151,11 @@ public partial class Projectiles : Node3D
                 Dust?.Add(to, Vector3.Up * 0.6f, 0.4f, Smoke);
                 break;
             }
+            case Kind.Mender:   // no shot: its drone arrives and sparks green over the unit as it mends it
+                for (int i = 0; i < 6; i++)
+                    AddFlash(to + new Vector3(_rng.RandfRange(-0.4f, 0.4f), _rng.RandfRange(-0.2f, 0.4f), _rng.RandfRange(-0.4f, 0.4f)), 0.32f, 0.16f,
+                             new Color(0.45f, 1f, 0.55f), DroneArrives + i * 0.14f);
+                break;
             case Kind.Flier:   // a quick light round
                 Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));
@@ -199,6 +204,8 @@ public partial class Projectiles : Node3D
     static readonly Color Smoke = new(0.42f, 0.4f, 0.38f);
 
     void Add(Round r) { if (_rounds.Count < MaxRounds) _rounds.Add(r); }
+
+    const float DroneArrives = 0.7f;   // (UnitRig.DroneOut)
 
     void AddFlash(Vector3 at, float size, float life, Color col, float delay = 0f)
     {

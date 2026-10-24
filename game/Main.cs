@@ -287,7 +287,7 @@ public partial class Main : Node3D
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
         _reelHovers = name == "hovertank";
-        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, "dart" => Kind.Flier, "blimp" => Kind.Bomber, _ => Kind.LightTank };
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, "dart" => Kind.Flier, "blimp" => Kind.Bomber, "mender" => Kind.Mender, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -324,7 +324,7 @@ public partial class Main : Node3D
         else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
         {
             _reelShots++;
-            _reelRig?.Fire();
+            if (_reelKind == Kind.Mender) _reelRig?.SendDrone(_reelTarget.Position + Vector3.Up * 0.6f); else _reelRig?.Fire();
             var from = _reelRig?.Muzzle?.GlobalPosition ?? _reelPos + Vector3.Up;
             _proj.Fire(from, _reelTarget.Position + Vector3.Up * 0.6f, _reelKind, TeamColor[0]);
         }
@@ -860,6 +860,7 @@ public partial class Main : Node3D
         : k == Kind.Scout ? "skitter"                                                          // (and the ball scout)
         : k == Kind.Flier ? "dart"                                                             // (and the prop interceptor)
         : k == Kind.Bomber ? "blimp"                                                           // (and the armoured blimp)
+        : k == Kind.Mender ? "mender"                                                          // (the repair carrier)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
@@ -869,7 +870,7 @@ public partial class Main : Node3D
         : World.IsFeral(kind) ? ModelOf(kind) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
 
     /// <summary>Which wing model makes a unit: fliers and bombers share the airfield.</summary>
-    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber ? "air" : ModelOf(makes);
+    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber ? "air" : makes == Kind.Mender ? "mobilebase" : ModelOf(makes);   // (menders come out of a utility yard)
 
     Civ MyCiv => W.Players[_me].Civ;
     /// <summary>A side's civilisation (the ferals' models aren't any civilisation's: they're named for themselves).</summary>
@@ -1282,7 +1283,7 @@ public partial class Main : Node3D
             dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Right;
             if (World.StatsFor[(int)s.By].IsUnit) _facing.TryAdd(s.ShooterId, dir);
             var from = at + Vector3.Up * MuzzleOf(s.By) + dir * BarrelOf(s.By);
-            if (_rigs.TryGetValue(s.ShooterId, out var shooter))   // a rigged unit: the barrel kicks, the shot leaves its muzzle
+            if (s.By != Kind.Mender && _rigs.TryGetValue(s.ShooterId, out var shooter))   // a rigged unit: the barrel kicks, the shot leaves its muzzle
             {
                 float? yaw = null;
                 if (_facing.TryGetValue(s.ShooterId, out var hull)) yaw = hull.SignedAngleTo(dir, Vector3.Up);
@@ -1292,6 +1293,7 @@ public partial class Main : Node3D
             var target = W.Find(s.TargetId);
             var aimAt = to + Vector3.Up * (target != null ? Mathf.Min(TopOf(target.Kind) * 0.4f, 2f) : 0.6f);
             if (s.Flight > 0) aimAt = to;   // shells burst on the ground
+            if (s.By == Kind.Mender && _rigs.TryGetValue(s.ShooterId, out var mender)) mender.SendDrone(aimAt);   // a drone flies over to it
             _proj.Fire(from, aimAt, s.By, TeamColor[s.Owner], s.Flight / (float)World.TicksPerSecond);   // a shell lands when the sim lands it
         }
         foreach (var (at, owner, amount) in W.Salvaged)   // my salvage: a "+60" rising off the wreck
@@ -1494,7 +1496,7 @@ public partial class Main : Node3D
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
         Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.PowerPlant => 3.2f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
-        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, _ => 2f,
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, Kind.Mender => 2.3f, _ => 2f,
     };
 
     readonly List<(Vector3 At, int Amount, float Age)> _salvageTexts = new();
@@ -1624,6 +1626,7 @@ public partial class Main : Node3D
                     : "A flying scout: it's watching you.",
                 Kind.Ranger => "Small, quick and fragile, with small arms that\nreach fliers too: the cheap answer to most things.",
                 Kind.Flier => "An interceptor: fast, fights other fliers only.\nWith none about, it keeps over your army.",
+                Kind.Mender => "A repair carrier: unarmed. Keeps behind your army and\nsends its drones to mend the nearest damaged unit.",
                 Kind.Bomber => "Slow bombing runs: flies over a ground target, drops a\nheavy bomb with a wide blast, flies on and comes round.\nOnly anti-air can touch it.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",

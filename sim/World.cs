@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module, Mender }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -41,6 +41,7 @@ public sealed class Stats
     public int VsArmour = 100;   // percent of its damage it does to Armoured targets
     public int VsAir = 100;      // percent of its damage it does to fliers
     public bool Explosive;    // shells, cannon and spikes: sulfur makes these hit harder
+    public bool Heals;        // its "shots" mend friendly units instead (Damage is health given back): the Mender
 
     public bool IsBuilding => Speed.Raw == 0;
     public bool IsUnit => !IsBuilding;
@@ -153,6 +154,7 @@ public sealed class World
         Kind.Ranger => 150,
         Kind.Flier => 300,
         Kind.Bomber => 400,
+        Kind.Mender => 300,
         Kind.MobileBase => 300,   // the utility wing
         _ => 500,
     };
@@ -263,7 +265,7 @@ public sealed class World
     /// <summary>What factories can make (scouts come from the HQ).</summary>
     // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
     // tank and a combat tank": units stay free, the light ones just come quicker).
-    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber };   // the Coalition's
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber, Kind.Mender };   // the Coalition's
 
     /// <summary>What a civilisation's factories can make, in build-menu order. The Lattice (the user, 2026-10-21: "they
     /// don't get artillery at tier 1 but they get scout fliers and anti armour units"): crawlers, spiders, piercers.</summary>
@@ -435,6 +437,11 @@ public sealed class World
         new() { Armoured = true, MaxHp = 700, Radius = Fix.Ratio(18, 10), Vision = 8 },
         // Module: a link in a line of the base; the wings after it get what it does (Mod).
         new() { Armoured = true, MaxHp = 500, Radius = Fix.Ratio(14, 10), Vision = 6 },
+        // Mender (the user, 2026-10-24: "Mender should have repair drones that fly over and repair"): an unarmed
+        // tracked carrier that keeps behind its army and sends drones to the nearest damaged unit in reach, giving
+        // back about what a light tank's gun takes off.
+        new() { MaxHp = 70, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(30, 100), Range = 7, Aggro = 14, Vision = 10,
+                Damage = 12, Reload = 10, Heals = true, BuildTicks = 30 * TicksPerSecond },
     };
 
     public int Tick;
@@ -1737,6 +1744,7 @@ public sealed class World
             }
 
             if (e.Kind == Kind.Bomber) { FlyBomber(e); continue; }
+            if (s.Heals) { Mend(e); continue; }
             var target = NearestEnemy(e, AggroOf(e) + MaxDownhillRange, s.MinRange);   // (a hill may let it reach past its aggro)
             // Artillery with an enemy too close to shoot holds still: that's its weakness.
             if (target == null && s.MinRange.Raw > 0 && NearestEnemy(e, AggroOf(e) + MaxDownhillRange, Fix.Zero) != null) continue;
@@ -1797,6 +1805,44 @@ public sealed class World
             }
         }
         _hits.Clear();
+    }
+
+    /// <summary>
+    /// A mender: to the nearest damaged unit of its side it can see to (its Aggro), and once in reach sends a drone
+    /// that gives back its Damage in health. With nobody to mend it keeps a few lengths behind the nearest friendly
+    /// fighter (or goes where it was sent).
+    /// </summary>
+    void Mend(Entity e)
+    {
+        var s = e.Stats;
+        Entity patient = null, escort = null;
+        Fix best = Fix.FromInt(1 << 20), near = Fix.FromInt(1 << 20);
+        foreach (var o in Entities)
+        {
+            if (o == e || o.Dead || o.Owner != e.Owner || !o.Stats.IsUnit || o.Building > 0) continue;
+            var d = (o.Pos - e.Pos).LengthSq;
+            if (o.Hp < o.MaxHp && d < best && d <= (s.Aggro + o.Stats.Radius) * (s.Aggro + o.Stats.Radius)) { best = d; patient = o; }
+            if (!o.Stats.Heals && o.Stats.Reload > 0 && d < near) { near = d; escort = o; }
+        }
+        if (patient != null)
+        {
+            var gap = (patient.Pos - e.Pos).Length - s.Radius - patient.Stats.Radius;
+            if (gap <= s.Range)
+            {
+                if (e.Cooldown == 0)
+                {
+                    e.Cooldown = s.Reload;
+                    patient.Hp = System.Math.Min(patient.MaxHp, patient.Hp + e.Damage);
+                    Shots.Add(new Shot(e.Pos, patient.Pos, e.Owner, e.Kind, e.Id, patient.Id, 0));
+                }
+                return;
+            }
+            _moves.Add((e, FanOut(e, Drive(e, patient.Pos, Fix.Min(SpeedOf(e), gap - s.Range + Fix.Ratio(1, 2))))));
+            return;
+        }
+        if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
+        if (e.HasWaypoint) { _moves.Add((e, FanOut(e, Drive(e, e.Waypoint, SpeedOf(e))))); return; }
+        if (escort != null && near > Fix.FromInt(5 * 5)) _moves.Add((e, FanOut(e, Drive(e, escort.Pos, SpeedOf(e)))));
     }
 
     /// <summary>

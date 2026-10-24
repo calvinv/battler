@@ -265,7 +265,7 @@ bool BaseTest()
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
     bool ok = truck != null && guarded && canDeploy && post != null && canMine && baseTakesNone && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest();
+    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest() && MenderTest();
 }
 
 // Resource hosts: a tank wing on a sulfur extractor makes enhanced tanks (harder hits, fires); one on a power plant
@@ -295,6 +295,27 @@ bool HostTest()
 
 // Power: three tank wings (drawing 6) on the HQ's 4 make their first tank in half as long again (45 s becomes
 // 67.5 s); with a power plant up as well, in the usual 45 s.
+// A mender catches up with a damaged tank and mends it back to full, no further.
+bool MenderTest()
+{
+    var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
+    var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+    var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
+    w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Mender), new AddWing(1, hq1.Id, Kind.Mender) });
+    var tank = w.Spawn(Kind.Tank, 0, hq.Pos + new FixVec2(14, 0));
+    var mender = w.Spawn(Kind.Mender, 0, hq.Pos + new FixVec2(14, 12));
+    tank.Hp = tank.MaxHp / 2;
+    int start = w.Tick, half = tank.Hp, after10 = 0;
+    while (w.Tick - start < 1200)
+    {
+        w.Step(Array.Empty<Command>());
+        if (w.Tick - start == 100) after10 = tank.Hp;
+    }
+    bool ok = !tank.Dead && after10 > half + 50 && tank.Hp == tank.MaxHp;
+    Console.WriteLine($"Mender test: tank at {half}/{tank.MaxHp}, after 10 s {after10}, after 2 min {tank.Hp}: {(ok ? "OK" : "FAILED")}");
+    return ok;
+}
+
 bool PowerTest()
 {
     int FirstTank(bool plant)

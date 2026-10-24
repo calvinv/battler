@@ -226,7 +226,7 @@ public partial class Main
         return items.Where(i => i != null).ToList();
     }
 
-    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H };
+    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H, Key.N };
     static readonly Key[] LatticeWingKeys = { Key.C, Key.I, Key.K, Key.J, Key.F, Key.H };
 
     /// <summary>A base's or a wing host's card: the wings it takes (the HQ, extractors, power plants), the
@@ -394,7 +394,7 @@ public partial class Main
         if (s.Reload > 0)
         {
             float every = s.Reload / (float)World.TicksPerSecond;
-            lines.Add($"Damage  {s.Damage} every {every:0.#} s   ({s.Damage / every:0.#} a second)");
+            lines.Add(s.Heals ? $"Mends  {s.Damage} health every {every:0.#} s   ({s.Damage / every:0.#} a second)" : $"Damage  {s.Damage} every {every:0.#} s   ({s.Damage / every:0.#} a second)");
             lines.Add($"Range  {s.Range}" + (s.MinRange.Raw > 0 ? $"   (nothing within {s.MinRange})" : "") + (s.Splash.Raw > 0 ? $"   splash {s.Splash}" : ""));
             var notes = new List<string>();
             if (s.VsArmour != 100) notes.Add($"x{s.VsArmour / 100f:0.#} against armour");

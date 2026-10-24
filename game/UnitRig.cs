@@ -8,12 +8,16 @@ namespace Battler.Game;
 /// wheels roll with the ground covered, a turret swings to its target while the hull drives, the barrel kicks back
 /// when it fires, a flywheel spins with the engine, the body leans as it speeds up and brakes and shudders at idle,
 /// and the exhaust smokes; a walker's legs step in time with the ground it covers. Parts are found by name: wheel_*,
-/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R, tleg_N + tshin_N (a tripod), rotor_N (props, spun flat); marks muzzle, exhaust.
+/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R, tleg_N + tshin_N (a tripod), rotor_N (props, spun flat), drone_N (a mender's repair drones, flown out by SendDrone); marks muzzle, exhaust.
 /// </summary>
 public sealed class UnitRig
 {
     readonly List<(Node3D Node, float Radius)> _wheels = new();
     readonly List<Node3D> _rotors = new();
+    // A mender's repair drones: docked on its deck until sent out to hover over a unit it's mending, then back.
+    sealed class Drone { public Node3D Node; public Transform3D Rest; public float T = -1; public Vector3 From, To; }
+    readonly List<Drone> _drones = new();
+    const float DroneOut = 0.7f, DroneStay = 0.9f, DroneBack = 0.7f;
     Node3D _body, _turret, _barrel, _flywheel;
     Vector3 _barrelRest, _bodyRest;
     public Node3D Muzzle { get; private set; }
@@ -61,6 +65,7 @@ public sealed class UnitRig
                 rig._triOut[i] = new Vector3(p.X, 0, p.Z).Normalized();
             }
         if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker && !rig._tripod && rig._rotors.Count == 0) return null;
+        foreach (var d in rig._drones) d.Rest = d.Node.Transform;
         rig._hover = rig._wheels.Count == 0 && !rig._walker && !rig._tripod;      // no wheels or legs: it floats
         if (rig._walker) rig._kick = 0.4f;
         if (rig._hover && rig._rotors.Count == 0) rig.AddHoverGlow(view);   // (a flier is too high for a glow on the ground)
@@ -85,6 +90,7 @@ public sealed class UnitRig
                 string name = n.Name.ToString();
                 if (name.StartsWith("wheel")) rig._wheels.Add((n, RadiusOf(n)));
                 else if (name.StartsWith("rotor")) rig._rotors.Add(n);
+                else if (name.StartsWith("drone_")) rig._drones.Add(new Drone { Node = n });
                 else if (name == "turret") rig._turret = n;
                 else if (name == "barrel") rig._barrel = n;
                 else if (name == "flywheel") rig._flywheel = n;
@@ -218,6 +224,56 @@ public sealed class UnitRig
         }
     }
 
+    /// <summary>A mender mends: a docked drone takes off and flies to hover over `over` (world), then comes home.
+    /// (All out already: the one sent longest ago turns back for this.)</summary>
+    public void SendDrone(Vector3 over)
+    {
+        Drone pick = null;
+        foreach (var d in _drones)
+            if (d.T < 0) { pick = d; break; }
+        if (pick == null) return;
+        pick.T = 0;
+        pick.From = pick.Node.GlobalPosition;
+        pick.To = over + Vector3.Up * 1.1f;
+    }
+
+    void FlyDrones(float dt)
+    {
+        foreach (var d in _drones)
+        {
+            if (d.T < 0) continue;
+            d.T += dt;
+            var parent = d.Node.GetParentNode3D();
+            var dock = parent.GlobalTransform * d.Rest.Origin;
+            Vector3 at;
+            if (d.T < DroneOut)
+            {
+                float u = Ease(d.T / DroneOut);
+                at = d.From.Lerp(d.To, u) + Vector3.Up * Mathf.Sin(u * Mathf.Pi) * 1.2f;
+            }
+            else if (d.T < DroneOut + DroneStay)
+            {
+                float h = d.T - DroneOut;   // circling a little over it, its green light on the work
+                at = d.To + new Vector3(Mathf.Cos(h * 5f) * 0.35f, Mathf.Sin(h * 11f) * 0.08f, Mathf.Sin(h * 5f) * 0.35f);
+            }
+            else if (d.T < DroneOut + DroneStay + DroneBack)
+            {
+                float u = Ease((d.T - DroneOut - DroneStay) / DroneBack);
+                at = d.To.Lerp(dock, u) + Vector3.Up * Mathf.Sin(u * Mathf.Pi) * 1.2f;
+            }
+            else
+            {
+                d.Node.Transform = d.Rest;
+                d.T = -1;
+                continue;
+            }
+            d.Node.GlobalPosition = at;
+            d.Node.Basis = d.Rest.Basis * new Basis(Vector3.Up, d.T * 3f);
+        }
+    }
+
+    static float Ease(float t) => t * t * (3 - 2 * t);
+
     /// <summary>One frame. `moved`: world distance driven since the last frame. `aimYaw`: the turret's wanted turn
     /// from straight ahead (radians, about up), or null to bring it home.</summary>
     public void Update(float dt, float moved, float? aimYaw)
@@ -235,6 +291,8 @@ public sealed class UnitRig
         _spin += dt * (5f + 22f * work);
         if (_flywheel != null) _flywheel.Rotation = new Vector3(0, 0, _spin);
         for (int i = 0; i < _rotors.Count; i++) _rotors[i].Rotation = new Vector3(0, (i % 2 == 0 ? 1 : -1) * (_time * 31f + i), 0);   // (pairs turn opposite ways)
+
+        if (_drones.Count > 0) FlyDrones(dt);
 
         // The turret swings at its own pace.
         if (_turret != null)
