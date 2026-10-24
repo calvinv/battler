@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module, Mender, Bulwark }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module, Mender, Bulwark, Hive }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -157,6 +157,7 @@ public sealed class World
         Kind.Bomber => 400,
         Kind.Mender => 300,
         Kind.Bulwark => 450,
+        Kind.Hive => 400,
         Kind.MobileBase => 300,   // the utility wing
         _ => 500,
     };
@@ -271,7 +272,7 @@ public sealed class World
     /// <summary>What factories can make (scouts come from the HQ).</summary>
     // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
     // tank and a combat tank": units stay free, the light ones just come quicker).
-    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber, Kind.Mender, Kind.Bulwark };   // the Coalition's
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber, Kind.Mender, Kind.Bulwark, Kind.Hive };   // the Coalition's
 
     /// <summary>What a civilisation's factories can make, in build-menu order. The Lattice (the user, 2026-10-21: "they
     /// don't get artillery at tier 1 but they get scout fliers and anti armour units"): crawlers, spiders, piercers.</summary>
@@ -452,6 +453,10 @@ public sealed class World
         // (DomeReach) takes DomePercent less damage. It keeps with the army.
         new() { Armoured = true, MaxHp = 200, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(22, 100), Vision = 9, Shields = true,
                 BuildTicks = 45 * TicksPerSecond },
+        // Hive: a carrier truck whose "gun" is a swarm of little drones out of its roof: a long reach, quick light
+        // stings, and the drones chase fliers too. Fragile itself.
+        new() { MaxHp = 110, Radius = Fix.Ratio(13, 10), Speed = Fix.Ratio(26, 100), Range = 10, Aggro = 14, Vision = 10,
+                Damage = 5, Reload = 8, HitsAir = true, BuildTicks = 40 * TicksPerSecond },
     };
 
     public int Tick;

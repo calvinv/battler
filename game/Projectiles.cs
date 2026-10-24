@@ -156,6 +156,11 @@ public partial class Projectiles : Node3D
                     AddFlash(to + new Vector3(_rng.RandfRange(-0.4f, 0.4f), _rng.RandfRange(-0.2f, 0.4f), _rng.RandfRange(-0.4f, 0.4f)), 0.32f, 0.16f,
                              new Color(0.45f, 1f, 0.55f), DroneArrives + i * 0.14f);
                 break;
+            case Kind.Hive:   // no shot: a drone gets there and stings it, little orange zaps
+                for (int i = 0; i < 4; i++)
+                    AddFlash(to + new Vector3(_rng.RandfRange(-0.35f, 0.35f), _rng.RandfRange(-0.1f, 0.4f), _rng.RandfRange(-0.35f, 0.35f)), 0.4f, 0.08f,
+                             new Color(1f, 0.6f, 0.2f), DroneArrives + 0.1f + i * 0.18f);
+                break;
             case Kind.Flier:   // a quick light round
                 Add(new Round { From = from, To = to, Flight = dist / 55f, Thick = 0.1f, Length = 1.6f, Col = hot.Lerp(team, 0.15f), By = by, Sparks = true });
                 AddFlash(from, 0.9f, 0.08f, new Color(1f, 0.75f, 0.35f));

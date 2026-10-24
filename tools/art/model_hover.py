@@ -651,4 +651,62 @@ def bulwark():
     finish_toon("bulwark", 16.0)
 
 
+def stinger(a, x, z):
+    """A little insect drone resting at (a, x, z): a striped body, two pairs of glassy wings, an amber eye."""
+    hlathe(x, z + 0.3, [(0.05, a - 0.55), (0.2, a - 0.35), (0.22, a + 0.05), (0.18, a + 0.3), (0.05, a + 0.45)], "dark", 12)
+    hlathe(x, z + 0.3, [(0.235, a - 0.25), (0.235, a - 0.12)], "paint", 12)
+    hlathe(x, z + 0.3, [(0.13, a + 0.38), (0.13, a + 0.48)], "glow", 10)
+    for s in (1, -1):
+        for da, w in ((0.1, 0.62), (-0.15, 0.48)):
+            k.box(a + da - 0.12, a + da + 0.12, *xs(s, 0.15, 0.15 + w), z + 0.48, z + 0.52, "glass_lit")
+
+
+def hive():
+    """Hive swarm carrier (FLUX concept art/_gen/concepts/unit_hive_1_s901.png, "23"): a tall box of a body on four big
+    wheels, a bumper block out front, three cyan eyes in a visor on its brow, team stripes, and a honeycomb rack on its
+    roof that its swarm of little insect drones (drone_0..5) launch from and come back to. Wheels roll (wheel_N)."""
+    k.begin(0.0)
+    R, zw = 1.6, 1.6
+    for i, (a, s) in enumerate(((2.1, 1), (2.1, -1), (-2.1, 1), (-2.1, -1))):
+        with part("wheel_%d" % i, (a, s * 2.5, zw), parent="root"):
+            tyre(a, s, zw, R, 1.9, 3.1, lugs=16)
+    for a in (2.1, -2.1):
+        wlathe(a, zw, [(0.35, -1.9), (0.35, 1.9)], "dark", 12)
+    zb = 1.8
+    # The body: a tall chamfered box, a bumper block out front, a visor with three eyes on its brow.
+    plate(-3.0, 2.4, -1.85, 1.85, zb, zb + 3.6, "steel", inset=0.2, front=0.3, back=0.25)
+    plate(2.2, 3.6, -1.3, 1.3, zb - 0.4, zb + 0.8, "plate", inset=0.15, front=0.3)
+    k.box(3.5, 3.65, -0.9, 0.9, zb - 0.1, zb + 0.4, "dark")
+    plate(1.3, 2.75, -1.6, 1.6, zb + 3.0, zb + 4.0, "plate", inset=0.12, front=0.25)
+    for x in (-1.0, 0.0, 1.0):
+        k.box(2.55, 2.8, x - 0.4, x + 0.4, zb + 3.2, zb + 3.8, "black")
+        k.tube(2.7, 2.82, x, zb + 3.5, 0.15, "glass_lit", 12)
+    # Team stripes: down the front, along the flanks, three dashes at the back corner.
+    for x in (-1.45, 1.2):
+        k.box(2.36, 2.42, x, x + 0.25, zb + 0.8, zb + 2.9, "paint")
+    for s in (1, -1):
+        k.box(-2.8, 2.2, *xs(s, 1.83, 1.9), zb + 2.3, zb + 2.6, "paint")
+        k.box(-2.0, 0.6, *xs(s, 1.83, 1.88), zb + 0.6, zb + 2.0, "mid")
+        for a0 in (-2.75, -2.45, -2.15):
+            k.box(a0, a0 + 0.16, *xs(s, 1.83, 1.9), zb + 2.85, zb + 3.3, "paint")
+    # The honeycomb rack on the roof: a raised tray of hex cells, each a dark socket in a rim.
+    top = zb + 3.6
+    plate(-2.8, 1.25, -1.65, 1.65, top - 0.1, top + 0.45, "plate", inset=0.1)
+    cells = []
+    for row in range(3):
+        for col in range(4):
+            a = -2.25 + col * 1.05 + (0.52 if row % 2 else 0)
+            x = -1.0 + row * 1.0
+            if a > 1.0:
+                continue
+            hexagon(a, x, 0.52, top + 0.45, top + 0.55, "dark", turn=math.pi / 6)
+            hexagon(a, x, 0.38, top + 0.5, top + 0.58, "black", turn=math.pi / 6)
+            cells.append((a, x))
+    # The swarm, resting on six of the cells.
+    for i, (a, x) in enumerate(cells[:6] if len(cells) >= 6 else cells):
+        with part("drone_%d" % i, (a, x, top + 0.9)):
+            stinger(a, x, top + 0.55)
+    finish_toon("hive", 16.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()

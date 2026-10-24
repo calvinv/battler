@@ -226,7 +226,7 @@ public partial class Main
         return items.Where(i => i != null).ToList();
     }
 
-    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H, Key.N, Key.O };
+    static readonly Key[] CoalitionWingKeys = { Key.L, Key.T, Key.M, Key.K, Key.J, Key.F, Key.H, Key.N, Key.O, Key.I };
     static readonly Key[] LatticeWingKeys = { Key.C, Key.I, Key.K, Key.J, Key.F, Key.H };
 
     /// <summary>A base's or a wing host's card: the wings it takes (the HQ, extractors, power plants), the
