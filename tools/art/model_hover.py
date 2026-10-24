@@ -291,4 +291,58 @@ def longleg():
     finish_toon("longleg", 24.0)
 
 
+def lobber():
+    """Lobber mortar carrier (FLUX concept art/_gen/concepts/unit_lobber_2_s901.png, "6"): a squat faceted shell body on
+    four fat wheels on stub arms, each under a mudguard with a team tab; a stubby mortar tube angled steeply up out
+    of a hatch on its back half, an ammunition drum on its right flank, team chevrons over the top, amber lamps.
+    Wheels roll (wheel_0..3, on the ground); the body rides its springs; the mortar mount turns (turret) and the
+    tube (barrel) kicks."""
+    k.begin(0.0)
+    R, zw = 1.25, 1.25
+    for i, (a, s) in enumerate(((2.0, 1), (2.0, -1), (-2.0, 1), (-2.0, -1))):
+        with part("wheel_%d" % i, (a, s * 2.55, zw), parent="root"):
+            tyre(a, s, zw, R, 2.0, 3.1, lugs=14)
+    for a in (2.0, -2.0):
+        wlathe(a, zw, [(0.3, -2.0), (0.3, 2.0)], "dark", 12)                                  # axles
+    zb = 1.5
+    # The shell body: a wide chamfered block, a faceted upper shell, a front face with two lamps.
+    plate(-2.6, 2.6, -1.85, 1.85, zb, zb + 1.8, "steel", inset=0.3, front=0.55, back=0.45)
+    plate(-2.1, 2.0, -1.55, 1.55, zb + 1.8, zb + 2.7, "plate", inset=0.45, front=0.6, back=0.4)
+    for x in (-1.15, 1.15):
+        k.tube(2.25, 2.55, x, zb + 0.75, 0.3, "dark", 16)
+        k.tube(2.45, 2.62, x, zb + 0.75, 0.2, "glow", 16)
+    k.box(2.3, 2.5, -0.6, 0.6, zb + 0.25, zb + 0.5, "black")                                # a grille
+    # Mudguards over the wheels with team tabs.
+    for a in (2.0, -2.0):
+        for s in (1, -1):
+            plate(a - 1.35, a + 1.35, *xs(s, 1.95, 3.2), zw + R + 0.1, zw + R + 0.45, "plate", inset=0.12, front=0.35, back=0.35)
+            k.box(a + 0.2, a + 0.9, *xs(s, 2.3, 2.85), zw + R + 0.45, zw + R + 0.5, "paint")
+            k.box(a - 0.3, a + 0.3, *xs(s, 1.55, 2.0), zw - 0.25, zw + 0.25, "dark")            # stub arm
+    # Team chevrons over the back of the shell; a vent on the left flank.
+    for a0 in (-1.4, -0.85):
+        k.box(a0, a0 + 0.32, -1.5, 1.5, zb + 2.7, zb + 2.76, "paint")
+    k.box(0.0, 0.7, 1.84, 1.9, zb + 0.8, zb + 1.4, "dark")
+    # The ammunition drum on the right flank, lying along the body.
+    hlathe(-1.95, zb + 1.35, [(0.75, -2.7), (0.85, -2.5), (0.85, -0.2), (0.75, 0.0)], "mid", 24)
+    for a0 in (-2.1, -0.8):
+        hlathe(-1.95, zb + 1.35, [(0.9, a0), (0.9, a0 + 0.25)], "paint", 24)
+    # The mortar: a round hatch mount on the back half of the shell, a short fat tube angled steeply forward.
+    mz = zb + 2.7
+    with part("turret", (-0.5, 0, mz)):
+        hexagon(-0.5, 0, 1.05, mz, mz + 0.35, "dark", r1=0.95, sides=10)
+        k.box(-1.25, -0.95, -0.25, 0.25, mz + 0.35, mz + 0.55, "glow")
+        pitch = math.radians(55)
+        d = (math.cos(pitch), 0, math.sin(pitch))
+        base = (-0.5, 0, mz + 0.5)
+        at = lambda t: tuple(base[j] + d[j] * t for j in range(3))
+        with part("barrel", base, parent="turret"):
+            tube_between(at(-0.6), at(0.9), 0.7, "mid", 16)                                   # breech collar
+            tube_between(at(0.9), at(4.0), 0.48, "dark", 16)                                  # tube
+            tube_between(at(2.2), at(2.55), 0.53, "paint", 16)
+            tube_between(at(3.8), at(4.5), 0.6, "dark", 16)                                   # muzzle ring
+            tube_between(at(4.48), at(4.52), 0.38, "black", 12)
+        mark("muzzle", at(4.6), "barrel")
+    finish_toon("lobber", 16.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()
