@@ -287,7 +287,7 @@ public partial class Main : Node3D
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
         _reelHovers = name == "hovertank";
-        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, _ => Kind.LightTank };
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -318,9 +318,9 @@ public partial class Main : Node3D
         if (_reelSpeed > 0.05f)
         {
             _dust.Drive(1, _reelPos, dir, r * 1.1f, r * 0.7f, _reelSpeed, dt);
-            if (!_reelHovers) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
+            if (!_reelHovers && _reelKind is not (Kind.Ranger or Kind.Artillery)) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
         }
-        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && _reelKind == Kind.Ranger && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
+        if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && _reelKind is Kind.Ranger or Kind.Artillery && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
         else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
         {
             _reelShots++;
@@ -855,6 +855,7 @@ public partial class Main : Node3D
     static string UnitModel(Kind k, Civ civ) => k == Kind.LightTank ? "hovertank"      // (the cel shaded hover tank, being explored: the user, 2026-10-23)
         : k == Kind.Ranger ? "mech"                                                            // (and the bird-legged rifle mech)
         : k == Kind.Tank ? "battlewheel"                                                       // (and the two-wheeled cannon)
+        : k == Kind.Artillery ? "longleg"                                                      // (and the tripod gun)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
@@ -1299,9 +1300,11 @@ public partial class Main : Node3D
     {
         var flash = new MeshInstance3D
         {
-            Mesh = new SphereMesh { Radius = radius, Height = radius, RadialSegments = 12, Rings = 4 },
+            // (a faint ring on the ground the size of the splash: what the shell caught; the fireball is Explosions)
+            Mesh = new TorusMesh { InnerRadius = radius * 0.93f, OuterRadius = radius, Rings = 48, RingSegments = 4 },
             MaterialOverride = Unshaded(new Color(1f, 0.6f, 0.2f, 0.45f)),
-            Position = at,
+            Position = at + Vector3.Up * 0.15f,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         };
         AddChild(flash);
         _blasts.Add((flash, 0f));
@@ -1314,7 +1317,7 @@ public partial class Main : Node3D
             var (node, age) = _blasts[i];
             age += dt;
             if (age > 0.5f) { node.QueueFree(); _blasts.RemoveAt(i); continue; }
-            node.Scale = Vector3.One * (0.6f + age);
+            node.Scale = new Vector3(1, 0.05f, 1) * (0.75f + age * 0.5f);
             ((StandardMaterial3D)node.MaterialOverride).AlbedoColor = new Color(1f, 0.6f, 0.2f, 0.45f * (1 - age / 0.5f));
             _blasts[i] = (node, age);
         }
@@ -1374,7 +1377,7 @@ public partial class Main : Node3D
                 if (!W.Paused && moving && Shown(e))
                 {
                     float r = e.Stats.Radius.ToFloat();
-                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger, flies = e.Stats.Flying;
+                    bool wheels = e.Kind == Kind.Scout, legs = e.Kind is Kind.Spider or Kind.Crawler or Kind.Piercer or Kind.Ranger or Kind.Artillery, flies = e.Stats.Flying;
                     bool hovers = e.Kind == Kind.LightTank;   // (the hover tank: dust blown up, no tread marks, trees left standing)
                     if (!flies) _dust.Drive(e.Id, pos, flat.Normalized(), r * 1.1f, r * 0.7f, flat.Length() * World.TicksPerSecond, _frameDt);
                     // Tread marks under each track (the scout's wheels leave thinner, fainter ones; walkers and fliers none).

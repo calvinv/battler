@@ -230,4 +230,65 @@ def battlewheel():
     finish_toon("battlewheel", 20.0)
 
 
+def longleg():
+    """Long Leg artillery tripod (FLUX concept art/_gen/concepts/unit_longleg_2_s901.png, "3"): a chamfered box head
+    with a team octagon on its lid, a big lens on one cheek and a long cannon out of a slot in its face, on a hub
+    held high by three long legs (two either side of the gun, one behind), each a thick plated thigh out and down
+    to the knee with an amber panel, a slimmer shin down to a round pad. Legs are tleg_0..2 (thigh, turning at the
+    hip) and tshin_0..2 (at the knee); the head turns (turret) on the body, which dips as it steps; the cannon kicks."""
+    k.begin(0.0)
+    hz = 7.4                                                                                # hip height
+    # The hub the legs hang from (the body: it dips as it steps), a round foot under it.
+    hexagon(0, 0, 1.7, hz - 0.9, hz + 0.3, "dark", r1=1.9, sides=6)
+    hexagon(0, 0, 0.6, hz - 1.6, hz - 0.9, "dark", r1=0.75, sides=8)
+    tz = hz + 0.3
+    with part("turret", (0, 0, tz)):
+        # The head: a chamfered box, a lid panel with a team octagon, two lid ribs, a rear pack.
+        plate(-2.4, 2.4, -2.2, 2.2, tz, tz + 3.4, "steel", inset=0.35, front=0.45, back=0.35)
+        k.box(-1.6, 1.4, -1.5, 1.5, tz + 3.4, tz + 3.5, "plate")
+        hexagon(-0.2, 0, 1.0, tz + 3.5, tz + 3.56, "paint", sides=8, turn=math.pi / 8)
+        hexagon(-0.2, 0, 0.82, tz + 3.5, tz + 3.6, "plate", sides=8, turn=math.pi / 8)
+        for x in (-1.75, 1.75):
+            k.box(-1.0, 0.6, x - 0.22, x + 0.22, tz + 3.3, tz + 3.62, "mid")
+        plate(-2.9, -2.35, -1.5, 1.5, tz + 0.6, tz + 2.8, "plate", inset=0.15)
+        # A team band round the head and slanted stripes by the lens.
+        for s in (1, -1):
+            k.box(-2.2, 2.2, *xs(s, 2.17, 2.24), tz + 1.25, tz + 1.55, "paint")
+        for i in range(3):
+            a0 = -1.9 + i * 0.42
+            k.box(a0, a0 + 0.22, 2.17, 2.24, tz + 2.2, tz + 3.0, "paint")
+        # The lens on its left cheek: a dark rim, a glowing eye, a glint.
+        wlathe(0.9, tz + 2.2, [(0.85, 2.15), (0.85, 2.45), (0.7, 2.55)], "dark", 24)
+        wlathe(0.9, tz + 2.2, [(0.55, 2.4), (0.55, 2.6)], "glow", 24)
+        wlathe(0.7, tz + 2.4, [(0.15, 2.6), (0.15, 2.63)], "white", 10)
+        # The gun slot in the face, a mantlet in it, the long barrel.
+        k.box(2.35, 2.5, -1.0, 1.0, tz + 1.0, tz + 2.8, "black")
+        gz = tz + 1.9
+        with part("barrel", (2.3, 0, gz), parent="turret"):
+            hlathe(0, gz, [(0.75, 1.8), (0.75, 3.0), (0.6, 3.2)], "mid", 24)
+            hlathe(0, gz, [(0.42, 3.1), (0.42, 4.0), (0.3, 4.2), (0.3, 9.6)], "dark", 20)
+            hlathe(0, gz, [(0.36, 6.4), (0.36, 6.8)], "paint", 20)
+            hlathe(0, gz, [(0.42, 9.5), (0.42, 10.3), (0.36, 10.4)], "dark", 20)
+            hlathe(0, gz, [(0.22, 10.38), (0.22, 10.42)], "black", 16)
+        mark("muzzle", (10.5, 0, gz), "barrel")
+    # The legs: two either side of the gun, one behind. Thigh out and down to the knee, shin down to a pad.
+    for i, turn in enumerate((math.radians(55), math.radians(-55), math.pi)):
+        c, s = math.cos(turn), math.sin(turn)
+        at = lambda r, z: (c * r, s * r, z)
+        hip, knee, foot = at(1.5, hz - 0.3), at(4.6, 5.0), at(6.0, 0.55)
+        with part("tleg_%d" % i, hip, parent="root"):
+            tube_between(hip, knee, 0.75, "plate", 6)
+            # An amber light panel on the thigh's outer face.
+            mid = tuple(hip[j] + (knee[j] - hip[j]) * 0.6 for j in range(3))
+            tube_between((mid[0] + c * 0.55, mid[1] + s * 0.55, mid[2] + 0.45), (mid[0] + c * 0.75, mid[1] + s * 0.75, mid[2] + 0.55), 0.28, "glow", 4)
+            tube_between(at(1.2, hz - 0.3), at(1.9, hz - 0.3), 0.85, "dark", 8)               # hip joint
+            with part("tshin_%d" % i, knee, parent="tleg_%d" % i):
+                tube_between(knee, foot, 0.5, "steel", 6)
+                tube_between(at(4.6, 5.6), at(4.6, 4.4), 0.7, "dark", 8)                      # knee joint
+                low = tuple(knee[j] + (foot[j] - knee[j]) * 0.45 for j in range(3))
+                tube_between((low[0] + c * 0.4, low[1] + s * 0.4, low[2]), (low[0] + c * 0.55, low[1] + s * 0.55, low[2]), 0.2, "paint", 4)
+                tube_between((foot[0], foot[1], 0.0), (foot[0], foot[1], 0.55), 0.75, "dark", 10)   # pad
+    finish_toon("longleg", 24.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()

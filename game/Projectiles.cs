@@ -253,7 +253,8 @@ public partial class Projectiles : Node3D
         {
             OnShellLands?.Invoke(r.To, r.By);
             float big = r.By == Kind.Mortar ? 0.6f : 1f;   // a mortar bomb bursts smaller
-            AddFlash(r.To + Vector3.Up * big, 6f * big, 0.25f, new Color(1f, 0.55f, 0.2f));
+            if (Booms != null) Booms.Boom(r.To + Vector3.Up * 0.2f, r.By == Kind.Mortar ? 0.8f : r.By == Kind.Bomber ? 1f : 1.3f);
+            else AddFlash(r.To + Vector3.Up * big, 6f * big, 0.25f, new Color(1f, 0.55f, 0.2f));
             for (int i = 0; i < (r.By == Kind.Mortar ? 4 : 8); i++)   // dirt thrown up
                 Dust?.Add(r.To, new Vector3(_rng.RandfRange(-2.5f, 2.5f), _rng.RandfRange(2f, 4.5f), _rng.RandfRange(-2.5f, 2.5f)), _rng.RandfRange(0.9f, 1.6f), new Color(0.38f, 0.32f, 0.25f));
         }

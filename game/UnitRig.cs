@@ -8,7 +8,7 @@ namespace Battler.Game;
 /// wheels roll with the ground covered, a turret swings to its target while the hull drives, the barrel kicks back
 /// when it fires, a flywheel spins with the engine, the body leans as it speeds up and brakes and shudders at idle,
 /// and the exhaust smokes; a walker's legs step in time with the ground it covers. Parts are found by name: wheel_*,
-/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R; marks muzzle, exhaust.
+/// turret, barrel, flywheel, body, thigh_L/R + shin_L/R + foot_L/R, tleg_N + tshin_N (a tripod); marks muzzle, exhaust.
 /// </summary>
 public sealed class UnitRig
 {
@@ -24,6 +24,10 @@ public sealed class UnitRig
     readonly Node3D[,] _legs = new Node3D[2, 3];      // [left/right, thigh/shin/foot]
     bool _walker;
     float _gait, _stride;
+    // A tripod (the Long Leg): three legs round the body, stepping one at a time.
+    readonly Node3D[,] _tri = new Node3D[3, 2];       // [leg, thigh/shin]
+    readonly Vector3[] _triOut = new Vector3[3];      // each leg's outward direction, flat
+    bool _tripod;
     float _kick = Kick;
     // A walker's rifle: carried across the body while walking, swung up to aim once it stops with a target. The
     // upper arms turn at the shoulders to keep reaching the elbows (which ride with the rifle).
@@ -48,8 +52,15 @@ public sealed class UnitRig
         var rig = new UnitRig(seed * 1.7f);
         Walk(view, rig);
         rig._walker = rig._legs[0, 0] != null && rig._legs[1, 0] != null;
-        if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker) return null;
-        rig._hover = rig._wheels.Count == 0 && !rig._walker;      // no wheels or legs: it floats
+        rig._tripod = rig._tri[0, 0] != null && rig._tri[1, 0] != null && rig._tri[2, 0] != null;
+        if (rig._tripod)
+            for (int i = 0; i < 3; i++)
+            {
+                var p = rig._tri[i, 0].Position;
+                rig._triOut[i] = new Vector3(p.X, 0, p.Z).Normalized();
+            }
+        if (rig._wheels.Count == 0 && rig._turret == null && !rig._walker && !rig._tripod) return null;
+        rig._hover = rig._wheels.Count == 0 && !rig._walker && !rig._tripod;      // no wheels or legs: it floats
         if (rig._walker) rig._kick = 0.4f;
         if (rig._hover) rig.AddHoverGlow(view);
         if (rig._barrel != null) { rig._barrelRest = rig._barrel.Position; rig._barrelBasis = rig._barrel.Basis; }
@@ -81,6 +92,8 @@ public sealed class UnitRig
                 else if (name == "hull") rig._hull = n;
                 else if (name is "arm_L" or "arm_R") rig._arms[name[^1] == 'L' ? 0 : 1] = n;
                 else if (name is "elbow_L" or "elbow_R") rig._elbows[name[^1] == 'L' ? 0 : 1] = n;
+                else if ((name.StartsWith("tleg_") || name.StartsWith("tshin_")) && int.TryParse(name[(name.IndexOf('_') + 1)..], out int leg) && leg is >= 0 and < 3)
+                    rig._tri[leg, name[1] == 'l' ? 0 : 1] = n;
                 else if (name.Length > 2 && name[^2] == '_' && (name[^1] == 'L' || name[^1] == 'R'))
                 {
                     int side = name[^1] == 'L' ? 0 : 1;
@@ -291,6 +304,33 @@ public sealed class UnitRig
                 float bob = 0.16f * _stride * Mathf.Cos(2 * _gait) + 0.05f * (1 - _stride) * Mathf.Sin(_time * 2.2f + _phase);
                 _body.Position = _bodyRest + new Vector3(0, bob, 0);
                 _body.Rotation = new Vector3(_lean, 0, 0.05f * _stride * Mathf.Sin(_gait));
+            }
+        }
+        // A tripod steps one leg at a time: each in turn lifts its knee out, swings its foot forward and plants it,
+        // then slides back under the body as the others take their steps; the body dips as each foot lifts.
+        else if (_tripod)
+        {
+            const float Stride = 2.4f;     // world units a full cycle (each leg one step)
+            _gait += moved / Stride;
+            _stride = Mathf.Lerp(_stride, Mathf.Clamp(_speed / 1.0f, 0, 1), Mathf.Min(1, dt * 6));
+            float dip = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                float p = Mathf.PosMod(_gait + i / 3f, 1f);
+                float lift = p < 1 / 3f ? Mathf.Sin(p * 3 * Mathf.Pi) : 0;
+                float swing = p < 1 / 3f ? -Mathf.Cos(p * 3 * Mathf.Pi) : 1 - 2 * (p - 1 / 3f) * 1.5f;
+                dip = Mathf.Max(dip, lift);
+                var side = Vector3.Up.Cross(_triOut[i]).Normalized();
+                _tri[i, 0].Basis = new Basis(Vector3.Up, swing * 0.16f * _stride) * new Basis(side, -0.32f * lift * _stride);
+                if (_tri[i, 1] != null) _tri[i, 1].Basis = new Basis(side, 0.5f * lift * _stride);
+            }
+            if (_body != null)
+            {
+                float lean = Mathf.Clamp(-accel * 0.01f, -0.05f, 0.05f) - _recoil * _recoil * 0.1f;
+                _lean = Mathf.Lerp(_lean, lean, Mathf.Min(1, dt * 5));
+                float bob = -0.25f * dip * _stride + 0.06f * (1 - _stride) * Mathf.Sin(_time * 1.8f + _phase);
+                _body.Position = _bodyRest + new Vector3(0, bob, 0);
+                _body.Rotation = new Vector3(_lean, 0, 0);
             }
         }
         // A hover unit floats: a slow bob, its nose lifting as it pulls away and dipping as it stops, a sway.
