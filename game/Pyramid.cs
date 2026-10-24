@@ -7,7 +7,8 @@ namespace Battler.Game;
 /// <summary>
 /// The pyramid HQ (tools/art/model_pyramid.py; the user, 2026-10-24: "the main base is a large central pyramid and the
 /// unit leave from it, the bases expands as you collect more resources and will have a look that kind of tells you what
-/// it is producing"). It shows its side's tier (taller, wider, a spire from tier 3), an add-on for each tech branch
+/// it is producing"). It shows its side's tier (taller, wider; from tier 2 a spire with a glowing core in a cage,
+/// spire concept 15, whose light gets stronger each tier), an add-on for each tech branch
 /// researched (bigger with each step down the branch), and a door on each face: a unit being built shows as a hologram
 /// in its doorway, the shutter drops as it's finished and it drives out down the ramp.
 /// </summary>
@@ -16,7 +17,9 @@ public partial class Main
     sealed class PyramidView
     {
         public Node3D Root, Model;
+        public OmniLight3D Core;
         public int Tier;
+        public float Pulse;
         public readonly Dictionary<Branch, (Node3D Node, int Level)> Addons = new();
         public readonly Node3D[] Doors = new Node3D[World.MaxDoors];   // by sim door (World.DoorDir)
         public readonly Vector3[] DoorRest = new Vector3[World.MaxDoors];
@@ -79,6 +82,23 @@ public partial class Main
             }
             view.Doors[d] = best;
             if (best != null) view.DoorRest[d] = best.Position;
+        }
+        // The core's light: none before the spire, then stronger and further reaching each tier.
+        view.Core?.QueueFree();
+        view.Core = null;
+        var shape = ShapeOf(tier);
+        if (shape.Spire > 0)
+        {
+            view.Core = new OmniLight3D
+            {
+                Position = Vector3.Up * (shape.Top + 2.2f + shape.Spire * 0.5f) * UnitArt.Scale,
+                LightColor = new Color(1f, 0.68f, 0.28f),
+                LightEnergy = 0.8f + 0.55f * (tier - 2),
+                OmniRange = (shape.Half + 4f * tier) * UnitArt.Scale,
+                OmniAttenuation = 1.4f,
+                ShadowEnabled = false,
+            };
+            view.Root.AddChild(view.Core);
         }
         // The add-ons move with the tier's shape.
         foreach (var (branch, (node, level)) in view.Addons) PlaceAddon(view, branch, node, level);
@@ -144,6 +164,11 @@ public partial class Main
             PlaceAddon(view, branch, node, level);
         }
         foreach (var s in view.Spinners) s.RotateY(dt * 0.5f);
+        if (view.Core != null)   // a slow throb
+        {
+            view.Pulse += dt;
+            view.Core.LightEnergy = (0.8f + 0.55f * (view.Tier - 2)) * (0.85f + 0.15f * Mathf.Sin(view.Pulse * 1.7f));
+        }
         foreach (var (_, (node, _)) in view.Addons)
             Collect(node, n => { if (n.Name.ToString().StartsWith("spin")) n.RotateY(dt * 0.6f); });
 

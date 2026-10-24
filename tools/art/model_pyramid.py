@@ -4,7 +4,8 @@ collect more resources and will have a look that kind of tells you what it is pr
 fatter over time". FLUX concepts art/_gen/concepts/pyr_sheet_s1101.png: 7/8 the pyramid, 11 the hangar, 14 the
 battery, 17/20 the air deck, 21/24 the dish.)
   hq_t1 .. hq_t5   the pyramid at each tier: stepped, chamfered corners, a door on each face (rig parts door_0 front
-                   (+a), door_1 (+x), door_2 (-x), door_3 back), its eye turning (spin_eye); a spire from tier 3
+                   (+a), door_1 (+x), door_2 (-x), door_3 back), its eye turning (spin_eye); from tier 2 a spire
+                   (spire concept 15): a glowing core in a cage, rings floating round it (spin_ring_N)
   addon_armour addon_walkers addon_guns addon_air addon_support addon_core
                    what each tech branch bolts on (game/Pyramid.cs places them from the same numbers as SHAPE)
 Run: blender --background --python tools/art/model_pyramid.py -- hq_t3"""
@@ -62,6 +63,63 @@ def heights(tier):
     return half, steps, spire, inset, top
 
 
+def ring(r0, r1, z0, z1, mat, sides=28):
+    """A flat ring: r0 inside, r1 outside."""
+    for i in range(sides):
+        t0, t1 = i * math.tau / sides, (i + 1) * math.tau / sides
+        pt = lambda r, t, z: (math.cos(t) * r, math.sin(t) * r, z)
+        low = [pt(r0, t0, z0), pt(r1, t0, z0), pt(r1, t1, z0), pt(r0, t1, z0)]
+        high = [pt(r0, t0, z1), pt(r1, t0, z1), pt(r1, t1, z1), pt(r0, t1, z1)]
+        k.solid(low, high, mat)
+
+
+def spire_core(tier, top, spire):
+    """The spire from tier 2 (spire concept 15, art/_gen/concepts/spire2_cage_2_s1301.png): a glowing amber core in
+    a cage of four armoured corner posts with a rib down each face, on a plinth with buttresses, a capped top with a
+    stepped finial and a mast; riveted rings float round it and turn (spin_ring_N), one more from tier 4. The core's
+    light in game gets stronger each tier (game/Pyramid.cs)."""
+    C, P = 3.4 + 0.5 * tier, 1.1 + 0.08 * tier   # the cage's half width (fatter each tier), a corner post's width
+    R = C * 1.414 + 0.3                   # the rings' inside (clear of the corners)
+    z0 = top + 2.2                        # the cage's foot (on the plinth)
+    z1 = z0 + spire                       # its top (under the cap)
+    # The plinth and four buttresses with lit pads in front of them.
+    k.solid(cham(C + 3.2, top + 0.6), cham(C + 2.6, z0), "plate")
+    for f in range(4):
+        fbox(f, -1.4, 1.4, C, C + 2.4, z0, z0 + 2.6, "steel")
+        fbox(f, -1.2, 1.2, C + 2.4, C + 2.9, z0, z0 + 1.2, "steel")
+        for u in (-C, C):
+            fbox(f, u - 0.9, u + 0.9, C + 0.4, C + 1.8, z0, z0 + 0.25, "glow")
+    # The core, then the cage over it: the posts, a rib down each face, a band at the foot and at the top.
+    k.box(-C + 0.3, C - 0.3, -C + 0.3, C - 0.3, z0, z1, "glow")
+    for sa in (1, -1):
+        for sx in (1, -1):
+            k.box(min(sa * C, sa * (C - P)), max(sa * C, sa * (C - P)), min(sx * C, sx * (C - P)), max(sx * C, sx * (C - P)),
+                  z0, z1, "steel")
+    for f in range(4):
+        fbox(f, -0.4, 0.4, C - 0.4, C + 0.15, z0, z1, "plate")
+        fbox(f, -C, C, C - 0.6, C + 0.2, z0, z0 + 1.6, "plate")                  # foot band
+        fbox(f, -C, C, C - 0.6, C + 0.2, z1 - 1.2, z1, "plate")                  # top band
+        for u in (-1.6, 1.6):                                                      # little lit vents on the top band
+            fbox(f, u - 0.5, u + 0.5, C + 0.2, C + 0.3, z1 - 0.9, z1 - 0.4, "glow")
+    # The cap, the stepped finial and the mast with its light.
+    k.solid(cham(C + 0.7, z1, 0.8), cham(C + 0.4, z1 + 2.4, 0.8), "plate")
+    k.solid(cham(C * 0.6, z1 + 2.4, 0.6), cham(C * 0.55, z1 + 3.6), "steel")
+    k.drum(0, 0, 1.2, z1 + 3.6, z1 + 5.0, "mid", 10, r1=0.9)
+    k.drum(0, 0, 0.3, z1 + 5.0, z1 + 8.5, "dark", 6)
+    k.drum(0, 0, 0.6, z1 + 8.5, z1 + 9.2, "glow", 8)
+    # The floating rings, riveted, each on its own slow turn.
+    heights = [0.62] if tier < 4 else [0.38, 0.72]
+    for n, h in enumerate(heights):
+        zr = z0 + spire * h
+        with part("spin_ring_%d" % n, (0, 0, zr)):
+            ring(R + 0.2, R + 1.5, zr - 0.6, zr + 0.6, "mid")
+            ring(R, R + 0.3, zr - 0.4, zr + 0.4, "dark")
+            for i in range(14):
+                th = i * math.tau / 14
+                a, x = math.cos(th) * (R + 0.85), math.sin(th) * (R + 0.85)
+                k.box(a - 0.22, a + 0.22, x - 0.22, x + 0.22, zr + 0.6, zr + 0.85, "dark")
+
+
 def pyramid(tier):
     half, steps, spire, inset, top = heights(tier)
     k.begin(0.0)
@@ -115,33 +173,24 @@ def pyramid(tier):
         for s_ in (-1, 1):
             fbox(f, s_ * (DW - 0.7) - 0.15, s_ * (DW - 0.7) + 0.15, half + 0.8, half + 6.0, 0.0, 0.62, "glow")
 
-    # The eye: on the top platform while there's no spire, partway up the spire after.
-    eye_z = top + 0.6 if spire == 0 else top + spire * 0.42
-    if spire > 0:
-        hexagon(0, 0, 5.2, top + 0.6, top + spire * 0.42 - 0.2, "plate", r1=4.0, sides=8, turn=math.pi / 8)
-        hexagon(0, 0, 3.6, eye_z + 2.6, top + spire, "steel", r1=0.9, sides=8, turn=math.pi / 8)
-        for zz in (0.6, 0.8):                                                             # lit slits up the spire
-            for q in range(4):
-                th = q * math.pi / 2
-                rr = 3.6 - (3.6 - 0.9) * (zz - 0.55) / 0.45
-                a, x = math.cos(th) * rr, math.sin(th) * rr
-                k.box(a - 0.35, a + 0.35, x - 0.35, x + 0.35, top + spire * zz - 0.9, top + spire * zz + 0.9, "glow")
-        k.drum(0, 0, 0.25, top + spire, top + spire + 4.0, "dark", 6)                        # the mast and its light
-        k.drum(0, 0, 0.6, top + spire + 4.0, top + spire + 4.8, "glow", 8)
-    k.drum(0, 0, 4.2, eye_z, eye_z + 1.0, "mid", 16, r1=4.0)
-    with part("spin_eye", (0, 0, eye_z + 1.0)):
-        k.drum(0, 0, 3.9, eye_z + 1.0, eye_z + 2.2, "dark", 16, r1=3.6)
-        for i in range(6):
-            th = i * math.tau / 6
-            a, x = math.cos(th) * 3.7, math.sin(th) * 3.7
-            k.box(a - 0.45, a + 0.45, x - 0.45, x + 0.45, eye_z + 1.3, eye_z + 1.9, "glow")
     if spire == 0:
+        # Tier 1: a turning eye on the top platform, two aerials.
+        eye_z = top + 0.6
+        k.drum(0, 0, 4.2, eye_z, eye_z + 1.0, "mid", 16, r1=4.0)
+        with part("spin_eye", (0, 0, eye_z + 1.0)):
+            k.drum(0, 0, 3.9, eye_z + 1.0, eye_z + 2.2, "dark", 16, r1=3.6)
+            for i in range(6):
+                th = i * math.tau / 6
+                a, x = math.cos(th) * 3.7, math.sin(th) * 3.7
+                k.box(a - 0.45, a + 0.45, x - 0.45, x + 0.45, eye_z + 1.3, eye_z + 1.9, "glow")
         k.drum(0, 0, 2.6, eye_z + 2.2, eye_z + 3.0, "plate", 12, r1=2.0)
         k.drum(0, 0, 1.8, eye_z + 3.0, eye_z + 3.5, "glow", 16, r1=1.4)
         for s in (1, -1):
             k.drum(-4.5, s * 4.5, 0.18, top + 0.6, top + 5.0, "dark", 6)
             k.drum(-4.5, s * 4.5, 0.35, top + 5.0, top + 5.4, "glow", 6)
-    finish_toon("hq_t%d" % tier, 2 * half + 12)
+    else:
+        spire_core(tier, top, spire)
+    finish_toon("hq_t%d" % tier, max(2 * half + 12, (top + spire + 10) * 2.3))
 
 
 for _t in SHAPE:
