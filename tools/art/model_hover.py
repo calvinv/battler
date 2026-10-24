@@ -443,4 +443,97 @@ def dart():
     finish_toon("dart", 14.0)
 
 
+def hpatch(x, z, profile, t0, t1, mat, lift=0.05, depth=0.06, steps=8):
+    """A raised patch on an hlathe surface (same (radius, a) profile) between angles t0 and t1 (radians about the
+    length, 0 out to +x, up positive): a painted belt that follows the hull's curve, as one smooth closed piece."""
+    import bmesh, bpy
+    bm = bmesh.new()
+    angs = [t0 + (t1 - t0) * j / steps for j in range(steps + 1)]
+    def grid(off):
+        return [[bm.verts.new(k.at(a, x + math.cos(t) * (r + off), z + math.sin(t) * (r + off))) for t in angs] for r, a in profile]
+    out, inn = grid(lift), grid(lift - depth)
+    n, m = len(profile), len(angs)
+    for i in range(n - 1):
+        for j in range(m - 1):
+            bm.faces.new([out[i][j], out[i + 1][j], out[i + 1][j + 1], out[i][j + 1]]).smooth = True
+            bm.faces.new([inn[i][j + 1], inn[i + 1][j + 1], inn[i + 1][j], inn[i][j]]).smooth = True
+    for i in range(n - 1):
+        for j in (0, m - 1):
+            bm.faces.new([out[i][j], inn[i][j], inn[i + 1][j], out[i + 1][j]])
+    for i in (0, n - 1):
+        for j in range(m - 1):
+            bm.faces.new([out[i][j], out[i][j + 1], inn[i][j + 1], inn[i][j]])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("piece")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("piece", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me.materials.append(k.mats[mat])
+    k.pieces.append(ob)
+    return ob
+
+
+def blimp():
+    """Blimp bomber (FLUX concept art/_gen/concepts/unit_blimp_2_s901.png, "15"): a fat armoured egg of a hull lying
+    along its flight, gore seams round it, a team belt down each flank with a row of green running lights over it,
+    a jet duct at the tail and a short spike at the nose, a sensor hatch on top, a grey bomb-bay panel on each flank
+    and the bay doors underneath, two stubby thrusters under the belly with team nozzles. (No moving parts: the game
+    flies it level, bobbing.)"""
+    k.begin(0.0)
+    zc, L, Rm = 5.2, 7.0, 3.6                                                                # hull centre, half length, girth
+    prof = []
+    for j in range(25):
+        a = -L + 2 * L * j / 24
+        u = a / L
+        r = Rm * math.sqrt(max(0.0, 1 - abs(u) ** 2.4)) * (1.0 - 0.06 * u)                  # a touch fuller at the back
+        prof.append((r, a))
+    prof[0] = (1.6, -L + 0.05)                                                               # open into the tail duct
+    prof[-1] = (0.5, L - 0.02)
+    hlathe(0, zc, prof, "steel", 40)
+    # Gore seams round the hull.
+    for a in (-4.2, -1.4, 1.4, 4.2):
+        u = a / L
+        r = Rm * math.sqrt(1 - abs(u) ** 2.4) * (1.0 - 0.06 * u)
+        hlathe(0, zc, [(r + 0.04, a - 0.06), (r + 0.04, a + 0.06)], "dark", 40)
+    # The team belt down each flank, running lights over it.
+    belt = [(r, a) for r, a in prof[2:-1]]
+    for s in (1, -1):
+        lo, hi = math.radians(-18), math.radians(2)
+        if s > 0:
+            hpatch(0, zc, belt, lo, hi, "paint", lift=0.03)
+        else:
+            hpatch(0, zc, belt, math.pi - hi, math.pi - lo, "paint", lift=0.03)
+        for a in (-4.8, -3.0, -1.2, 0.6, 2.4, 4.2):
+            u = a / L
+            r = Rm * math.sqrt(1 - abs(u) ** 2.4) * (1.0 - 0.06 * u)
+            t = math.radians(12)
+            p = (a, s * math.cos(t) * r, zc + math.sin(t) * r)
+            tube_between(p, (a, s * math.cos(t) * (r + 0.1), p[2] + math.sin(t) * 0.1), 0.13, "glass_lit", 8)
+        # The bomb-bay panel on the flank under the belt.
+        t = math.radians(-34)
+        r = Rm * 0.97
+        cx, cz = s * math.cos(t) * r, zc + math.sin(t) * r
+        k.box(-1.0, 1.8, *xs(s, abs(cx) - 0.3, abs(cx) + 0.12), cz - 0.55, cz + 0.55, "mid")
+        k.box(-0.85, 0.35, *xs(s, abs(cx) + 0.1, abs(cx) + 0.16), cz - 0.4, cz + 0.4, "dark")
+    # The tail duct and the nose spike.
+    hlathe(0, zc, [(1.25, -L - 0.9), (1.75, -L - 0.7), (1.85, -L + 0.4), (1.5, -L + 0.6)], "plate", 32)
+    hlathe(0, zc, [(1.25, -L - 0.85), (1.25, -L + 0.3)], "black", 24)
+    hlathe(0, zc, [(0.75, -L - 0.2), (0.75, -L + 0.1)], "glow", 20)
+    hlathe(0, zc, [(0.6, L - 0.3), (0.5, L + 0.4), (0.12, L + 1.3)], "dark", 16)
+    # The sensor hatch on top.
+    top = zc + Rm
+    hexagon(0.6, 0, 1.25, top - 0.4, top + 0.45, "plate", r1=1.1, sides=12)
+    k.box(1.6, 1.75, -0.4, 0.4, top - 0.05, top + 0.3, "glass_lit")
+    for x in (-0.75, 0.75):
+        k.tube(1.6, 1.82, x, top + 0.1, 0.14, "black", 10)
+    # The bay doors underneath and two stubby thrusters with team nozzles.
+    k.box(-1.5, 1.8, -1.0, 1.0, zc - Rm + 0.02, zc - Rm + 0.18, "dark")
+    k.box(-1.5, 1.8, -0.04, 0.04, zc - Rm - 0.02, zc - Rm + 0.2, "black")
+    for a in (-3.2, 3.0):
+        hexagon(a, 0, 0.55, zc - Rm - 0.9, zc - Rm + 0.6, "dark", r1=0.45, sides=10)
+        hexagon(a, 0, 0.55, zc - Rm - 1.5, zc - Rm - 0.9, "paint", r1=0.8, sides=10)
+    finish_toon("blimp", 20.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()
