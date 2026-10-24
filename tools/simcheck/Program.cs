@@ -265,7 +265,7 @@ bool BaseTest()
     bool blip = w.Players[0].Blips.Count > 0 && w.Players[0].Known.ContainsKey(sneak.Id);
     bool ok = truck != null && guarded && canDeploy && post != null && canMine && baseTakesNone && wingsThere == 1 && wingsLeft == 2 && blip;
     Console.WriteLine($"Base test: truck {(truck != null)}, guarded till cleared {guarded}, could set up {canDeploy} ({why}), set up {post != null}, extractor in reach {canMine}, wings there {wingsThere}, wings left after it fell {wingsLeft}/2; radar blip {blip}: {(ok ? "OK" : "FAILED")}");
-    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest() && MenderTest();
+    return ok && (!World.FeralsOn || WaveTest()) && PowerTest() && HostTest() && MenderTest() && BulwarkTest();
 }
 
 // Resource hosts: a tank wing on a sulfur extractor makes enhanced tanks (harder hits, fires); one on a power plant
@@ -313,6 +313,29 @@ bool MenderTest()
     }
     bool ok = !tank.Dead && after10 > half + 50 && tank.Hp == tank.MaxHp;
     Console.WriteLine($"Mender test: tank at {half}/{tank.MaxHp}, after 10 s {after10}, after 2 min {tank.Hp}: {(ok ? "OK" : "FAILED")}");
+    return ok;
+}
+
+// A tank under a bulwark's dome takes DomePercent less from the same shot; one outside takes it all.
+bool BulwarkTest()
+{
+    int Taken(bool domed)
+    {
+        var w = new World(4, new[] { Civ.Coalition, Civ.Coalition });
+        var hq = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 0);
+        var hq1 = w.Entities.Find(e => e.Kind == Kind.Hq && e.Owner == 1);
+        w.Step(new Command[] { new AddWing(0, hq.Id, Kind.Bulwark), new AddWing(1, hq1.Id, Kind.Bulwark) });
+        var mid = new FixVec2(0, 0);
+        var tank = w.Spawn(Kind.Tank, 0, mid);
+        if (domed) w.Spawn(Kind.Bulwark, 0, mid + new FixVec2(-3, 0));
+        w.Spawn(Kind.Tank, 1, mid + new FixVec2(8, 0));
+        int start = tank.Hp, t0 = w.Tick;
+        while (tank.Hp == start && w.Tick - t0 < 100) w.Step(Array.Empty<Command>());
+        return start - tank.Hp;
+    }
+    int open = Taken(false), domed = Taken(true);
+    bool ok = open > 0 && domed == open * (100 - World.DomePercent) / 100;
+    Console.WriteLine($"Bulwark test: first hit {open} in the open, {domed} under a dome: {(ok ? "OK" : "FAILED")}");
     return ok;
 }
 

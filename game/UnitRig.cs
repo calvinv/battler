@@ -29,10 +29,11 @@ public sealed class UnitRig
     readonly Node3D[,] _legs = new Node3D[2, 3];      // [left/right, thigh/shin/foot]
     bool _walker;
     float _gait, _stride;
-    // A tripod (the Long Leg): three legs round the body, stepping one at a time.
-    readonly Node3D[,] _tri = new Node3D[3, 2];       // [leg, thigh/shin]
-    readonly Vector3[] _triOut = new Vector3[3];      // each leg's outward direction, flat
+    // Three or four legs round the body (the Long Leg, the Bulwark), stepping one at a time.
+    readonly Node3D[,] _tri = new Node3D[4, 2];       // [leg, thigh/shin]
+    readonly Vector3[] _triOut = new Vector3[4];      // each leg's outward direction, flat
     bool _tripod;
+    int _triN;
     float _kick = Kick;
     // A walker's rifle: carried across the body while walking, swung up to aim once it stops with a target. The
     // upper arms turn at the shoulders to keep reaching the elbows (which ride with the rifle).
@@ -57,9 +58,10 @@ public sealed class UnitRig
         var rig = new UnitRig(seed * 1.7f);
         Walk(view, rig);
         rig._walker = rig._legs[0, 0] != null && rig._legs[1, 0] != null;
-        rig._tripod = rig._tri[0, 0] != null && rig._tri[1, 0] != null && rig._tri[2, 0] != null;
+        while (rig._triN < 4 && rig._tri[rig._triN, 0] != null) rig._triN++;
+        rig._tripod = rig._triN >= 3;
         if (rig._tripod)
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < rig._triN; i++)
             {
                 var p = rig._tri[i, 0].Position;
                 rig._triOut[i] = new Vector3(p.X, 0, p.Z).Normalized();
@@ -100,7 +102,7 @@ public sealed class UnitRig
                 else if (name == "hull") rig._hull = n;
                 else if (name is "arm_L" or "arm_R") rig._arms[name[^1] == 'L' ? 0 : 1] = n;
                 else if (name is "elbow_L" or "elbow_R") rig._elbows[name[^1] == 'L' ? 0 : 1] = n;
-                else if ((name.StartsWith("tleg_") || name.StartsWith("tshin_")) && int.TryParse(name[(name.IndexOf('_') + 1)..], out int leg) && leg is >= 0 and < 3)
+                else if ((name.StartsWith("tleg_") || name.StartsWith("tshin_")) && int.TryParse(name[(name.IndexOf('_') + 1)..], out int leg) && leg is >= 0 and < 4)
                     rig._tri[leg, name[1] == 'l' ? 0 : 1] = n;
                 else if (name.Length > 2 && name[^2] == '_' && (name[^1] == 'L' || name[^1] == 'R'))
                 {
@@ -374,12 +376,12 @@ public sealed class UnitRig
             const float Stride = 2.4f;     // world units a full cycle (each leg one step)
             _gait += moved / Stride;
             _stride = Mathf.Lerp(_stride, Mathf.Clamp(_speed / 1.0f, 0, 1), Mathf.Min(1, dt * 6));
-            float dip = 0;
-            for (int i = 0; i < 3; i++)
+            float dip = 0, n = _triN;
+            for (int i = 0; i < _triN; i++)
             {
-                float p = Mathf.PosMod(_gait + i / 3f, 1f);
-                float lift = p < 1 / 3f ? Mathf.Sin(p * 3 * Mathf.Pi) : 0;
-                float swing = p < 1 / 3f ? -Mathf.Cos(p * 3 * Mathf.Pi) : 1 - 2 * (p - 1 / 3f) * 1.5f;
+                float p = Mathf.PosMod(_gait + (i % 2 == 0 ? i / 2 : (i + _triN) / 2 % _triN) / n, 1f);   // (a quad: diagonal legs half a cycle apart)
+                float lift = p < 1 / n ? Mathf.Sin(p * n * Mathf.Pi) : 0;
+                float swing = p < 1 / n ? -Mathf.Cos(p * n * Mathf.Pi) : 1 - 2 * (p - 1 / n) * n / (n - 1);
                 dip = Mathf.Max(dip, lift);
                 var side = Vector3.Up.Cross(_triOut[i]).Normalized();
                 _tri[i, 0].Basis = new Basis(Vector3.Up, swing * 0.16f * _stride) * new Basis(side, -0.32f * lift * _stride);

@@ -180,7 +180,7 @@ public sealed class SimpleAi
     Kind PickUnit(Civ civ)
     {
         var roll = _rng.Next(20);
-        if (roll == 16 && civ != Civ.Lattice) return Kind.Mender;   // 5%
+        if (roll == 16 && civ != Civ.Lattice) return _rng.Next(2) == 0 ? Kind.Mender : Kind.Bulwark;   // 5% (support)
         if (roll >= 17) return roll == 17 ? Kind.Ranger : roll == 18 ? Kind.Flier : Kind.Bomber;   // 5% each
         return civ == Civ.Lattice
             ? (roll < 7 ? Kind.Crawler : roll < 12 ? Kind.Spider : Kind.Piercer)

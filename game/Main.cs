@@ -286,8 +286,9 @@ public partial class Main : Node3D
         _reelUnit = UnitArt.Make(name, TeamColor[0]);
         AddChild(_reelUnit);
         _reelRig = UnitRig.Find(_reelUnit, 1);
+        if (name == "bulwark") _reelUnit.AddChild(Dome(TeamColor[0]));
         _reelHovers = name == "hovertank";
-        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, "dart" => Kind.Flier, "blimp" => Kind.Bomber, "mender" => Kind.Mender, _ => Kind.LightTank };
+        _reelKind = name switch { "mech" => Kind.Ranger, "battlewheel" or "tank" => Kind.Tank, "longleg" => Kind.Artillery, "lobber" => Kind.Mortar, "skitter" => Kind.Scout, "dart" => Kind.Flier, "blimp" => Kind.Bomber, "mender" => Kind.Mender, "bulwark" => Kind.Bulwark, _ => Kind.LightTank };
         _reelPos = new Vector3(-13, 0, 7);
         _reelHeading = 0;
         _banner.Text = "";
@@ -321,7 +322,7 @@ public partial class Main : Node3D
             if (!_reelHovers && _reelKind is not (Kind.Ranger or Kind.Artillery)) _tracks.Drive(1, _reelPos, dir, r * 0.55f, r * 0.3f, 0.7f);
         }
         if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && _reelKind is Kind.Ranger or Kind.Artillery && _reelSpeed > 0.1f) _reelShots++;   // (a walker stops to shoot)
-        else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots])
+        else if (_reelShots < ReelFireAt.Length && t >= ReelFireAt[_reelShots] && World.StatsFor[(int)_reelKind].Reload > 0)
         {
             _reelShots++;
             if (_reelKind == Kind.Mender) _reelRig?.SendDrone(_reelTarget.Position + Vector3.Up * 0.6f); else _reelRig?.Fire();
@@ -861,6 +862,7 @@ public partial class Main : Node3D
         : k == Kind.Flier ? "dart"                                                             // (and the prop interceptor)
         : k == Kind.Bomber ? "blimp"                                                           // (and the armoured blimp)
         : k == Kind.Mender ? "mender"                                                          // (the repair carrier)
+        : k == Kind.Bulwark ? "bulwark"                                                        // (the shield walker)
         : civ == Civ.Lattice && k is Kind.MobileBase or Kind.Ranger or Kind.Flier or Kind.Bomber ? "l_" + ModelOf(k) : ModelOf(k);
 
     /// <summary>A building's model for a civilisation: a factory by what it makes; the Lattice's HQ, towers, outposts
@@ -870,7 +872,7 @@ public partial class Main : Node3D
         : World.IsFeral(kind) ? ModelOf(kind) : (civ == Civ.Lattice ? "l_" : "") + ModelOf(kind);
 
     /// <summary>Which wing model makes a unit: fliers and bombers share the airfield.</summary>
-    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber ? "air" : makes == Kind.Mender ? "mobilebase" : ModelOf(makes);   // (menders come out of a utility yard)
+    static string WingModel(Kind makes) => makes is Kind.Flier or Kind.Bomber ? "air" : makes is Kind.Mender or Kind.Bulwark ? "mobilebase" : ModelOf(makes);   // (menders come out of a utility yard)
 
     Civ MyCiv => W.Players[_me].Civ;
     /// <summary>A side's civilisation (the ferals' models aren't any civilisation's: they're named for themselves).</summary>
@@ -914,6 +916,33 @@ public partial class Main : Node3D
         return string.Join(", ", parts);
     }
 
+    static Shader _domeShader;
+
+    /// <summary>A bulwark's dome: a faint bubble of light the size of what it covers, brightest at its rim, with
+    /// slow bands drifting up it.</summary>
+    static MeshInstance3D Dome(Color team)
+    {
+        _domeShader ??= new Shader { Code = @"
+shader_type spatial;
+render_mode blend_add, unshaded, cull_back, depth_draw_never;
+uniform vec4 tint : source_color;
+void fragment() {
+    float rim = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
+    float band = 0.5 + 0.5 * sin(UV.y * 40.0 - TIME * 2.0);
+    ALBEDO = tint.rgb;
+    ALPHA = clamp(rim * 0.35 + band * rim * 0.12, 0.0, 1.0);
+}" };
+        float r = World.DomeReach.ToFloat();
+        var mat = new ShaderMaterial { Shader = _domeShader };
+        mat.SetShaderParameter("tint", new Color(0.55f, 0.85f, 1f).Lerp(team, 0.35f));
+        return new MeshInstance3D
+        {
+            Mesh = new SphereMesh { Radius = r, Height = r * 1.3f, IsHemisphere = true, RadialSegments = 40, Rings = 12 },
+            MaterialOverride = mat,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+    }
+
     static string NameOf(Kind k) => k switch
     {
         Kind.LightTank => "Light tank", Kind.Hq => "HQ", Kind.MobileBase => "Mobile base", Kind.Outpost => "Base",
@@ -933,7 +962,9 @@ public partial class Main : Node3D
         {
             // (Damage/armour upgrades have no visual for now: the user, 2026-10-22, "they dont need a visual right
             // now". UnitArt.AddEmblems still draws deck emblems if they come back.)
-            return UnitArt.Make(UnitModel(e.Kind, CivOf(e.Owner)), TeamColor[e.Owner]);
+            var unit = UnitArt.Make(UnitModel(e.Kind, CivOf(e.Owner)), TeamColor[e.Owner]);
+            if (e.Stats.Shields) unit.AddChild(Dome(TeamColor[e.Owner]));
+            return unit;
         }
         // Buildings (tools/art/model_buildings.py): each wing kind its own building; the rest face the enemy's side.
         var name = ModelFor(e);
@@ -1496,7 +1527,7 @@ public partial class Main : Node3D
     {
         Kind.Hq => 5.4f, Kind.Factory => 4.4f, Kind.Tower => 5.6f, Kind.Outpost => 2.9f, Kind.Extractor => 4.2f, Kind.Node => 2.2f,
         Kind.Turret => 2.6f, Kind.Flak => 2.6f, Kind.Bombard => 2.6f, Kind.Wall => 1.6f, Kind.Derelict => 2.8f, Kind.PowerPlant => 3.2f, Kind.MobileBase => 2.6f, Kind.FeralBrute => 1.8f,   // (a factory's bar clears its cogs)
-        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, Kind.Mender => 2.3f, _ => 2f,
+        Kind.Scout => 2.6f, Kind.Tank => 2.1f, Kind.Artillery => 2.2f, Kind.LightTank => 1.7f, Kind.Mortar => 1.8f, Kind.Spider => 1.6f, Kind.Crawler => 1.1f, Kind.Piercer => 1.3f, Kind.Drone => 4.2f, Kind.Ranger => 1.6f, Kind.Flier => 7.2f, Kind.Bomber => 8.8f, Kind.Mender => 2.3f, Kind.Bulwark => 3.2f, _ => 2f,
     };
 
     readonly List<(Vector3 At, int Amount, float Age)> _salvageTexts = new();
@@ -1627,6 +1658,7 @@ public partial class Main : Node3D
                 Kind.Ranger => "Small, quick and fragile, with small arms that\nreach fliers too: the cheap answer to most things.",
                 Kind.Flier => "An interceptor: fast, fights other fliers only.\nWith none about, it keeps over your army.",
                 Kind.Mender => "A repair carrier: unarmed. Keeps behind your army and\nsends its drones to mend the nearest damaged unit.",
+                Kind.Bulwark => $"A shield walker: slow, heavy, unarmed. Everything of\nyours under its dome takes {World.DomePercent}% less damage.",
                 Kind.Bomber => "Slow bombing runs: flies over a ground target, drops a\nheavy bomb with a wide blast, flies on and comes round.\nOnly anti-air can touch it.",
                 Kind.Mortar => "A small artillery tank: shorter range than artillery,\na small blast, quick shells. Can't fire at anything close.",
                 Kind.Artillery => "Outranges everything and hits an area, but can't fire\nat anything close. Its shells take a while to land:\nanything moving gets out from under them.",

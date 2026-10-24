@@ -601,4 +601,54 @@ def mender():
     finish_toon("mender", 16.0)
 
 
+def bulwark():
+    """Bulwark shield walker (FLUX concept art/_gen/concepts/unit_bulwark_1_s901.png, "20"): a heavy faceted body on
+    four stubby legs (round hip joints, thick thighs, big feet with team panels on their fronts), a big glowing dish
+    emitter on a mast at the back facing up (it throws the dome), a glowing hatch ring on top, a lens and lamps on its
+    face, team stripes across its back. Legs are tleg_0..3 / tshin_0..3 (the rig walks them one at a time)."""
+    k.begin(0.0)
+    zb = 3.3
+    # The body: a chamfered block, a faceted top, a face with a lens and two lamps.
+    plate(-2.5, 2.4, -2.0, 2.0, zb, zb + 2.2, "steel", inset=0.35, front=0.6, back=0.4)
+    plate(-1.9, 1.6, -1.5, 1.5, zb + 2.2, zb + 2.8, "plate", inset=0.35)
+    k.tube(2.0, 2.55, 0.6, zb + 1.1, 0.45, "dark", 20)
+    k.tube(2.3, 2.6, 0.6, zb + 1.1, 0.3, "glow", 20)
+    for x in (-0.6, -1.3):
+        k.box(2.15, 2.45, x - 0.25, x + 0.25, zb + 0.9, zb + 1.35, "dark")
+        k.box(2.45, 2.5, x - 0.15, x + 0.15, zb + 1.0, zb + 1.25, "glow")
+    # Team stripes down its flanks and over its back, a panel on each flank.
+    for s in (1, -1):
+        for a0 in (-0.6, -0.15):
+            k.box(a0, a0 + 0.25, *xs(s, 1.97, 2.03), zb + 0.4, zb + 2.0, "paint")
+        k.box(0.5, 1.8, *xs(s, 1.97, 2.03), zb + 0.6, zb + 1.7, "mid")
+    for a0 in (-0.6, -0.15):
+        k.box(a0, a0 + 0.25, -1.5, 1.5, zb + 2.8, zb + 2.85, "paint")
+    # The glowing hatch ring on top.
+    hexagon(0.6, 0, 0.85, zb + 2.8, zb + 3.05, "dark", sides=20)
+    hexagon(0.6, 0, 0.65, zb + 3.05, zb + 3.1, "glow", sides=20)
+    hexagon(0.6, 0, 0.45, zb + 3.05, zb + 3.15, "dark", sides=20)
+    # The dish emitter on a mast at the back, facing up: a rim, the bowl, a bright core and a feed spike.
+    ma, mz = -1.3, zb + 2.8
+    k.drum(ma, 0, 0.35, mz, mz + 1.2, "dark", sides=10)
+    k.lathe(ma, 0, [(0.4, mz + 1.1), (1.2, mz + 1.35), (2.2, mz + 1.75), (2.45, mz + 2.0), (2.35, mz + 2.1)], "plate", 32)
+    k.lathe(ma, 0, [(2.2, mz + 1.86), (1.5, mz + 1.6), (0.3, mz + 1.4)], "steel", 32)
+    k.lathe(ma, 0, [(1.7, mz + 1.68), (1.0, mz + 1.53), (0.2, mz + 1.46)], "glow", 32)
+    k.drum(ma, 0, 0.12, mz + 1.4, mz + 2.4, "mid", sides=8)
+    k.drum(ma, 0, 0.25, mz + 2.4, mz + 2.6, "glow", sides=10)
+    mark("emitter", (ma, 0, mz + 2.5))
+    # The legs at the body's corners: a round hip joint, a thick thigh down and out to the knee, a short shin to a
+    # big foot block with a team panel on its front.
+    for i, (a, s) in enumerate(((1.6, 1), (1.6, -1), (-1.7, 1), (-1.7, -1))):
+        hip, knee, foot = (a, s * 2.2, zb + 0.5), (a + 0.15, s * 2.75, 2.0), (a + 0.2, s * 2.8, 0.0)
+        wlathe(hip[0], hip[2], [(0.8, s * 1.9), (0.8, s * 2.5), (0.55, s * 2.65)], "plate", 20)
+        with part("tleg_%d" % i, hip, parent="root"):
+            tube_between(hip, knee, 0.62, "steel", 6)
+            wlathe(knee[0], knee[2], [(0.6, knee[1] - 0.45), (0.6, knee[1] + 0.45)], "dark", 18)
+            with part("tshin_%d" % i, knee, parent="tleg_%d" % i):
+                plate(foot[0] - 0.75, foot[0] + 0.8, *xs(s, 2.25, 3.35), 0.0, 1.8, "plate", inset=0.15, front=0.25)
+                k.box(foot[0] + 0.78, foot[0] + 0.84, *xs(s, 2.45, 3.15), 0.3, 1.4, "paint")
+                k.box(foot[0] + 0.8, foot[0] + 0.86, *xs(s, 2.45, 3.15), 0.82, 0.88, "dark")
+    finish_toon("bulwark", 16.0)
+
+
 globals()[sys.argv[sys.argv.index("--") + 1]]()

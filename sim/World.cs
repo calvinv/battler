@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Battler.Sim;
 
-public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module, Mender }   // (new kinds go at the end: StatsFor and the wire use the numbers)
+public enum Kind { Hq, Factory, Scout, Tank, Artillery, Tower, Outpost, Extractor, LightTank, Mortar, Spider, Crawler, Piercer, Drone, Node, MobileBase, Turret, Flak, Bombard, Wall, Feral, FeralBrute, Derelict, Ranger, Flier, Bomber, PowerPlant, Module, Mender, Bulwark }   // (new kinds go at the end: StatsFor and the wire use the numbers)
 
 /// <summary>A factory's upgrade tracks. They improve the units it makes from then on (not ones already out).</summary>
 public enum Upgrade { Production, Damage, Armour }
@@ -42,6 +42,7 @@ public sealed class Stats
     public int VsAir = 100;      // percent of its damage it does to fliers
     public bool Explosive;    // shells, cannon and spikes: sulfur makes these hit harder
     public bool Heals;        // its "shots" mend friendly units instead (Damage is health given back): the Mender
+    public bool Shields;      // throws a dome over its side's things near it: they take less damage (the Bulwark)
 
     public bool IsBuilding => Speed.Raw == 0;
     public bool IsUnit => !IsBuilding;
@@ -155,6 +156,7 @@ public sealed class World
         Kind.Flier => 300,
         Kind.Bomber => 400,
         Kind.Mender => 300,
+        Kind.Bulwark => 450,
         Kind.MobileBase => 300,   // the utility wing
         _ => 500,
     };
@@ -179,6 +181,10 @@ public sealed class World
     // The other natural resources (the user, 2026-10-23: "I want to add natural resources"): an oil well powers
     // wings and pays a little; a crystal field shields everything you make.
     public const int OilPower = 4, OilIncome = 1, CrystalShieldPercent = 15;
+    // A bulwark's dome: how far it reaches (from the bulwark's centre to the edge of what it covers) and how much less
+    // what's under it takes. Domes don't add up.
+    public static readonly Fix DomeReach = 7;
+    public const int DomePercent = 35;
 
     /// <summary>How many deposits of `res` a player mines (built).</summary>
     public int MinedOf(int player, Resource res)
@@ -265,7 +271,7 @@ public sealed class World
     /// <summary>What factories can make (scouts come from the HQ).</summary>
     // In key order: light tank, tank, mortar, artillery (the user, 2026-10-20: "new cheaper units, a smaller artillery
     // tank and a combat tank": units stay free, the light ones just come quicker).
-    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber, Kind.Mender };   // the Coalition's
+    public static readonly Kind[] FactoryKinds = { Kind.LightTank, Kind.Tank, Kind.Mortar, Kind.Artillery, Kind.Ranger, Kind.Flier, Kind.Bomber, Kind.Mender, Kind.Bulwark };   // the Coalition's
 
     /// <summary>What a civilisation's factories can make, in build-menu order. The Lattice (the user, 2026-10-21: "they
     /// don't get artillery at tier 1 but they get scout fliers and anti armour units"): crawlers, spiders, piercers.</summary>
@@ -442,6 +448,10 @@ public sealed class World
         // back about what a light tank's gun takes off.
         new() { MaxHp = 70, Radius = Fix.Ratio(10, 10), Speed = Fix.Ratio(30, 100), Range = 7, Aggro = 14, Vision = 10,
                 Damage = 12, Reload = 10, Heals = true, BuildTicks = 30 * TicksPerSecond },
+        // Bulwark: a slow, heavy, unarmed walker carrying a shield emitter: everything of its side under its dome
+        // (DomeReach) takes DomePercent less damage. It keeps with the army.
+        new() { Armoured = true, MaxHp = 200, Radius = Fix.Ratio(14, 10), Speed = Fix.Ratio(22, 100), Vision = 9, Shields = true,
+                BuildTicks = 45 * TicksPerSecond },
     };
 
     public int Tick;
@@ -1733,6 +1743,7 @@ public sealed class World
             var s = e.Stats;
             if (e.Cooldown > 0) e.Cooldown--;
             if (e.Building > 0) continue;   // (a gun going up doesn't fire yet)
+            if (s.Shields) { Escort(e); continue; }
             if (s.Reload == 0)
             {
                 // Unarmed (scouts): only go where they're sent, and stop there.
@@ -1786,8 +1797,12 @@ public sealed class World
             }
         }
         foreach (var (e, step) in _moves) Move(e, Steer(e, step));
-        foreach (var (target, damage, by) in _hits)
+        _domes.Clear();
+        foreach (var e in Entities)
+            if (!e.Dead && e.Hp > 0 && e.Building == 0 && e.Stats.Shields) _domes.Add(e);
+        foreach (var (target, hit, by) in _hits)
         {
+            int damage = _domes.Count > 0 && Domed(target) ? hit * (100 - DomePercent) / 100 : hit;   // (under a bulwark's dome)
             bool alive = target.Hp > 0;
             int soaked = System.Math.Min(target.Shield, damage);   // a shield coil's shield goes first
             target.Shield -= soaked;
@@ -1815,14 +1830,13 @@ public sealed class World
     void Mend(Entity e)
     {
         var s = e.Stats;
-        Entity patient = null, escort = null;
-        Fix best = Fix.FromInt(1 << 20), near = Fix.FromInt(1 << 20);
+        Entity patient = null;
+        Fix best = Fix.FromInt(1 << 20);
         foreach (var o in Entities)
         {
             if (o == e || o.Dead || o.Owner != e.Owner || !o.Stats.IsUnit || o.Building > 0) continue;
             var d = (o.Pos - e.Pos).LengthSq;
             if (o.Hp < o.MaxHp && d < best && d <= (s.Aggro + o.Stats.Radius) * (s.Aggro + o.Stats.Radius)) { best = d; patient = o; }
-            if (!o.Stats.Heals && o.Stats.Reload > 0 && d < near) { near = d; escort = o; }
         }
         if (patient != null)
         {
@@ -1840,10 +1854,34 @@ public sealed class World
             _moves.Add((e, FanOut(e, Drive(e, patient.Pos, Fix.Min(SpeedOf(e), gap - s.Range + Fix.Ratio(1, 2))))));
             return;
         }
+        Escort(e);
+    }
+
+    /// <summary>A support unit with nothing to do: where it was sent, else a few lengths behind the nearest friendly
+    /// fighter.</summary>
+    void Escort(Entity e)
+    {
         if (e.HasWaypoint && (e.Waypoint - e.Pos).LengthSq <= WaypointReach * WaypointReach) e.HasWaypoint = false;
         if (e.HasWaypoint) { _moves.Add((e, FanOut(e, Drive(e, e.Waypoint, SpeedOf(e))))); return; }
+        Entity escort = null;
+        Fix near = Fix.FromInt(1 << 20);
+        foreach (var o in Entities)
+        {
+            if (o == e || o.Dead || o.Owner != e.Owner || !o.Stats.IsUnit || o.Building > 0 || o.Stats.Reload == 0 || o.Stats.Heals) continue;
+            var d = (o.Pos - e.Pos).LengthSq;
+            if (d < near) { near = d; escort = o; }
+        }
         if (escort != null && near > Fix.FromInt(5 * 5)) _moves.Add((e, FanOut(e, Drive(e, escort.Pos, SpeedOf(e)))));
     }
+
+    /// <summary>Whether `e` is under a dome of its own side (<see cref="DomeReach"/>).</summary>
+    bool Domed(Entity e)
+    {
+        foreach (var b in _domes)
+            if (b.Owner == e.Owner && (b.Pos - e.Pos).LengthSq <= (DomeReach + e.Stats.Radius) * (DomeReach + e.Stats.Radius)) return true;
+        return false;
+    }
+    readonly List<Entity> _domes = new();
 
     /// <summary>
     /// Records the damage a shot does; it lands after everyone has fired (<see cref="Fight"/>). Applying it at once
